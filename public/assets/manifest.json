@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "file": "kestrel.glb",
+      "source": "scripts/build-aircraft.py",
+      "creator": "Low Pass project",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/adrianba/low-pass/blob/main/LICENSE",
+      "modifications": "Original Blender generation, GLB export.",
+      "sha256": "402249e484b26becc2290d2eff8781f2feb0db11a35ca5090424838b0242c515",
+      "bytes": 176116
+    },
+    {
+      "file": "practice-bomb.glb",
+      "source": "scripts/build-aircraft.py",
+      "creator": "Low Pass project",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/adrianba/low-pass/blob/main/LICENSE",
+      "modifications": "Original Blender generation, GLB export.",
+      "sha256": "9000d43d857bc9ce479e0df7ef130c44d057afc232b8cc072b8c0fd0b4ec5d99",
+      "bytes": 10144
+    },
+    {
+      "file": "terrain/Ground037_1K-JPG_Color.jpg",
+      "source": "https://ambientcg.com/a/Ground037",
+      "download": "https://ambientcg.com/get?file=Ground037_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "91ddbbf110043326b2597e967c556bc4cb84bc02adbf122fb3bb58cb38aa47ce",
+      "bytes": 855805
+    },
+    {
+      "file": "terrain/Ground037_1K-JPG_NormalGL.jpg",
+      "source": "https://ambientcg.com/a/Ground037",
+      "download": "https://ambientcg.com/get?file=Ground037_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "37c09e33fb5b5afe0c7458b6184b21173edda77b94a8c0c16ca75801bacc54db",
+      "bytes": 1192148
+    },
+    {
+      "file": "terrain/Ground037_1K-JPG_Roughness.jpg",
+      "source": "https://ambientcg.com/a/Ground037",
+      "download": "https://ambientcg.com/get?file=Ground037_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "6f7d2becc979442310a006a5f382643d379e8095798d147c89bcea84ddbbaeeb",
+      "bytes": 335674
+    },
+    {
+      "file": "terrain/Rock030_1K-JPG_Color.jpg",
+      "source": "https://ambientcg.com/a/Rock030",
+      "download": "https://ambientcg.com/get?file=Rock030_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "a866a6747ff2005a6b559a42e76abbde22b978710589047ec0dd9f47fed6a435",
+      "bytes": 490165
+    },
+    {
+      "file": "terrain/Rock030_1K-JPG_NormalGL.jpg",
+      "source": "https://ambientcg.com/a/Rock030",
+      "download": "https://ambientcg.com/get?file=Rock030_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "56ec598ea15a85952f54c0af90ae91301038386e9c1150854088017606c42c5d",
+      "bytes": 1206004
+    },
+    {
+      "file": "terrain/Rock030_1K-JPG_Roughness.jpg",
+      "source": "https://ambientcg.com/a/Rock030",
+      "download": "https://ambientcg.com/get?file=Rock030_1K-JPG.zip",
+      "creator": "ambientCG / Lennart Demes",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "modifications": "Resized to at most 1024px and JPEG-encoded at quality 90 using scripts/optimize-textures.py; tinted and blended in-game.",
+      "sha256": "e05d11286184eb135e7f1ec159cc7e212dbd2aa3d762486477d242f83fdaf75a",
+      "bytes": 300478
+    }
+  ]
+}

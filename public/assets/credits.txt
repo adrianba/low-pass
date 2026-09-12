@@ -1,0 +1,30 @@
+LOW PASS / ASSET NOTICES
+
+Original Kestrel F/B-01 aircraft, practice bomb, tank, surface-to-air missile,
+target artwork, procedural terrain, environment lighting, props, and synthesized sound:
+Created for this project. Editable aircraft source: art/kestrel.blend.
+Copyright (c) 2026 Ade Bateman. Licensed under the MIT License.
+See LICENSE in the source repository or /licenses/low-pass.txt in the distribution.
+Generator: scripts/build-aircraft.py.
+Tank and missile generators: src/rendering/target-vehicle.ts and
+src/rendering/combat-effects.ts. These models are original fictional game props.
+
+Ground037 and Rock030
+Creator: ambientCG / Lennart Demes
+https://ambientcg.com/a/Ground037
+https://ambientcg.com/a/Rock030
+License: Creative Commons CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+https://docs.ambientcg.com/license/
+Modifications: maps selected from the 1K-JPG archives, resized to at most 1024px,
+and JPEG-encoded at quality 90. Material tinting and slope blending at runtime.
+No aircraft downloaded from a third party.
+
+Babylon.js: Copyright Babylon.js contributors, Apache License 2.0.
+Dependency license files are included in the production distribution under
+/licenses/. All runtime assets are hosted locally.
+Third-party assets and dependencies retain their own licenses; the project's
+MIT License does not replace CC0 or Apache-2.0.
+
+This is a fictional arcade training-range game, not a flight or weapons
+simulation. No real-world aircraft or service affiliation is implied.

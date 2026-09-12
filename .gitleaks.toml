@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public browser-local storage namespace, not an API credential."
+condition = "AND"
+paths = ['''(^|/)src/storage/records\.ts$''']
+regexTarget = "secret"
+regexes = ['''^low-pass\.records\.v1$''']

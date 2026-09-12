@@ -1,0 +1,170 @@
+import './ui/style.css';
+import { Run, interpolatePose } from './game/run';
+import { STEP } from './config/game';
+import type { Vec3 } from './simulation/math';
+import { World } from './rendering/world';
+import { RecordStore } from './storage/records';
+import type { Settings } from './storage/records';
+import { FlightAudio } from './audio/audio';
+import { UI } from './ui/ui';
+import type { Screen } from './ui/ui';
+import { ReleaseKey } from './input/keyboard';
+
+let ui: UI | null = null;
+const warnings: string[] = [];
+const warn = (message: string) => { if (ui) ui.warn(message); else warnings.push(message); };
+const store = new RecordStore(() => localStorage, warn);
+let settings = store.settings;
+const audio = new FlightAudio(settings, warn);
+let world: World | null = null;
+let run = new Run(7);
+let screen: Screen = 'loading';
+let accumulator = 0;
+let last = performance.now();
+let previous = run.pose;
+let prediction: Vec3 | null = null;
+let predictionClock = 0;
+let runId = '';
+let pausedFrom: 'playing' | 'ending' = 'playing';
+const key = new ReleaseKey();
+
+function setScreen(next: Screen): void {
+  screen = next;
+  ui?.show(next, run);
+  accumulator = 0;
+  last = performance.now();
+}
+
+function changeSettings(next: Settings): void {
+  if (next.quality !== settings.quality) world?.configure(next.quality);
+  settings = next;
+  store.update(next);
+  audio.configure(next);
+  if (screen === 'playing') run.assisted ||= next.assist;
+}
+
+function pause(): void {
+  if (screen !== 'playing' && screen !== 'ending') return;
+  pausedFrom = screen;
+  if (screen === 'playing') run.status = 'paused';
+  key.up();
+  setScreen('paused');
+  void audio.pause();
+}
+
+function fail(error: unknown): void {
+  console.error(error);
+  screen = 'error';
+  run.status = 'paused';
+  ui?.error(error instanceof Error ? error.message : String(error));
+  void audio.pause();
+}
+
+ui = new UI(settings, {
+  start() {
+    if (!world || (screen !== 'menu' && screen !== 'over')) return;
+    run = new Run(crypto.getRandomValues(new Uint32Array(1))[0]!);
+    runId = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
+    prediction = null;
+    predictionClock = 0;
+    previous = run.pose;
+    world.reset();
+    key.up();
+    setScreen('playing');
+    void audio.start();
+  },
+  pause,
+  resume() {
+    if (screen !== 'paused') return;
+    if (pausedFrom === 'playing') run.status = 'running';
+    setScreen(pausedFrom);
+    void audio.start();
+  },
+  menu() {
+    run.status = 'paused';
+    setScreen('menu');
+    void audio.pause();
+  },
+  settings: changeSettings,
+});
+ui.show('loading');
+ui.scores(store.scores);
+for (const message of warnings) ui.warn(message);
+
+document.addEventListener('keydown', event => {
+  const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement;
+  if (event.code === 'Space') {
+    const pressed = key.down(event.repeat);
+    if (screen === 'playing' || screen === 'ending') {
+      event.preventDefault();
+      if (pressed && !editing && screen === 'playing') run.release();
+    }
+  }
+  if (event.code === 'Escape' && !event.repeat) {
+    if (screen === 'playing' || screen === 'ending') pause();
+    else if (screen === 'paused') document.querySelector<HTMLButtonElement>('#resume')?.click();
+  }
+  if (event.code === 'KeyA' && !event.repeat && !editing && screen === 'playing') ui?.toggleAssist();
+});
+document.addEventListener('keyup', event => { if (event.code === 'Space') key.up(); });
+window.addEventListener('blur', pause);
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+window.addEventListener('resize', () => world?.engine.resize());
+window.addEventListener('pagehide', () => { void audio.pause(); });
+
+async function bootstrap(): Promise<void> {
+  const canvas = document.querySelector<HTMLCanvasElement>('#scene');
+  if (!canvas) throw new Error('Missing scene canvas.');
+  const view = new World(canvas, settings.quality);
+  world = view;
+  view.engine.onContextLostObservable.add(() => fail(new Error('Graphics context lost. Reload to restore the game. Your completed scores are retained.')));
+  await view.load(message => ui?.loading(message));
+  view.update(run, run.pose, null, 1 / 60);
+  view.render();
+  setScreen('menu');
+  view.engine.runRenderLoop(() => {
+    if (screen === 'error') return;
+    try {
+      const now = performance.now();
+      const dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
+      if (screen === 'playing') {
+        if (run.encounter.visibleAt === null && view.targetVisible(run)) run.seeTarget();
+        accumulator += dt;
+        while (accumulator >= STEP) {
+          previous = run.pose;
+          run.tick(settings.assist);
+          accumulator -= STEP;
+        }
+        predictionClock -= dt;
+        if (settings.assist && run.ready && predictionClock <= 0) {
+          prediction = run.prediction;
+          predictionClock = 1 / 60;
+        }
+        if (!settings.assist || !run.ready) prediction = null;
+        for (const event of run.events.splice(0)) audio.cue(event);
+        if (run.status === 'over') {
+          store.complete({ id: runId, score: run.score, date: new Date().toISOString(), assisted: run.assisted });
+          ui?.scores(store.scores);
+          prediction = null;
+          setScreen('ending');
+        }
+      }
+      const current = run.pose;
+      const alpha = screen === 'playing' ? accumulator / STEP : 1;
+      const interpolated = interpolatePose(previous, current, alpha);
+      view.update(run, interpolated, prediction, screen === 'paused' ? 0 : dt);
+      for (const event of view.combat.events.splice(0)) audio.cue(event);
+      audio.update(current.velocity.z, run.bomb?.age ?? null, !view.combat.aircraftDestroyed);
+      if (screen === 'ending' && view.combat.finalePhase === 'complete') {
+        setScreen('over');
+        void audio.pause();
+      }
+      ui?.update(run, prediction, prediction ? view.projectPoint(prediction) : null,
+        view.combat.finalePhase, view.combat.missileActive, view.combat.damageLevel);
+      view.render();
+    } catch (error) { fail(error); }
+  });
+}
+
+void bootstrap().catch(fail);

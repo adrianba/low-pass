@@ -1,0 +1,190 @@
+import { ATTACK_HEIGHT, CRUISE_HEIGHT, FLOOR, GRAVITY, MAX_MISSES, STEP, difficulty } from '../config/game';
+import { accuracy, advanceBomb, predictImpact } from '../simulation/ballistics';
+import type { Bomb } from '../simulation/ballistics';
+import { clamp, hash, mix } from '../simulation/math';
+import type { Vec3 } from '../simulation/math';
+import { valleyCenter, valleySlope, valleyCurvature } from '../terrain/heightfield';
+import { joinMotion } from '../simulation/curves';
+import type { Motion } from '../simulation/curves';
+
+export const APPROACH_DURATION = 3;
+const ENCOUNTER_START = -8;
+
+export type RunStatus = 'running' | 'paused' | 'over';
+export interface Result { points: number; impact: Vec3 | null; id: number }
+export interface Pose { position: Vec3; velocity: Vec3; acceleration: Vec3; bank: number; pitch: number }
+export interface Encounter {
+  id: number;
+  time: number;
+  origin: number;
+  phase: number;
+  start: Pose;
+  visibleAt: number | null;
+  target: Vec3;
+  released: boolean;
+  resolvedAt: number | null;
+}
+
+export function poseAt(encounter: Encounter, time: number, count: number): Pose {
+  const { amplitude, frequency, speed, diveDuration } = difficulty(count);
+  const nominal = (t: number): Record<keyof Vec3, Motion> => {
+    const z = encounter.origin + speed * t;
+    const phase = t * frequency + encounter.phase;
+    return {
+      x: {
+        position: valleyCenter(z) + amplitude * Math.sin(phase),
+        velocity: valleySlope(z) * speed + amplitude * frequency * Math.cos(phase),
+        acceleration: valleyCurvature(z) * speed * speed - amplitude * frequency * frequency * Math.sin(phase),
+      },
+      y: { position: FLOOR + CRUISE_HEIGHT, velocity: 0, acceleration: 0 },
+      z: { position: z, velocity: speed, acceleration: 0 },
+    };
+  };
+  const approach = (t: number): Record<keyof Vec3, Motion> => {
+    if (t >= ENCOUNTER_START + APPROACH_DURATION) return nominal(t);
+    const end = nominal(ENCOUNTER_START + APPROACH_DURATION);
+    for (const axis of ['x', 'y', 'z'] as const) {
+      end[axis] = joinMotion({
+        position: encounter.start.position[axis],
+        velocity: encounter.start.velocity[axis],
+        acceleration: encounter.start.acceleration[axis],
+      }, end[axis], APPROACH_DURATION, t - ENCOUNTER_START);
+    }
+    return end;
+  };
+  const motion = approach(time);
+  if (encounter.visibleAt !== null && time >= encounter.visibleAt) {
+    const low = { position: FLOOR + ATTACK_HEIGHT, velocity: 0, acceleration: 0 };
+    motion.y = time < 2.2
+      ? joinMotion(approach(encounter.visibleAt).y, low, diveDuration, time - encounter.visibleAt)
+      : joinMotion(low, { position: FLOOR + CRUISE_HEIGHT, velocity: 0, acceleration: 0 }, 3, time - 2.2);
+  }
+  const position = { x: motion.x.position, y: motion.y.position, z: motion.z.position };
+  const velocity = { x: motion.x.velocity, y: motion.y.velocity, z: motion.z.velocity };
+  const acceleration = { x: motion.x.acceleration, y: motion.y.acceleration, z: motion.z.acceleration };
+  return { position, velocity, acceleration, bank: clamp(-acceleration.x / 32, -0.65, 0.65),
+    pitch: -Math.atan2(velocity.y, velocity.z) };
+}
+
+export function aircraftPoint(pose: Pose, local: Vec3): Vec3 {
+  const yaw = Math.atan2(pose.velocity.x, pose.velocity.z);
+  const x = local.x * Math.cos(pose.bank) - local.y * Math.sin(pose.bank);
+  const rolledY = local.x * Math.sin(pose.bank) + local.y * Math.cos(pose.bank);
+  const y = rolledY * Math.cos(pose.pitch) - local.z * Math.sin(pose.pitch);
+  const z = rolledY * Math.sin(pose.pitch) + local.z * Math.cos(pose.pitch);
+  return {
+    x: pose.position.x + x * Math.cos(yaw) + z * Math.sin(yaw),
+    y: pose.position.y + y,
+    z: pose.position.z - x * Math.sin(yaw) + z * Math.cos(yaw),
+  };
+}
+
+export function launchFrom(pose: Pose): Bomb {
+  return { position: aircraftPoint(pose, { x: 0, y: -2.2, z: 0 }), velocity: { ...pose.velocity }, age: 0 };
+}
+
+export function initialPose(position: Vec3 = { x: 0, y: FLOOR + CRUISE_HEIGHT, z: 0 }): Pose {
+  return { position: { ...position }, velocity: { x: 0, y: 0, z: difficulty(0).speed },
+    acceleration: { x: 0, y: 0, z: 0 }, bank: 0, pitch: 0 };
+}
+
+export function interpolatePose(previous: Pose, current: Pose, alpha: number): Pose {
+  const vector = (a: Vec3, b: Vec3): Vec3 => ({ x: mix(a.x, b.x, alpha), y: mix(a.y, b.y, alpha), z: mix(a.z, b.z, alpha) });
+  return { position: vector(previous.position, current.position), velocity: vector(previous.velocity, current.velocity),
+    acceleration: vector(previous.acceleration, current.acceleration),
+    bank: mix(previous.bank, current.bank, alpha), pitch: mix(previous.pitch, current.pitch, alpha) };
+}
+
+export function planEncounter(count: number, seed: number, previous: Pose): Encounter {
+  const d = difficulty(count);
+  const encounter: Encounter = {
+    id: count + 1, time: ENCOUNTER_START,
+    origin: previous.position.z - d.speed * ENCOUNTER_START - (d.speed - previous.velocity.z) * APPROACH_DURATION / 2,
+    phase: hash(count, 71, seed) * Math.PI * 2,
+    start: { ...previous, position: { ...previous.position }, velocity: { ...previous.velocity }, acceleration: { ...previous.acceleration } },
+    visibleAt: null,
+    target: { x: 0, y: FLOOR, z: 0 }, released: false, resolvedAt: null,
+  };
+  const planned = { ...encounter, visibleAt: -6 };
+  const ideal = launchFrom(poseAt(planned, 0, count));
+  const impact = predictImpact(ideal);
+  encounter.target = { x: impact.x, y: FLOOR, z: impact.z };
+  if (Math.abs(impact.x - valleyCenter(impact.z)) > 140 || Math.abs(impact.y - FLOOR) > 0.01) {
+    throw new Error('Cannot construct a safe target in the flight corridor.');
+  }
+  return encounter;
+}
+
+export class Run {
+  status: RunStatus = 'running';
+  score = 0;
+  misses = 0;
+  resolved = 0;
+  assisted = false;
+  encounter: Encounter;
+  bomb: Bomb | null = null;
+  result: Result | null = null;
+  readonly events: Array<'release' | 'hit' | 'miss' | 'over' | 'target'> = [];
+
+  constructor(readonly seed = 1) {
+    this.encounter = planEncounter(0, seed, initialPose());
+  }
+
+  get pose(): Pose { return poseAt(this.encounter, this.encounter.time, this.encounter.id - 1); }
+  get ready(): boolean {
+    return this.status === 'running' && this.encounter.visibleAt !== null && !this.encounter.released
+      && this.encounter.resolvedAt === null && this.pose.position.z <= this.encounter.target.z + 90;
+  }
+  get prediction(): Vec3 { return predictImpact(launchFrom(this.pose)); }
+
+  seeTarget(): void {
+    if (this.status !== 'running' || this.encounter.visibleAt !== null) return;
+    if (this.encounter.time > -difficulty(this.encounter.id - 1).diveDuration - 0.5) {
+      throw new Error('Target was not visible early enough for a fair attack pass.');
+    }
+    this.encounter.visibleAt = this.encounter.time;
+    this.events.push('target');
+  }
+
+  release(): boolean {
+    if (!this.ready) return false;
+    this.encounter.released = true;
+    this.bomb = launchFrom(this.pose);
+    this.events.push('release');
+    return true;
+  }
+
+  private finish(impact: Vec3 | null): void {
+    if (this.encounter.resolvedAt !== null) return;
+    const points = impact ? accuracy(impact, this.encounter.target) : 0;
+    this.encounter.resolvedAt = this.encounter.time;
+    this.score += points;
+    this.resolved++;
+    if (!points) this.misses++;
+    this.result = { points, impact, id: this.encounter.id };
+    this.events.push(points ? 'hit' : 'miss');
+    if (this.misses >= MAX_MISSES) {
+      this.status = 'over';
+      this.events.push('over');
+    }
+  }
+
+  tick(assist: boolean): void {
+    if (this.status !== 'running') return;
+    this.assisted ||= assist;
+    this.encounter.time += STEP;
+    if (this.bomb) {
+      const impact = advanceBomb(this.bomb);
+      if (impact) { this.bomb = null; this.finish(impact); }
+      else if (this.bomb.age > 20) throw new Error('Active bomb exceeded the supported flight duration.');
+    }
+    if (!this.encounter.released && this.pose.position.z > this.encounter.target.z + 90) this.finish(null);
+    if (this.misses >= MAX_MISSES) return;
+    if (this.encounter.resolvedAt !== null && this.encounter.time >= Math.max(7, this.encounter.resolvedAt + 3)) {
+      this.encounter = planEncounter(this.resolved, this.seed, this.pose);
+      this.result = null;
+    }
+  }
+}
+
+export const idealFallTime = Math.sqrt(2 * (ATTACK_HEIGHT - 2.2) / GRAVITY);
