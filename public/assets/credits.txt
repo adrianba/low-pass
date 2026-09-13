@@ -1,13 +1,15 @@
 LOW PASS / ASSET NOTICES
 
-Original Kestrel F/B-01 aircraft, practice bomb, tank, surface-to-air missile,
+Original Kestrel F/B-01 aircraft, practice bomb, tank, radar station, SAM launcher, surface-to-air missile,
 target artwork, procedural terrain, environment lighting, props, and synthesized sound:
 Created for this project. Editable aircraft source: art/kestrel.blend.
 Copyright (c) 2026 Ade Bateman. Licensed under the MIT License.
 See LICENSE in the source repository or /licenses/low-pass.txt in the distribution.
 Generator: scripts/build-aircraft.py.
-Tank and missile generators: src/rendering/target-vehicle.ts and
-src/rendering/combat-effects.ts. These models are original fictional game props.
+Target generators: src/rendering/target-vehicle.ts, src/rendering/target-radar.ts,
+and src/rendering/target-sam.ts, with shared parts in src/rendering/target-parts.ts.
+Flying missile generator: src/rendering/combat-effects.ts.
+These models are original fictional game props, not replicas of real systems.
 Original procedural desert sand/ripple shader: src/rendering/desert-material.ts.
 The desert theme uses no downloaded sand assets and retains the same ground geometry.
 

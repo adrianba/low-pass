@@ -6,6 +6,8 @@ import type { Vec3 } from '../simulation/math';
 import { valleyCenter, valleySlope, valleyCurvature } from '../terrain/heightfield';
 import { joinMotion } from '../simulation/curves';
 import type { Motion } from '../simulation/curves';
+import { selectTargetKind } from './targets';
+import type { TargetKind } from './targets';
 
 export const APPROACH_DURATION = 3;
 const ENCOUNTER_START = -8;
@@ -15,6 +17,7 @@ export interface Result { points: number; impact: Vec3 | null; id: number }
 export interface Pose { position: Vec3; velocity: Vec3; acceleration: Vec3; bank: number; pitch: number }
 export interface Encounter {
   id: number;
+  readonly targetKind: TargetKind;
   time: number;
   origin: number;
   phase: number;
@@ -98,7 +101,7 @@ export function interpolatePose(previous: Pose, current: Pose, alpha: number): P
 export function planEncounter(count: number, seed: number, previous: Pose): Encounter {
   const d = difficulty(count);
   const encounter: Encounter = {
-    id: count + 1, time: ENCOUNTER_START,
+    id: count + 1, targetKind: selectTargetKind(count, seed), time: ENCOUNTER_START,
     origin: previous.position.z - d.speed * ENCOUNTER_START - (d.speed - previous.velocity.z) * APPROACH_DURATION / 2,
     phase: hash(count, 71, seed) * Math.PI * 2,
     start: { ...previous, position: { ...previous.position }, velocity: { ...previous.velocity }, acceleration: { ...previous.acceleration } },

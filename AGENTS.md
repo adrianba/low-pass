@@ -42,11 +42,13 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 | `src/config/terrain.ts`, `src/rendering/terrain-style.ts` | Terrain IDs/labels and visual palettes/props |
 | `src/rendering/desert-material.ts` | Original periodic, distance-filtered sand/ripple shading |
 | `src/game/run.ts` | Encounter planning, flight poses, release, score/miss lifecycle |
+| `src/game/targets.ts` | Available target kinds and seeded per-encounter selection |
 | `src/simulation/` | Engine-independent math and shared bomb/impact prediction |
 | `src/terrain/heightfield.ts` | Canonical triangulated terrain and swept collision |
 | `src/game/missile.ts` | Deterministic cosmetic missile trajectories and finale timing |
 | `src/rendering/world.ts` | Scene, camera, chunks, origin rebasing, model/effect integration |
-| `src/rendering/target-vehicle.ts`, `combat-effects.ts` | Original tank, missiles, explosions |
+| `src/rendering/target-model.ts`, `target-*.ts` | Cached tank/radar/SAM models and reversible wreck visuals |
+| `src/rendering/combat-effects.ts` | Flying missiles, smoke, and explosions |
 | `src/ui/`, `src/input/` | Screens, instruments, projected impact reticle, key gating |
 | `src/audio/`, `src/storage/` | Gesture-unlocked audio; validated, versioned local records |
 | `src/main.ts` | Fixed-step loop, interpolation, screen transitions, persistence wiring |
@@ -59,7 +61,15 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   outer radius. Outside, or failing to release before cutoff, is one miss.
   **Three cumulative misses** end a run; hits never erase misses.
 - Physics and the predictor share launch transforms, velocity, fixed-step
-  integration, and first terrain contact. The tank is visual, not a new collider.
+  integration, and first terrain contact. Target models are visual, not colliders.
+- `Encounter.targetKind` is selected once: equal tank/radar/SAM chances, repeats
+  allowed. Use its independent seeded hash, never reroll on render, pause, quality
+  changes, or rebasing. Guard the hash helper's inclusive 1 endpoint when indexing.
+- Keep one cached model per kind and enable exactly one per encounter. Reset
+  damage even for consecutive same-kind targets, preserve the existing heading,
+  and position the common root relative to the render origin. Register shadow
+  casters once. Radar and launcher models are static; off-site missile behavior
+  and scores must not depend on the kind.
 - Current difficulty reaches speed 350 on pass 13. When changing speed/jinks,
   validate actual successful-release windows, dive completion, visibility range,
   terrain clearance, and chunk coverage at every supported tier.
@@ -92,7 +102,7 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   **once immediately**, before the UI's `ending` missile/explosion sequence.
 - UI `ending` is presentation, not resumed gameplay. Pause/focus loss must freeze
   it; resume must not set an already-ended run back to `running`.
-- Restart restores the aircraft/tank and clears missiles, particles, input,
+- Restart restores the aircraft/target models and clears missiles, particles, input,
   encounter/result IDs, and presentation state. Dispose transient meshes and
   audio voices; keep long-run resource counts bounded.
 - `low-pass.records.v1` stores the top 10 completed runs and settings. Any use of

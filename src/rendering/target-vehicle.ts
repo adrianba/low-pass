@@ -4,8 +4,9 @@ import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder'
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import type { Scene } from '@babylonjs/core/scene';
+import type { TargetModel } from './target-model';
 
-export class TargetVehicle {
+export class TargetVehicle implements TargetModel {
   readonly root: TransformNode;
   private turret: TransformNode;
   private armor: PBRMaterial;

@@ -81,12 +81,19 @@ instead of resetting the heading or bank. Smooth motion curves join the next
 route and start each dive from the aircraft's then-current motion; rendered
 attitude is interpolated between simulation steps.
 
-An original tank occupies each target center and becomes a damaged wreck after a
-successful hit. It is a visual target: the same ground-impact accuracy formula
-applies, with no separate armor or collision rules.
+Each encounter independently chooses a **tank**, **radar station**, or **SAM
+launcher**, with an equal chance of each; consecutive repeats are allowed.
+The choice stays fixed for that encounter in either terrain theme. These original
+models occupy the target center and become damaged wrecks after a successful hit.
+The radar has an equipment shelter and raised dish; the wheeled launcher carries
+elevated launch tubes. Both are static visual models, not active weapons systems.
+The same ground-impact accuracy formula applies to every type, with no separate
+armor, collision rules, or target-specific bonuses.
 
 Successful hits occasionally prompt a surface-to-air missile flyby that misses
-the aircraft. The first two misses each cause a survivable missile hit: an impact
+the aircraft. These off-site missiles are independent of the visible target type;
+the model launcher does not fire, and hitting radar does not suppress missiles.
+The first two misses each cause a survivable missile hit: an impact
 flash, damage status, and persistent aircraft smoke, heavier after the second hit.
 Smoke uses soft, irregular alpha-blended clouds with varied sizes and slow rolling
 motion, expanding and fading behind the aircraft rather than showing square sprites.
@@ -172,7 +179,8 @@ when launching Playwright (PowerShell: `$env:TEST_URL="http://localhost:8080"`).
 Automated tests cover score boundaries, ballistics/predictor equivalence, terrain
 collision, seed/difficulty fairness, key gating, cumulative misses, persistence,
 browser keyboard play, the visible impact reticle, missile interception/flyby
-clearance, survivable damage/smoke, motion continuity, explosion cleanup, pausing
+clearance, survivable damage/smoke, randomized target selection and model resets,
+motion continuity, explosion cleanup, pausing
 the finale, restarting, and essential asset
 failures. E2E tests use the
 Low preset and a smaller viewport to accommodate software-rendered CI; that is
@@ -222,9 +230,10 @@ uv run scripts/optimize-textures.py /path/to/Ground037_1K-JPG.zip /path/to/Rock0
 Terrain maps are freely redistributable **CC0** ambientCG Ground037 and Rock030
 assets. Source URLs, creator, license, modifications, sizes, and SHA-256 checksums
 are in `public/assets/manifest.json`; notices are in `public/assets/credits.txt`.
-Sound, target artwork, tank and missile models, procedural desert sand shading, environment lighting, and scenery
-generation are original. The tank and missile geometry is generated locally by
-`src/rendering/target-vehicle.ts` and `src/rendering/combat-effects.ts`.
+Sound, target artwork, tank/radar/SAM and missile models, procedural desert sand shading, environment lighting, and scenery
+generation are original. Target models are generated locally by
+`src/rendering/target-vehicle.ts`, `target-radar.ts`, and `target-sam.ts`;
+`src/rendering/combat-effects.ts` generates the flying missiles and their effects.
 The current soundscape is synthesized rather than downloaded recordings.
 
 After intentionally regenerating/replacing approved assets:
@@ -256,6 +265,10 @@ selection are in `src/rendering/terrain-style.ts`. The desert PBR shader lives i
 stay stable across chunks/origin rebasing, and filters distant ripple detail.
 Both themes' materials and reflection textures are cached per scene and disposed
 with it. Theme switching invalidates chunks without changing the simulation.
+`src/game/targets.ts` defines target kinds and seeded selection; `planEncounter`
+stores the choice once, separately from flight randomness.
+`src/rendering/target-model.ts` keeps one cached model per kind and enables only
+the active encounter's model, resetting damage at each new pass and restart.
 The rendering quality presets alter resolution, shadow size, vegetation density, and
 view distance, not the simulation or target collision surface. Terrain currently
 keeps a fixed canonical mesh resolution, with bounded streaming rather than

@@ -35,7 +35,7 @@ import { createTerrainMaterial } from './terrain-material';
 import { createDesertMaterial } from './desert-material';
 import type { DesertSurface } from './desert-material';
 import { TERRAIN_PALETTES, terrainTint, terrainProp } from './terrain-style';
-import { TargetVehicle } from './target-vehicle';
+import { TargetModels } from './target-model';
 import { CombatEffects } from './combat-effects';
 import { shouldFlyby } from '../game/missile';
 
@@ -57,7 +57,7 @@ export class World {
   private treeTemplate: Mesh;
   private rockTemplate: Mesh;
   private target: Mesh;
-  private vehicle: TargetVehicle;
+  private targetModels: TargetModels;
   readonly combat: CombatEffects;
   private marker: Mesh;
   private impactMark: Mesh;
@@ -146,8 +146,8 @@ export class World {
     this.rockTemplate.material = rockMaterial;
     this.rockTemplate.setEnabled(false);
     this.target = this.makeTarget();
-    this.vehicle = new TargetVehicle(this.scene);
-    for (const mesh of this.vehicle.root.getChildMeshes()) this.shadows.addShadowCaster(mesh);
+    this.targetModels = new TargetModels(this.scene);
+    for (const mesh of this.targetModels.root.getChildMeshes()) this.shadows.addShadowCaster(mesh);
     this.combat = new CombatEffects(this.scene);
     const markerMaterial = new StandardMaterial('Impact predictor', this.scene);
     markerMaterial.emissiveColor = new Color3(0.38, 1, 0.82);
@@ -389,7 +389,7 @@ export class World {
     this.cameraInitialized = false;
     this.impactMark.setEnabled(false);
     this.aircraft.setEnabled(true);
-    this.vehicle.setDestroyed(false);
+    this.targetModels.reset();
     this.combat.reset();
     for (const burst of this.bursts) burst.mesh.dispose();
     this.bursts = [];
@@ -432,7 +432,7 @@ export class World {
     this.sun.position.copyFrom(this.aircraft.position).addInPlace(new Vector3(160, 290, -150));
     this.target.position.copyFrom(this.local(run.encounter.target));
     this.target.position.y += 0.08;
-    this.vehicle.root.position.copyFrom(this.local(run.encounter.target));
+    this.targetModels.root.position.copyFrom(this.local(run.encounter.target));
     this.marker.setEnabled(prediction !== null && run.ready);
     if (prediction) {
       this.marker.position.copyFrom(this.local(prediction));
@@ -444,14 +444,14 @@ export class World {
     if (this.lastEncounter !== run.encounter.id) {
       this.lastEncounter = run.encounter.id;
       this.impactMark.setEnabled(false);
-      this.vehicle.setDestroyed(false);
-      this.vehicle.root.rotation.y = hash(run.encounter.id, 7, run.seed) * Math.PI * 2;
+      this.targetModels.select(run.encounter.targetKind);
+      this.targetModels.root.rotation.y = hash(run.encounter.id, 7, run.seed) * Math.PI * 2;
     }
     if (run.result && this.resultId !== run.result.id) {
       this.resultId = run.result.id;
       if (run.result.impact) this.explode(run.result.impact);
       if (run.result.points > 0) {
-        this.vehicle.setDestroyed(true);
+        this.targetModels.setDestroyed(true);
         if (run.status !== 'over' && shouldFlyby(run.encounter.id, run.seed)) this.combat.startFlyby(run);
       } else if (run.status !== 'over') this.combat.startDamage(run);
     }

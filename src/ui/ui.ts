@@ -56,7 +56,7 @@ export class UI {
         </details>
         <details id="records"><summary>LOCAL FLIGHT RECORDS <span>+</span></summary><ol id="score-list"></ol><p class="fine-print">Stored in this browser profile only. Clearing site data removes your records.</p></details>
         <details id="credits"><summary>AIRCRAFT & ASSET CREDITS <span>+</span></summary>
-          <p class="fine-print">Kestrel aircraft, tank, missiles, scenery, procedural sand, and synthesized audio: original Low Pass assets.<br>
+          <p class="fine-print">Kestrel aircraft, tank, radar station, SAM launcher, missiles, scenery, procedural sand, and synthesized audio: original Low Pass assets.<br>
           Ground037 and Rock030: ambientCG, CC0 1.0. Babylon.js: Apache-2.0.<br>
           <a href="/assets/credits.txt" target="_blank" rel="noopener">Asset notices</a></p>
         </details>
@@ -184,6 +184,7 @@ export class UI {
     this.app.dataset.finale = finale ?? 'none';
     this.app.dataset.missile = String(missileActive);
     this.app.dataset.damage = String(damageLevel);
+    this.app.dataset.targetKind = run.encounter.targetKind;
     if (this.screen !== 'playing' && this.screen !== 'ending') return;
     const pose = run.pose, d = difficulty(run.encounter.id - 1);
     this.get('#score').textContent = String(run.score).padStart(4, '0');
