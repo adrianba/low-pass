@@ -52,9 +52,9 @@ Open **Flight Settings > Terrain** before starting a flight:
 - **Desert** uses warm sand, procedural wind ripples and dune-like shading, sparse
   sandstone rocks, and warm lighting. No extra assets are downloaded.
 - **River Canyon** follows a much narrower green rocky gorge, with steep sides,
-  flowing water, and dry flat target shelves on either bank. Stronger turns/jinks
-  and shorter warning and release windows make it harder. The pilot keeps the
-  aircraft clear of the walls; you still control only bomb release.
+  flowing water, broad sweeping turns, occasional tighter S-bends, and dry flat
+  target shelves on either bank. The pilot slows smoothly for tighter bends and
+  accelerates for readable attacks. You still control only bomb release.
 
 The menu previews your choice immediately and remembers it for future visits.
 Terrain is fixed during a flight, including pauses and the final missile sequence;
@@ -64,7 +64,10 @@ Graphics and audio settings remain adjustable while paused.
 Green Valley and Desert use **identical ground geometry, collision, flight paths,
 difficulty, and scoring**. Desert dunes are a surface-shading effect, not newly
 raised terrain. River Canyon has its own ground/collision and flight course, but
-keeps the same speed progression (350 on pass 13), target size, and scoring.
+keeps the same speed ceiling progression (350 on pass 13), target size, and scoring.
+In the canyon, the ceiling, speed display, and engine sound use full 3D speed,
+including dives, climbs, and jinks. Tight bends are transit sections, not blind
+attack passes. Early dives take longer to respect the full-speed ceiling.
 The entire target stays on dry ground. Bombs stop at their first contact with
 water, bank, or wall; a river hit is one miss with a splash, not a crater.
 Water animation and splashes freeze on pause. There are no aircraft crashes,
@@ -245,7 +248,8 @@ generation are original. Target models are generated locally by
 `src/rendering/target-vehicle.ts`, `target-radar.ts`, and `target-sam.ts`;
 `src/rendering/combat-effects.ts` generates the flying missiles and their effects.
 The canyon landform, water shading, and splash geometry are original, generated
-by `src/terrain/river-canyon.ts` and `src/rendering/river.ts`; cliff shading reuses
+by `src/terrain/canyon-route.ts`, `src/terrain/river-canyon.ts`, and
+`src/rendering/river.ts`; cliff shading reuses
 the existing CC0 terrain maps without additional downloads.
 The current soundscape is synthesized rather than downloaded recordings.
 
@@ -283,23 +287,42 @@ water contact. Each Run owns a fixed surface; previews use a separate Run so
 switching terrain cannot modify an active/completed flight or its saved score.
 `src/game/canyon-flight.ts` joins safe shelf attack routes with the current full
 motion state. Shelves exist before encounters and never move beneath bombs.
+`src/terrain/canyon-route.ts` defines indexed, C2-continuous sweeping turns, local
+route frames, normal-distance projection, arc-distance queries and inverses.
+Banks and shelves retain their perpendicular width around corners. The tuned
+route reaches approximately +/-29 degrees of heading, with turn radii down to
+580 units; no hairpins or doubling back. Broader attack stretches alternate with
+transit turns, and lower tiers can also use gentle bend exits.
+`src/simulation/flight-track.ts` separates path geometry from real traversal time.
+It anticipates bends, limits acceleration, joins full motion with quintic curves,
+and bounds the entire interpolated velocity curve using Bezier control hulls.
+The 350 ceiling applies to the actual 3D vector, not just forward velocity.
+Release remains at planned time zero; acquisition, dive, cutoff and recovery have
+explicit per-encounter times. HUD and audio use the same speed definition.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness
 guard remains enabled; hidden targets are not accepted as playable approaches.
 Canyon uses an 8-unit canonical grid (the original course retains 16); quality
 settings do not alter collision. Water meshes clip the same ground triangles at
-the water level, and their shader phase remains continuous across origin rebases.
+the water level. Flow uses unwrapped local route coordinates with a per-chunk
+periodic offset, so ripples follow bends without UV-wrap or origin-rebase seams.
+The camera trails and looks ahead along route distance. Terrain and river chunks
+follow sampled route bounds rather than fixed world-x columns; the measured
+Low/High turn fixtures retain fewer than 100 terrain and 32 visible water meshes.
+Canonical height caching is bounded at 80,000 vertices with FIFO eviction.
 Missile launches use the selected surface; the canyon finale follows a safe
 curved continuation without resuming the ended game.
 Custom terrain/water shader plugins use distinct cache identities, including a
 separate canyon variant, so prewarming or switching themes cannot substitute the
 wrong shader on a cliff face.
 Fixed-seed release-window regressions compare every difficulty tier with the
-original course. The initial measured mean canyon hit windows range from about
-0.67 seconds on pass 1 to 0.14 seconds on pass 13, versus about 0.74 and 0.16
-seconds in the valley sample. These are simulation timing measurements, not
-rendering-performance guarantees.
+original course. The winding/full-3D-speed revision measures approximately
+0.73 seconds on pass 1 to 0.16 seconds on pass 13, within 15% of the earlier canyon
+sample (0.67 to 0.14 seconds). Scoring and target radius have not changed.
+The sequential corpus checks all tiers, narrow/wide viewports, slow/irregular
+frames, both banks, safe camera clearance, and actual nominal center hits.
+These are simulation timing measurements, not rendering-performance guarantees.
 `src/game/targets.ts` defines target kinds and seeded selection; `planEncounter`
 stores the choice once, separately from flight randomness.
 `src/rendering/target-model.ts` keeps one cached model per kind and enables only

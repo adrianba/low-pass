@@ -32,3 +32,29 @@ test('both faces of shelf walls use the canyon shader, not a cached terrain vari
   for (const report of reports) expect(report.cullingDifference).toBeLessThan(0.1);
   expect(errors).toEqual([]);
 });
+
+test('large turns retain river and wall coverage at both quality presets', async ({ page }) => {
+  test.setTimeout(180_000);
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.route('**/canyon.js', route => route.fulfill({ contentType: 'text/javascript', body: script }));
+  await page.route('**/canyon-fixture', route => route.fulfill({ contentType: 'text/html',
+    body: '<style>body{margin:0}canvas{width:100vw;height:100vh}</style><canvas></canvas><script src="/canyon.js"></script>' }));
+  await page.goto('/canyon-fixture');
+  const reports = [];
+  for (const quality of ['low', 'high'] as const) for (const along of [1800, 2400, 3000, 4300, 5600]) {
+    const report = await page.evaluate(({ along, quality }) => window.canyonTwist(along, quality, false), { along, quality });
+    reports.push({ along, quality, ...report });
+    expect(report.covered).toBe(true);
+    expect(report.terrain).toBeLessThan(100);
+    expect(report.water).toBeLessThan(32);
+    expect(report.speed).toBeLessThanOrEqual(350);
+    await page.screenshot({ path: `test-results/canyon-turn-${along}-${quality}.png` });
+  }
+  await page.evaluate(() => window.canyonTwist(2400, 'high', true));
+  await page.screenshot({ path: 'test-results/canyon-turn-overhead.png' });
+  expect(await page.evaluate(() => window.canyonRebase())).toBeLessThan(0.2);
+  console.info('Winding terrain coverage', reports);
+  expect(errors).toEqual([]);
+});

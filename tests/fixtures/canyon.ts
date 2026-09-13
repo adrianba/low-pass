@@ -2,13 +2,15 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { World } from '../../src/rendering/world';
 import { Run, initialPose, planEncounter, poseAt } from '../../src/game/run';
 import { canyonSurface } from '../../src/terrain/surface';
-import { canyonWarning } from '../../src/game/canyon-flight';
 import { STEP } from '../../src/config/game';
 import { contactAccuracy, predictImpact } from '../../src/simulation/ballistics';
 import { launchFrom } from '../../src/game/run';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { CANYON, shelfSide } from '../../src/terrain/river-canyon';
 import { projectChase } from '../../src/simulation/chase-camera';
+import { projectRoute, routePoint } from '../../src/terrain/canyon-route';
+import { speedOf } from '../../src/simulation/flight-track';
+import type { Quality } from '../../src/config/game';
 
 let world: World;
 let current: Run;
@@ -19,6 +21,8 @@ declare global {
     canyonSplash(): Promise<{ frozen: boolean; reset: boolean; waterMeshes: number }>;
     canyonLifecycle(): Promise<boolean>;
     canyonWall(index: number, reverse: boolean): Promise<{ source: boolean; distinct: boolean; cullingDifference: number }>;
+    canyonTwist(along: number, quality: Quality, overhead: boolean): Promise<{ speed: number; terrain: number; water: number; covered: boolean }>;
+    canyonRebase(): Promise<number>;
   }
 }
 async function setup() {
@@ -41,7 +45,7 @@ window.canyonProbe = async () => {
     world.reset();
     const run = new Run(0, 'river-canyon');
     run.encounter = planEncounter(count, run.seed, previous, canyonSurface);
-    const start = -canyonWarning(count) - 2;
+    const start = run.encounter.canyon!.acquireAt - 2;
     const dt = count % 2 ? 0.1 : 1 / 30;
     let cameraClearance = Infinity, projectionError = 0;
     for (let t = start; t < 0.2; t += dt) {
@@ -65,7 +69,7 @@ window.canyonProbe = async () => {
     const impact = predictImpact(launchFrom(poseAt(run.encounter, 0, count)), canyonSurface);
     reports.push({ pass: count + 1, visible: run.encounter.visibleAt,
       score: contactAccuracy(impact, run.encounter.target, canyonSurface), cameraClearance, projectionError });
-    previous = poseAt(run.encounter, 7, count);
+    previous = poseAt(run.encounter, run.encounter.canyon!.endAt, count);
   }
   return reports;
 };
@@ -73,7 +77,7 @@ window.canyonFrame = async (pass, closeup) => {
   await setup();
   world.reset();
   current = runAt(pass - 1, pass * 4000);
-  current.encounter.visibleAt = -canyonWarning(pass - 1);
+  current.encounter.visibleAt = current.encounter.canyon!.acquireAt;
   for (let t = current.encounter.visibleAt - 0.5; t <= -0.2; t += STEP * 4) {
     current.encounter.time = t;
     world.update(current, current.pose, current.prediction, STEP * 4);
@@ -128,12 +132,14 @@ window.canyonWall = async (index, reverse) => {
   const z = CANYON.shelfOrigin + index * CANYON.shelfSpacing;
   const run = runAt(0, z - 800);
   run.encounter.time = 0;
-  world.update(run, run.pose, null, 0);
+  world.update(run, initialPose({ x: canyonSurface.center(z), y: 167, z }), null, 0);
   const target = world.scene.getTransformNodeByName('Encounter target')!;
   const origin = run.encounter.target.z - target.position.z;
-  const side = shelfSide(index), center = canyonSurface.center(z);
-  world.camera.position.set(center - side * 30, 125, z - origin + (reverse ? 550 : -550));
-  world.camera.setTarget(new Vector3(center + side * 150, 100, z - origin + (reverse ? 270 : -270)));
+  const side = shelfSide(index);
+  const camera = routePoint(z + (reverse ? 550 : -550), -side * 30);
+  const look = routePoint(z + (reverse ? 270 : -270), side * 150);
+  world.camera.position.set(camera.x, 125, camera.z - origin);
+  world.camera.setTarget(new Vector3(look.x, 100, look.z - origin));
   await world.scene.whenReadyAsync();
   world.render();
   const cliff = world.scene.materials.find(m => m.name === 'Canyon meadow and cliffs');
@@ -160,4 +166,58 @@ window.canyonWall = async (index, reverse) => {
   mesh.material = cliff;
   world.render();
   return { source, distinct, cullingDifference };
+};
+
+window.canyonTwist = async (along, quality, overhead) => {
+  await setup();
+  world.reset();
+  world.configure(quality);
+  const run = runAt(12);
+  const flight = run.encounter.canyon!;
+  const knot = flight.track.knots.reduce((best, k) =>
+    Math.abs(projectRoute(k.pose.position.x, k.pose.position.z).along - along)
+      < Math.abs(projectRoute(best.pose.position.x, best.pose.position.z).along - along) ? k : best);
+  for (let t = Math.max(flight.startTime, knot.time - 3); t <= knot.time + 0.001; t += 1 / 30) {
+    run.encounter.time = t;
+    world.update(run, run.pose, null, 1 / 30);
+  }
+  const p = run.pose.position, origin = p.z - world.scene.getTransformNodeByName('Aircraft pose')!.position.z;
+  if (overhead) {
+    world.camera.position.set(p.x - 180, 950, p.z - origin - 350);
+    world.camera.setTarget(new Vector3(p.x, 0, p.z - origin + 200));
+  }
+  await world.scene.whenReadyAsync();
+  world.render();
+  let covered = true;
+  for (let z = p.z - 400; z <= p.z + 1000; z += 32) {
+    for (const side of [-220, 0, 220]) {
+      const point = routePoint(z, side), cx = Math.floor(point.x / 256), cz = Math.floor(point.z / 256);
+      if (!world.scene.getMeshByName(`Terrain ${cx},${cz}`)) covered = false;
+      if (side === 0 && !world.scene.getMeshByName(`River ${cx},${cz}`)?.isEnabled()) covered = false;
+    }
+  }
+  return { speed: speedOf(run.pose), covered,
+    terrain: world.scene.meshes.filter(m => m.name.startsWith('Terrain ')).length,
+    water: world.scene.meshes.filter(m => m.name.startsWith('River ') && m.isEnabled()).length };
+};
+
+window.canyonRebase = async () => {
+  await setup();
+  const run = runAt(12);
+  run.encounter.time = 0;
+  const pose = run.pose;
+  const visit = (z: number) => world.update(run, initialPose({ x: canyonSurface.center(z), y: 167, z }), null, 0);
+  const capture = async () => {
+    world.reset();
+    world.update(run, pose, null, 0);
+    await world.scene.whenReadyAsync();
+    world.render();
+    const pixels = await world.engine.readPixels(0, 0, world.engine.getRenderWidth(), world.engine.getRenderHeight());
+    return new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+  };
+  visit(pose.position.z + 9000);
+  const before = await capture();
+  visit(pose.position.z + 4100);
+  const after = await capture();
+  return before.reduce((sum, value, i) => sum + Math.abs(value - after[i]!), 0) / before.length;
 };

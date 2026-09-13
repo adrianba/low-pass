@@ -6,6 +6,7 @@ import type { Vec3 } from '../simulation/math';
 import type { Settings, Score } from '../storage/records';
 import type { FinalePhase } from '../game/missile';
 import { isTerrainTheme, TERRAIN_THEMES } from '../config/terrain';
+import { speedOf } from '../simulation/flight-track';
 
 export type Screen = 'loading' | 'menu' | 'playing' | 'ending' | 'paused' | 'over' | 'error';
 export interface Actions {
@@ -193,7 +194,7 @@ export class UI {
     this.get('#level').textContent = `PASS ${String(run.encounter.id).padStart(2, '0')} / LEVEL ${String(d.level).padStart(2, '0')}`;
     this.get('#misses').textContent = `${run.misses} / ${MAX_MISSES}`;
     this.get('#altitude').textContent = `ALT ${Math.round(pose.position.y - 12)}`;
-    this.get('#speed').textContent = `SPD ${Math.round(pose.velocity.z)}`;
+    this.get('#speed').textContent = `SPD ${Math.round(run.surface.canyon ? speedOf(pose) : pose.velocity.z)}`;
     this.get('#damage').textContent = finale === 'destroyed' || finale === 'complete' ? 'AIRFRAME LOST'
       : damageLevel === 2 ? 'CRITICAL DAMAGE' : damageLevel === 1 ? 'AIRFRAME DAMAGED' : 'AIRFRAME OK';
     let label = 'CRUISING / FINDING TARGET', hint = 'STAND BY';

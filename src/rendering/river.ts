@@ -13,12 +13,14 @@ import { hash, mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { canyonSurface } from '../terrain/surface';
 import { CANYON } from '../terrain/river-canyon';
+import { projectRoute, routeMotion } from '../terrain/canyon-route';
 
 class Flow extends MaterialPluginBase {
   time = 0;
   origin = 0;
   constructor(material: PBRMaterial) { super(material, 'RiverFlow', 200, {}, true, true); }
   override getClassName(): string { return 'LowPassRiverFlow'; }
+  override getAttributes(attributes: string[]): void { attributes.push('riverCoord', 'riverNormal'); }
   override getUniforms() {
     return { ubo: [{ name: 'riverPhase', size: 2, type: 'vec2' }], fragment: 'uniform vec2 riverPhase;' };
   }
@@ -26,22 +28,29 @@ class Flow extends MaterialPluginBase {
     buffer.updateFloat2('riverPhase', this.time, this.origin % 4096);
   }
   override getCustomCode(type: string): Record<string, string> | null {
+    if (type === 'vertex') return {
+      CUSTOM_VERTEX_DEFINITIONS: 'attribute vec2 riverCoord; attribute vec2 riverNormal; varying vec2 vRiverCoord; varying vec2 vRiverNormal;',
+      CUSTOM_VERTEX_MAIN_END: 'vRiverCoord = riverCoord; vRiverNormal = riverNormal;',
+    };
     if (type !== 'fragment') return null;
     return {
+      CUSTOM_FRAGMENT_DEFINITIONS: 'varying vec2 vRiverCoord; varying vec2 vRiverNormal;',
       CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
-        vec2 waterP = vec2(vPositionW.x, vPositionW.z + riverPhase.y);
+        vec2 waterP = vRiverCoord;
         float waterWave = dot(waterP, vec2(61.0, 173.0)) * (6.28318530718 / 4096.0) + riverPhase.x * 2.0;
         float waterDetail = 1.0 - smoothstep(0.3, 1.5, fwidth(waterWave));
         surfaceAlbedo *= 0.92 + 0.08 * sin(waterWave) * waterDetail;
       `,
       CUSTOM_FRAGMENT_BEFORE_LIGHTS: `
-        vec2 riverP = vec2(vPositionW.x, vPositionW.z + riverPhase.y);
+        vec2 riverP = vRiverCoord;
         float riverK = 6.28318530718 / 4096.0;
         float riverA = dot(riverP, vec2(97.0, 153.0)) * riverK + riverPhase.x * 2.0;
         float riverB = dot(riverP, vec2(-181.0, 269.0)) * riverK + riverPhase.x * 3.0;
         float riverFade = 1.0 - smoothstep(0.3, 1.5, max(fwidth(riverA), fwidth(riverB)));
-        normalW = normalize(vec3(cos(riverA) * 0.11 * riverFade, 1.0,
-          cos(riverB) * 0.09 * riverFade));
+        vec2 riverSide = normalize(vRiverNormal);
+        vec2 riverTilt = riverSide * cos(riverA) * 0.11
+          + vec2(-riverSide.y, riverSide.x) * cos(riverB) * 0.09;
+        normalW = normalize(vec3(riverTilt.x * riverFade, 1.0, riverTilt.y * riverFade));
       `,
     };
   }
@@ -96,7 +105,7 @@ export class River {
   }
   chunk(cx: number, cz: number, origin: number): Mesh {
     const mesh = new Mesh(`River ${cx},${cz}`, this.scene);
-    const positions: number[] = [], normals: number[] = [], indices: number[] = [];
+    const positions: number[] = [], normals: number[] = [], indices: number[] = [], coordinates: number[] = [], directions: number[] = [];
     const cell = canyonSurface.cell;
     for (let z = 0; z < CHUNK; z += cell) for (let x = 0; x < CHUNK; x += cell) {
       const wx = cx * CHUNK + x, wz = cz * CHUNK + z;
@@ -105,7 +114,12 @@ export class River {
       const a = vertex(0, 0), b = vertex(cell, 0), c = vertex(0, cell), d = vertex(cell, cell);
       for (const triangle of [[a, b, c], [b, d, c]]) {
         const wet = wetTriangle(triangle), start = positions.length / 3;
-        for (const p of wet) { positions.push(p.x, p.y, p.z - cz * CHUNK); normals.push(0, 1, 0); }
+        for (const p of wet) {
+          positions.push(p.x, p.y, p.z - cz * CHUNK); normals.push(0, 1, 0);
+          const route = projectRoute(p.x, p.z), frame = routeMotion(route.along);
+          coordinates.push(route.lateral, route.along - cz * CHUNK + (cz * CHUNK) % 4096);
+          directions.push(frame.nx, frame.nz);
+        }
         for (let i = 1; i + 1 < wet.length; i++) indices.push(start, start + i, start + i + 1);
       }
     }
@@ -113,6 +127,8 @@ export class River {
       const data = new VertexData();
       data.positions = positions; data.normals = normals; data.indices = indices;
       data.applyToMesh(mesh);
+      mesh.setVerticesData('riverCoord', coordinates, false, 2);
+      mesh.setVerticesData('riverNormal', directions, false, 2);
     } else mesh.setEnabled(false);
     mesh.material = this.material;
     mesh.position.z = cz * CHUNK - origin;

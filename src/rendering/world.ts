@@ -32,7 +32,7 @@ import { hash, mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { surfaceFor } from '../terrain/surface';
 import type { Surface } from '../terrain/surface';
-import { canyonSightDistance } from '../game/canyon-flight';
+import { projectRoute, routeBounds } from '../terrain/canyon-route';
 import { contactAccuracy } from '../simulation/ballistics';
 import { River } from './river';
 import { CHASE_FOV, chaseView, targetInChaseView } from '../simulation/chase-camera';
@@ -78,6 +78,7 @@ export class World {
   private lastEncounter = 0;
   private cameraInitialized = false;
   private lastChunk = -Infinity;
+  private lastAhead = 0;
   private containers: AssetContainer[] = [];
   private surface: Surface;
   private river: River;
@@ -367,7 +368,7 @@ export class World {
       if (!prop) continue;
       const wx = (cx + hash(cx * 41 + i, cz, 12)) * CHUNK;
       const wz = (cz + hash(cx, cz * 37 + i, 45)) * CHUNK;
-      if (this.surface.canyon ? Math.abs(wx - this.surface.center(wz)) < 170
+      if (this.surface.canyon ? Math.abs(projectRoute(wx, wz).lateral) < 170
         || this.surface.normal(wx, wz).y < 0.82 : Math.abs(wx - this.surface.center(wz)) < 180) continue;
       const scale = 0.7 + hash(cx + i, cz, 56) * 1.2;
       const matrix = Matrix.Compose(new Vector3(scale, scale, scale), Quaternion.RotationAxis(Vector3.Up(), hash(cx, cz + i) * 6),
@@ -380,26 +381,30 @@ export class World {
     rocks.setEnabled(rockMatrices.length > 0);
     if (treeMatrices.length) trees.thinInstanceSetBuffer('matrix', new Float32Array(treeMatrices), 16);
     if (rockMatrices.length) rocks.thinInstanceSetBuffer('matrix', new Float32Array(rockMatrices), 16);
-    return { mesh, trees, rocks, water: this.surface.canyon && (cx === -1 || cx === 0)
+    const waterBounds = this.surface.canyon ? routeBounds(cz * CHUNK - 32, (cz + 1) * CHUNK + 32, 40) : null;
+    return { mesh, trees, rocks, water: waterBounds && (cx + 1) * CHUNK >= waterBounds[0] && cx * CHUNK <= waterBounds[1]
       ? this.river.chunk(cx, cz, this.origin) : null, z: cz * CHUNK };
   }
 
   private stream(z: number, immediate = false): void {
     const center = Math.floor(z / CHUNK);
-    if (center === this.lastChunk && !immediate) return;
-    this.lastChunk = center;
     const ahead = Math.ceil(this.scene.fogEnd / CHUNK) + 1;
+    if (center === this.lastChunk && ahead === this.lastAhead && !immediate) return;
+    this.lastChunk = center;
+    this.lastAhead = ahead;
+    const required = new Map<string, [number, number]>();
+    for (let cz = center - 3; cz <= center + ahead; cz++) {
+      const bounds = this.surface.canyon ? routeBounds(cz * CHUNK - 256, (cz + 1) * CHUNK + 256, 380) : null;
+      const left = bounds ? Math.floor(bounds[0] / CHUNK) : -5, right = bounds ? Math.floor(bounds[1] / CHUNK) : 4;
+      for (let cx = left; cx <= right; cx++) required.set(`${cx},${cz}`, [cx, cz]);
+    }
     for (const [key, chunk] of this.chunks) {
-      if (chunk.z < (center - 3) * CHUNK || chunk.z > (center + ahead) * CHUNK) {
+      if (!required.has(key)) {
         this.disposeChunk(chunk);
         this.chunks.delete(key);
       }
     }
-    // The canyon's bounded centerline, cliff rims and missile launch sites fit
-    // within +/-512; terrain beyond these walls cannot be seen from the route.
-    const left = this.surface.canyon ? -2 : -5, right = this.surface.canyon ? 1 : 4;
-    for (let cz = center - 3; cz <= center + ahead; cz++) for (let cx = left; cx <= right; cx++) {
-      const key = `${cx},${cz}`;
+    for (const [key, [cx, cz]] of required) {
       if (!this.chunks.has(key)) this.chunks.set(key, this.makeChunk(cx, cz));
     }
   }
@@ -419,7 +424,8 @@ export class World {
   }
 
   update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number): void {
-    this.scene.fogEnd = Math.max(QUALITY[this.quality].distance, targetSightDistance(run.encounter.id - 1) + 400);
+    this.scene.fogEnd = Math.max(QUALITY[this.quality].distance,
+      (run.encounter.canyon?.sightDistance ?? targetSightDistance(run.encounter.id - 1)) + 400);
     if (run.status === 'over') this.combat.startFinale(pose, run);
     this.combat.advance(dt);
     pose = this.combat.finalePose ?? pose;
@@ -444,7 +450,8 @@ export class World {
     this.bombRoot.setEnabled(run.bomb !== null);
     if (run.bomb) {
       this.bombRoot.position.copyFrom(this.local(run.bomb.position));
-      this.bombRoot.rotation.set(-Math.atan2(run.bomb.velocity.y, run.bomb.velocity.z),
+      this.bombRoot.rotation.set(-Math.atan2(run.bomb.velocity.y, run.surface.canyon
+        ? Math.hypot(run.bomb.velocity.x, run.bomb.velocity.z) : run.bomb.velocity.z),
         Math.atan2(run.bomb.velocity.x, run.bomb.velocity.z), 0);
     }
     const view = chaseView(pose, this.surface, this.cameraInitialized
@@ -521,12 +528,14 @@ export class World {
     const target = this.local(run.encounter.target);
     const camera = this.camera.position;
     if (run.surface.canyon) {
+      if (!run.encounter.canyon) throw new Error('Missing canyon acquisition plan.');
       this.camera.getViewMatrix(true);
       const look = this.camera.getTarget();
       return targetInChaseView(run.encounter.target, {
         position: { x: camera.x, y: camera.y, z: camera.z + this.origin },
         target: { x: look.x, y: look.y, z: look.z + this.origin },
-      }, this.surface, this.engine.getRenderWidth() / this.engine.getRenderHeight(), canyonSightDistance(run.encounter.id - 1));
+      }, this.surface, this.engine.getRenderWidth() / this.engine.getRenderHeight(),
+      run.encounter.canyon.sightDistance);
     }
     if (Vector3.Distance(camera, target) > targetSightDistance(run.encounter.id - 1)) return false;
     const screen = this.projectPoint(run.encounter.target);

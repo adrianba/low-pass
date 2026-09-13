@@ -3,6 +3,7 @@ import { clamp, distance, hash } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { valleySurface } from '../terrain/surface';
 import type { Surface } from '../terrain/surface';
+import { projectRoute, routeMotion, routePoint } from '../terrain/canyon-route';
 
 export const MISSILE_INTERCEPT_TIME = 1.7;
 export const FLYBY_DURATION = 2.8;
@@ -19,26 +20,43 @@ export class MissileFlight {
   readonly launch: Vec3;
   readonly intercept: Vec3;
   private readonly control: Vec3;
+  private readonly arrival: Vec3 | null;
+  private exitLift = 0;
 
   constructor(readonly kind: MissileKind, readonly start: Pose, future: Vec3, readonly side: number,
     private readonly surface: Surface = valleySurface, private readonly continuation?: (time: number) => Pose) {
-    const z = start.position.z + 210;
-    const x = surface.canyon ? surface.center(z) + side * 240 : start.position.x + side * 100;
+    const route = surface.canyon ? projectRoute(start.position.x, start.position.z) : null;
+    const launch = route ? routePoint(route.along + 210 * routeMotion(route.along).tz, side * 260)
+      : { x: start.position.x + side * 100, z: start.position.z + 210 };
+    const { x, z } = launch;
     this.launch = { x, y: surface.height(x, z) + (surface.canyon ? 8 : 2), z };
     this.intercept = kind !== 'flyby' ? { ...future } : { x: future.x + side * 24, y: future.y + 12, z: future.z };
+    if (surface.canyon && kind === 'flyby') {
+      const frame = routeMotion(projectRoute(future.x, future.z).along);
+      this.intercept.x = future.x + frame.nx * side * 24;
+      this.intercept.z = future.z + frame.nz * side * 24;
+    }
     this.control = {
       x: (this.launch.x + this.intercept.x) / 2,
       y: Math.max(this.launch.y + 55, this.intercept.y * 0.7),
       z: (this.launch.z + this.intercept.z) / 2,
     };
+    const forward = routeMotion(projectRoute(future.x, future.z).along);
+    this.arrival = surface.canyon ? { x: this.intercept.x - forward.tx * 90, y: this.intercept.y,
+      z: this.intercept.z - forward.tz * 90 } : null;
     if (surface.canyon) {
       for (let i = 1; i < 100; i++) {
         const u = i / 100, v = 1 - u;
-        const px = v * v * this.launch.x + 2 * v * u * this.control.x + u * u * this.intercept.x;
-        const pz = v * v * this.launch.z + 2 * v * u * this.control.z + u * u * this.intercept.z;
-        const required = (surface.height(px, pz) + 5 - v * v * this.launch.y - u * u * this.intercept.y) / (2 * v * u);
-        this.control.y = Math.max(this.control.y, required);
+        const p = this.positionAt(u * MISSILE_INTERCEPT_TIME);
+        this.control.y += Math.max(0, (surface.height(p.x, p.z) + 5 - p.y) / (3 * v * v * u));
       }
+      let lift = 0;
+      for (let i = 1; i <= 100; i++) {
+        const u = i / 100, p = this.positionAt(MISSILE_INTERCEPT_TIME + (FLYBY_DURATION - MISSILE_INTERCEPT_TIME) * u);
+        const blend = u ** 3 * (10 - 15 * u + 6 * u * u);
+        lift = Math.max(lift, (surface.height(p.x, p.z) + 8 - p.y) / blend);
+      }
+      this.exitLift = lift;
     }
   }
 
@@ -58,16 +76,28 @@ export class MissileFlight {
 
   positionAt(age: number, aircraft?: Vec3): Vec3 {
     const t = Math.max(0, age) / MISSILE_INTERCEPT_TIME;
-    const u = Math.min(t, 1);
+    const u = this.arrival ? t : Math.min(t, 1), v = 1 - u;
     const position = { x: 0, y: 0, z: 0 };
     for (const axis of ['x', 'y', 'z'] as const) {
-      position[axis] = (1 - u) ** 2 * this.launch[axis] + 2 * (1 - u) * u * this.control[axis] + u * u * this.intercept[axis];
-      if (t > 1) position[axis] += 2 * (this.intercept[axis] - this.control[axis]) * (t - 1);
+      position[axis] = this.arrival
+        ? v ** 3 * this.launch[axis] + 3 * v * v * u * this.control[axis]
+          + 3 * v * u * u * this.arrival[axis] + u ** 3 * this.intercept[axis]
+        : v * v * this.launch[axis] + 2 * v * u * this.control[axis] + u * u * this.intercept[axis];
+      if (!this.arrival && t > 1) {
+        position[axis] += 2 * (this.intercept[axis] - this.control[axis]) * (t - 1);
+      }
     }
     if (this.kind === 'flyby' && aircraft && distance(position, aircraft) < FLYBY_CLEARANCE) {
-      position.x = aircraft.x + this.side * FLYBY_CLEARANCE;
+      if (this.surface.canyon) {
+        const frame = routeMotion(projectRoute(aircraft.x, aircraft.z).along);
+        position.x = aircraft.x + frame.nx * this.side * FLYBY_CLEARANCE;
+        position.z = aircraft.z + frame.nz * this.side * FLYBY_CLEARANCE;
+      } else position.x = aircraft.x + this.side * FLYBY_CLEARANCE;
     }
-    if (this.surface.canyon && t > 1) position.y = Math.max(position.y, this.surface.height(position.x, position.z) + 5);
+    if (this.surface.canyon && t > 1) {
+      const u = clamp((age - MISSILE_INTERCEPT_TIME) / (FLYBY_DURATION - MISSILE_INTERCEPT_TIME), 0, 1);
+      position.y += this.exitLift * u ** 3 * (10 - 15 * u + 6 * u * u);
+    }
     return position;
   }
 

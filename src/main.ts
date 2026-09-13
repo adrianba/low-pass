@@ -9,6 +9,7 @@ import { FlightAudio } from './audio/audio';
 import { UI } from './ui/ui';
 import type { Screen } from './ui/ui';
 import { ReleaseKey } from './input/keyboard';
+import { speedOf } from './simulation/flight-track';
 
 let ui: UI | null = null;
 const warnings: string[] = [];
@@ -175,7 +176,7 @@ async function bootstrap(): Promise<void> {
       const displayed = preview ?? run;
       view.update(displayed, preview ? preview.pose : interpolated, preview ? null : prediction, screen === 'paused' ? 0 : dt);
       for (const event of view.combat.events.splice(0)) audio.cue(event);
-      audio.update(current.velocity.z, run.bomb?.age ?? null, !view.combat.aircraftDestroyed);
+      audio.update(run.surface.canyon ? speedOf(current) : current.velocity.z, run.bomb?.age ?? null, !view.combat.aircraftDestroyed);
       if (screen === 'ending' && view.combat.finalePhase === 'complete') {
         setScreen('over');
         void audio.pause();

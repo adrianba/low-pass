@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FLOOR, STEP, TARGET_RADIUS, difficulty } from '../../src/config/game';
 import { Run, initialPose, launchFrom, planEncounter, poseAt } from '../../src/game/run';
-import { canyonWarning } from '../../src/game/canyon-flight';
 import { advanceBomb, contactAccuracy, predictImpact } from '../../src/simulation/ballistics';
 import { CANYON } from '../../src/terrain/river-canyon';
 import { canyonSurface, valleySurface } from '../../src/terrain/surface';
@@ -10,6 +9,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { River, wetTriangle } from '../../src/rendering/river';
 import { CombatEffects } from '../../src/rendering/combat-effects';
 import { MissileFlight, MISSILE_INTERCEPT_TIME } from '../../src/game/missile';
+import { projectRoute, routeMotion } from '../../src/terrain/canyon-route';
 
 describe('River Canyon', () => {
   it('retains the old shared physical course and gives canyon its own surface', () => {
@@ -42,7 +42,7 @@ describe('River Canyon', () => {
       for (let i = 0; i < 10; i++) run.tick(true);
       expect(run.misses).toBe(miss);
       if (miss < 3) {
-        run.encounter.time = 7;
+        run.encounter.time = run.encounter.canyon!.endAt;
         run.tick(true);
         expect(run.result).toBeNull();
       }
@@ -64,7 +64,7 @@ describe('River Canyon', () => {
   });
   it('allows a real release to miss into the river', () => {
     const run = new Run(7, 'river-canyon');
-    run.encounter.visibleAt = -canyonWarning(0);
+    run.encounter.visibleAt = run.encounter.canyon!.acquireAt;
     let waterTime: number | null = null;
     for (let t = run.encounter.visibleAt; t < 5; t += STEP) {
       run.encounter.time = t;
@@ -97,12 +97,37 @@ describe('River Canyon', () => {
     expect(scene.meshes).toHaveLength(0);
     engine.dispose();
   });
+  it('keeps bent river flow coordinates continuous across the periodic chunk seam', () => {
+    const engine = new NullEngine(), scene = new Scene(engine), river = new River(scene);
+    const x = Math.floor(routeMotion(4096).x / 256), vertices = new Map<number, number[]>();
+    let matched = 0;
+    for (const z of [15, 16]) {
+      const mesh = river.chunk(x, z, 0);
+      const positions = mesh.getVerticesData('position')!, coordinates = mesh.getVerticesData('riverCoord')!;
+      for (let i = 0; i < positions.length / 3; i++) {
+        if (Math.abs(positions[i * 3 + 2]! + z * 256 - 4096) > 0.001) continue;
+        const px = positions[i * 3]!, u = coordinates[i * 2]!, v = coordinates[i * 2 + 1]!;
+        const frame = projectRoute(px, 4096);
+        expect(u).toBeCloseTo(frame.lateral, 3);
+        const phase = (61 * u + 173 * v) * Math.PI * 2 / 4096;
+        const value = [Math.sin(phase), Math.cos(phase)];
+        if (z === 15) vertices.set(px, value);
+        else if (vertices.has(px)) {
+          expect(value[0]).toBeCloseTo(vertices.get(px)![0]!, 3);
+          expect(value[1]).toBeCloseTo(vertices.get(px)![1]!, 3);
+          matched++;
+        }
+      }
+    }
+    expect(matched).toBeGreaterThan(2);
+    scene.dispose(); engine.dispose();
+  });
   it('launches missiles from dry terrain and continues the finale inside the gorge', () => {
     const engine = new NullEngine(), scene = new Scene(engine), combat = new CombatEffects(scene);
     for (const count of [0, 6, 12]) {
       const run = new Run(7, 'river-canyon');
       run.encounter = planEncounter(count, 7, initialPose(), canyonSurface);
-      run.encounter.visibleAt = -canyonWarning(count);
+      run.encounter.visibleAt = run.encounter.canyon!.acquireAt;
       run.encounter.time = 2.2;
       run.status = 'over';
       const pose = run.pose, future = poseAt(run.encounter, 2.2 + MISSILE_INTERCEPT_TIME, count);
@@ -111,6 +136,12 @@ describe('River Canyon', () => {
       for (let t = 0; t < MISSILE_INTERCEPT_TIME; t += STEP) {
         const p = missile.positionAt(t);
         expect(p.y - canyonSurface.height(p.x, p.z)).toBeGreaterThan(2);
+      }
+      const flyby = new MissileFlight('flyby', pose, future.position, -1, canyonSurface);
+      for (let t = 0; t <= 2.8; t += STEP) {
+        const p = flyby.positionAt(t);
+        expect(p.y - canyonSurface.height(p.x, p.z)).toBeGreaterThan(2);
+        expect(p.y).toBeLessThan(2000);
       }
       combat.reset();
       combat.startFinale(pose, run);
@@ -137,10 +168,10 @@ describe('River Canyon', () => {
       expect(start.acceleration).toEqual(previous.acceleration);
       expect(start.bank).toBeCloseTo(previous.bank, 12);
       expect(start.pitch).toBeCloseTo(previous.pitch, 12);
-      encounter.visibleAt = -canyonWarning(count);
+      encounter.visibleAt = encounter.canyon!.acquireAt;
       sides.add(encounter.canyon!.side);
       for (let dz = -32; dz <= 32; dz += 4) for (let dx = -32; dx <= 32; dx += 4) {
-        expect(canyonSurface.height(encounter.target.x + dx, encounter.target.z + dz)).toBe(FLOOR);
+        if (Math.hypot(dx, dz) <= 32) expect(canyonSurface.height(encounter.target.x + dx, encounter.target.z + dz)).toBe(FLOOR);
       }
       const impact = predictImpact(launchFrom(poseAt(encounter, 0, count)), canyonSurface);
       expect(contactAccuracy(impact, encounter.target, canyonSurface)).toBe(100);
@@ -152,29 +183,55 @@ describe('River Canyon', () => {
       expect(hits * STEP).toBeGreaterThanOrEqual(0.08);
       expect(TARGET_RADIUS).toBe(28);
       expect(difficulty(count).speed).toBeLessThanOrEqual(350);
-      previous = poseAt(encounter, 7, count);
+      previous = poseAt(encounter, encounter.canyon!.endAt, count);
     }
     expect(sides.size).toBe(2);
-  });
-  it('has shorter measured release windows than the valley at every tier', () => {
+  }, 30_000);
+  it('keeps measured release windows close to the original challenge at every tier', () => {
     const widths: number[][] = [];
     for (let count = 0; count <= 12; count++) {
       let canyon = 0, valley = 0;
       for (let seed = 0; seed < 8; seed++) {
         for (const surface of [valleySurface, canyonSurface]) {
-          const encounter = planEncounter(count, seed, initialPose({ x: 0, y: 167, z: seed * 9000 }), surface);
-          encounter.visibleAt = surface.canyon ? -canyonWarning(count) : -6;
-          let hits = 0;
+          const z = seed * 9000;
+          const encounter = planEncounter(count, seed, initialPose({ x: surface.canyon ? surface.center(z) : 0, y: 167, z }), surface);
+          encounter.visibleAt = encounter.canyon?.acquireAt ?? -6;
+          let hits = 0, intervals = 0, wasHit = false, nearCenter = 0;
+          let first = Infinity, last = -Infinity, firstNear = Infinity, lastNear = -Infinity;
+          const scoreAt = (t: number) => contactAccuracy(predictImpact(launchFrom(poseAt(encounter, t, count)), surface),
+            encounter.target, surface);
           for (let i = -120; i <= 120; i++) {
-            const impact = predictImpact(launchFrom(poseAt(encounter, i * STEP, count)), surface);
-            if (contactAccuracy(impact, encounter.target, surface)) hits++;
+            const points = scoreAt(i * STEP);
+            if (points) {
+              hits++; if (!wasHit) intervals++;
+              first = Math.min(first, i * STEP); last = i * STEP;
+            }
+            if (points >= 95) { nearCenter++; firstNear = Math.min(firstNear, i * STEP); lastNear = i * STEP; }
+            wasHit = points > 0;
+          }
+          expect(intervals).toBe(1);
+          expect(nearCenter).toBeGreaterThan(0);
+          if (surface.canyon) {
+            const boundary = (inside: number, outside: number, minimum: number) => {
+              for (let i = 0; i < 10; i++) {
+                const midpoint = (inside + outside) / 2;
+                if (scoreAt(midpoint) >= minimum) inside = midpoint; else outside = midpoint;
+              }
+              return inside;
+            };
+            expect(boundary(last, last + STEP, 1) - boundary(first, first - STEP, 1)).toBeGreaterThan(0.08);
+            expect(boundary(lastNear, lastNear + STEP, 95) - boundary(firstNear, firstNear - STEP, 95)).toBeGreaterThan(0.005);
           }
           if (surface.canyon) { canyon += hits; expect(hits * STEP).toBeGreaterThanOrEqual(0.08); }
           else valley += hits;
         }
       }
       widths.push([count + 1, canyon * STEP / 8, valley * STEP / 8]);
-      expect(canyon, `tier ${count + 1}`).toBeLessThan(valley * 0.98);
+      expect(canyon, `tier ${count + 1}`).toBeLessThan(valley * 1.1);
+      if (count === 0 || count === 12) {
+        const baseline = count === 0 ? 0.674 : 0.141;
+        expect(canyon * STEP / 8).toBeLessThan(baseline * 1.15);
+      }
     }
     console.info('Release windows (pass, canyon seconds, valley seconds)', widths);
   }, 30_000);

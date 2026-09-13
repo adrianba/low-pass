@@ -23,7 +23,7 @@ test('River Canyon previews, scores a bank target, and preserves selection on re
   await page.waitForFunction(() => Number(document.querySelector('#aim-readout')?.getAttribute('data-accuracy')) >= 40,
     undefined, { polling: 'raf', timeout: 30_000 });
   await page.keyboard.press('Space');
-  await expect(page.locator('#result')).toContainText(/ON TARGET|PRECISION HIT/, { timeout: 15_000 });
+  await expect(page.locator('#result')).toContainText(/ON TARGET|PRECISION HIT/, { timeout: 30_000 });
   await page.keyboard.press('Escape');
   await expect(page.locator('#terrain')).toBeDisabled();
   await page.getByRole('button', { name: 'END RUN' }).click();

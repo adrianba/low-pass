@@ -4,6 +4,7 @@ import { mix } from './math';
 import type { Vec3 } from './math';
 import { distance } from './math';
 import { TARGET_RADIUS } from '../config/game';
+import { advanceRoute, projectRoute, routeMotion, routePoint } from '../terrain/canyon-route';
 
 export interface ChaseView { position: Vec3; target: Vec3 }
 export const CHASE_FOV = 0.92;
@@ -11,13 +12,21 @@ export const CHASE_FOV = 0.92;
 export function chaseView(pose: Pose, surface: Surface, previous: Vec3 | null, dt: number): ChaseView {
   const p = pose.position;
   const desired = { x: mix(surface.center(p.z), p.x, 0.7), y: p.y + 16, z: p.z - 40 };
+  const target = { x: mix(surface.center(p.z + 95), p.x, 0.45), y: p.y - 9, z: p.z + 95 };
+  if (surface.canyon) {
+    const route = projectRoute(p.x, p.z), frame = routeMotion(route.along);
+    const lateralSpeed = pose.velocity.x * frame.nx + pose.velocity.z * frame.nz;
+    const lookLateral = route.lateral + 70 * lateralSpeed / Math.hypot(pose.velocity.x, pose.velocity.z);
+    Object.assign(desired, routePoint(advanceRoute(route.along, -40), route.lateral * 0.85));
+    Object.assign(target, routePoint(advanceRoute(route.along, 95), lookLateral));
+  }
   desired.y = Math.max(desired.y, surface.height(desired.x, desired.z) + 16);
   const alpha = 1 - Math.exp(-dt * 6);
   const position = previous ? {
     x: mix(previous.x, desired.x, alpha), y: mix(previous.y, desired.y, alpha), z: mix(previous.z, desired.z, alpha),
   } : desired;
   if (surface.canyon) position.y = Math.max(position.y, surface.height(position.x, position.z) + 16);
-  return { position, target: { x: mix(surface.center(p.z + 95), p.x, 0.45), y: p.y - 9, z: p.z + 95 } };
+  return { position, target };
 }
 
 export function projectChase(point: Vec3, view: ChaseView, aspect: number): { x: number; y: number } | null {

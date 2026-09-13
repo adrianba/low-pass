@@ -36,7 +36,7 @@ export interface Encounter {
 }
 
 export function poseAt(encounter: Encounter, time: number, count: number): Pose {
-  if (encounter.canyon) return canyonPose(encounter, time, count);
+  if (encounter.canyon) return canyonPose(encounter, time);
   const { amplitude, frequency, speed, diveDuration } = difficulty(count);
   const nominal = (t: number): Record<keyof Vec3, Motion> => {
     const z = encounter.origin + speed * t;
@@ -141,19 +141,24 @@ export class Run {
 
   constructor(readonly seed = 1, readonly terrain: TerrainTheme = 'green-valley') {
     this.surface = surfaceFor(terrain);
-    this.encounter = planEncounter(0, seed, initialPose(), this.surface);
+    const start = this.surface.canyon ? { x: this.surface.center(600), y: FLOOR + CRUISE_HEIGHT, z: 600 } : undefined;
+    this.encounter = planEncounter(0, seed, initialPose(start), this.surface);
   }
 
   get pose(): Pose { return poseAt(this.encounter, this.encounter.time, this.encounter.id - 1); }
+  private get pastTarget(): boolean {
+    return this.encounter.canyon ? this.encounter.time > this.encounter.canyon.cutoffAt
+      : this.pose.position.z > this.encounter.target.z + 90;
+  }
   get ready(): boolean {
     return this.status === 'running' && this.encounter.visibleAt !== null && !this.encounter.released
-      && this.encounter.resolvedAt === null && this.pose.position.z <= this.encounter.target.z + 90;
+      && this.encounter.resolvedAt === null && !this.pastTarget;
   }
   get prediction(): Contact { return predictImpact(launchFrom(this.pose), this.surface); }
 
   seeTarget(): void {
     if (this.status !== 'running' || this.encounter.visibleAt !== null) return;
-    if (this.encounter.time > -difficulty(this.encounter.id - 1).diveDuration - 0.5) {
+    if (this.encounter.time > (this.encounter.canyon?.diveAt ?? -difficulty(this.encounter.id - 1).diveDuration - 0.5)) {
       throw new Error('Target was not visible early enough for a fair attack pass.');
     }
     this.encounter.visibleAt = this.encounter.time;
@@ -192,9 +197,9 @@ export class Run {
       if (impact) { this.bomb = null; this.finish(impact); }
       else if (this.bomb.age > 20) throw new Error('Active bomb exceeded the supported flight duration.');
     }
-    if (!this.encounter.released && this.pose.position.z > this.encounter.target.z + 90) this.finish(null);
+    if (!this.encounter.released && this.pastTarget) this.finish(null);
     if (this.misses >= MAX_MISSES) return;
-    if (this.encounter.resolvedAt !== null && this.encounter.time >= Math.max(7, this.encounter.resolvedAt + 3)) {
+    if (this.encounter.resolvedAt !== null && this.encounter.time >= Math.max(this.encounter.canyon?.endAt ?? 7, this.encounter.resolvedAt + 3)) {
       this.encounter = planEncounter(this.resolved, this.seed, this.pose, this.surface);
       this.result = null;
     }

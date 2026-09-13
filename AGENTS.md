@@ -47,6 +47,7 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 | `src/terrain/heightfield.ts` | Canonical triangulated terrain and swept collision |
 | `src/terrain/surface.ts`, `river-canyon.ts` | Per-run physical surfaces, river contacts, stable canyon/shelf geometry |
 | `src/game/canyon-flight.ts` | Canyon shelf intercepts, motion joins, clearance, and acquisition range |
+| `src/terrain/canyon-route.ts`, `src/simulation/flight-track.ts` | Indexed bends/normal frames/arc distance; real-time, full-3D-speed tracks |
 | `src/simulation/chase-camera.ts` | Shared chase pose/projection and complete-ring visibility for planning/rendering |
 | `src/rendering/river.ts` | Canonical shoreline meshes, procedural flow, bounded splash pool |
 | `src/game/missile.ts` | Deterministic cosmetic missile trajectories and finale timing |
@@ -93,9 +94,10 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   pause, and finale, in both UI and application wiring. Cache bounded theme
   resources, rebuild chunks on switching, and retain open flight/target space.
 - River Canyon is a different physical course: fixed per Run, narrow and steep,
-  with dry shelf targets on both banks. Keep radius 28 and the existing forward
-  speed schedule. Higher difficulty comes from real jinks and measured shorter
-  warning/hit windows, not artificial release lockouts or smaller scoring rings.
+  with dry shelf targets on both banks. Keep radius 28 and the existing speed
+  ceilings, but use full 3D velocity for the canyon cap, HUD and audio. Slow
+  smoothly for tight transit turns; preserve approximately the existing attack
+  difficulty, never compensate with release lockouts or smaller scoring rings.
 - Generate canyon shelves before encounters; never flatten terrain beneath an
   active bomb. Full painted rings and model footprints must fit on flat canonical
   triangles above water. Canyon's 8-unit grid and legacy 16-unit grid are fixed
@@ -108,6 +110,16 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   conservative aircraft bounds, real camera acquisition/clearance, successful
   release intervals at every tier, and bounded planning work. Keep the pilot
   inside the gorge without adding aircraft crashes or impossible passes.
+- The indexed C2 route has broad attack stretches and 1200/1600-unit turn
+  transitions. Widths use nearest-route normals, not world-x offsets. Check
+  offset uniqueness/folding when tuning bends (current minimum radius ~580).
+  `Surface.curvature` retains its d2x/dz2 meaning; `routeMotion().curvature` is
+  geometric curvature. Arc queries/inversion are local, not accumulated history.
+- `FlightTrack` maps geometry to real seconds; nominal release is time zero.
+  Use explicit canyon acquire/dive/cutoff/end times, never global-z or fixed
+  seven-second shortcuts. The speed check bounds whole quintic velocity curves,
+  including handoffs, rather than only sampled endpoints. Return independent
+  Poses: finale corrections must not mutate cached track anchors.
 - Keep shelf tapers long enough that the approach wall cannot hide outer scoring
   rings. Planning checks the shared camera/occlusion rules before the dive
   deadline, with frame/interpolation margin and bounded candidate selection.
@@ -119,10 +131,15 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   flight continuation, not a tangent through a wall or a resumed ended Run.
   Preview Runs never save scores or mutate completed runs. Reset presentation,
   prediction caches, and camera when switching preview courses.
-- Canyon streams four 256-unit lateral columns; water occupies the central two.
-  Recheck wall, bomb, camera, and missile coverage if widening or shifting the
-  bounded centerline. Legacy terrain retains its original ten columns.
+- Canyon streams a bounded route-shaped set of 256-unit chunks, including
+  interior extrema, wall footprints and camera/missile margin. Water follows
+  intersecting route columns, not a fixed pair. Legacy keeps ten columns.
+  Recheck coverage and resource counts after geometry/fog changes; never coarsen
+  canonical banks to hide cost. Height-cache eviction must remain deterministic
+  and O(1); repeatedly taking the first Map iterator entry slows after deletions.
 - River flow uses a pause-aware bounded phase; splash meshes/materials are pooled.
+  River coordinates are local-normal/along-route vertex attributes. Apply modulo
+  to the chunk offset only, never independently to vertices within a triangle.
   Keep water/effects rebased, freeze on pause, and clear on restart/preview reset.
   Canyon cliff shading shares the existing grass/rock maps, without changing the
   original valley material or adding external assets.
