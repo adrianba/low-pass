@@ -15,6 +15,12 @@ export const TERRAIN_PALETTES = {
     rock: new Color3(0.56, 0.40, 0.25), dust: new Color3(0.70, 0.53, 0.32),
     reflectionGround: [140, 105, 65], reflectionSky: [177, 200, 218],
   },
+  'river-canyon': {
+    sky: new Color3(0.48, 0.64, 0.69), sun: new Color3(1, 0.95, 0.83),
+    fill: new Color3(0.69, 0.82, 1), ground: new Color3(0.18, 0.26, 0.19),
+    rock: new Color3(0.37, 0.40, 0.36), dust: new Color3(0.47, 0.45, 0.37),
+    reflectionGround: [48, 69, 52], reflectionSky: [137, 179, 194],
+  },
 } satisfies Record<TerrainTheme, {
   sky: Color3; sun: Color3; fill: Color3; ground: Color3; rock: Color3; dust: Color3;
   reflectionGround: [number, number, number]; reflectionSky: [number, number, number];
@@ -22,7 +28,7 @@ export const TERRAIN_PALETTES = {
 
 export function terrainTint(theme: TerrainTheme, x: number, z: number): number[] {
   const variation = noise(x / 160, z / 160, 77);
-  return theme === 'green-valley'
+  return theme !== 'desert'
     ? [0.35 + variation * 0.24, 0.48 + variation * 0.26, 0.24 + variation * 0.18, 1]
     : [0.92 + variation * 0.08, 0.92 + variation * 0.08, 0.92 + variation * 0.08, 1];
 }

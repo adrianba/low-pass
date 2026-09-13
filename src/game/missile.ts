@@ -1,7 +1,8 @@
 import type { Pose } from './run';
 import { clamp, distance, hash } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
-import { terrainHeight } from '../terrain/heightfield';
+import { valleySurface } from '../terrain/surface';
+import type { Surface } from '../terrain/surface';
 
 export const MISSILE_INTERCEPT_TIME = 1.7;
 export const FLYBY_DURATION = 2.8;
@@ -19,15 +20,26 @@ export class MissileFlight {
   readonly intercept: Vec3;
   private readonly control: Vec3;
 
-  constructor(readonly kind: MissileKind, readonly start: Pose, future: Vec3, readonly side: number) {
-    const x = start.position.x + side * 100, z = start.position.z + 210;
-    this.launch = { x, y: terrainHeight(x, z) + 2, z };
+  constructor(readonly kind: MissileKind, readonly start: Pose, future: Vec3, readonly side: number,
+    private readonly surface: Surface = valleySurface, private readonly continuation?: (time: number) => Pose) {
+    const z = start.position.z + 210;
+    const x = surface.canyon ? surface.center(z) + side * 240 : start.position.x + side * 100;
+    this.launch = { x, y: surface.height(x, z) + (surface.canyon ? 8 : 2), z };
     this.intercept = kind !== 'flyby' ? { ...future } : { x: future.x + side * 24, y: future.y + 12, z: future.z };
     this.control = {
       x: (this.launch.x + this.intercept.x) / 2,
       y: Math.max(this.launch.y + 55, this.intercept.y * 0.7),
       z: (this.launch.z + this.intercept.z) / 2,
     };
+    if (surface.canyon) {
+      for (let i = 1; i < 100; i++) {
+        const u = i / 100, v = 1 - u;
+        const px = v * v * this.launch.x + 2 * v * u * this.control.x + u * u * this.intercept.x;
+        const pz = v * v * this.launch.z + 2 * v * u * this.control.z + u * u * this.intercept.z;
+        const required = (surface.height(px, pz) + 5 - v * v * this.launch.y - u * u * this.intercept.y) / (2 * v * u);
+        this.control.y = Math.max(this.control.y, required);
+      }
+    }
   }
 
   get finalePhase(): FinalePhase | null {
@@ -55,11 +67,13 @@ export class MissileFlight {
     if (this.kind === 'flyby' && aircraft && distance(position, aircraft) < FLYBY_CLEARANCE) {
       position.x = aircraft.x + this.side * FLYBY_CLEARANCE;
     }
+    if (this.surface.canyon && t > 1) position.y = Math.max(position.y, this.surface.height(position.x, position.z) + 5);
     return position;
   }
 
   aircraftPose(): Pose {
     const t = clamp(this.age, 0, MISSILE_INTERCEPT_TIME);
+    if (this.continuation) return this.continuation(t);
     return {
       ...this.start,
       position: {

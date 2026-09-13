@@ -14,19 +14,19 @@ export function vertexHeight(x: number, z: number): number {
   return FLOOR + valley * (22 + broad * 110 + ridge * ridge * 55 + detail * 12);
 }
 
-export function terrainHeight(x: number, z: number): number {
-  const gx = Math.floor(x / CELL), gz = Math.floor(z / CELL);
-  const u = x / CELL - gx, v = z / CELL - gz;
-  const a = vertexHeight(gx * CELL, gz * CELL);
-  const b = vertexHeight((gx + 1) * CELL, gz * CELL);
-  const c = vertexHeight(gx * CELL, (gz + 1) * CELL);
-  const d = vertexHeight((gx + 1) * CELL, (gz + 1) * CELL);
+export function terrainHeight(x: number, z: number, vertex = vertexHeight, cell = CELL): number {
+  const gx = Math.floor(x / cell), gz = Math.floor(z / cell);
+  const u = x / cell - gx, v = z / cell - gz;
+  const a = vertex(gx * cell, gz * cell);
+  const b = vertex((gx + 1) * cell, gz * cell);
+  const c = vertex(gx * cell, (gz + 1) * cell);
+  const d = vertex((gx + 1) * cell, (gz + 1) * cell);
   return u + v <= 1 ? a + u * (b - a) + v * (c - a)
     : d + (1 - u) * (c - d) + (1 - v) * (b - d);
 }
 
 // Split at every grid edge and diagonal: height is affine inside each triangle.
-export function terrainImpact(a: Vec3, b: Vec3): Vec3 | null {
+export function terrainImpact(a: Vec3, b: Vec3, height = terrainHeight, cell = CELL): Vec3 | null {
   const cuts = [0, 1];
   const crossings = (from: number, to: number, spacing: number) => {
     if (from === to) return;
@@ -37,17 +37,17 @@ export function terrainImpact(a: Vec3, b: Vec3): Vec3 | null {
       if (t > 0 && t < 1) cuts.push(t);
     }
   };
-  crossings(a.x, b.x, CELL);
-  crossings(a.z, b.z, CELL);
-  crossings(a.x + a.z, b.x + b.z, CELL);
+  crossings(a.x, b.x, cell);
+  crossings(a.z, b.z, cell);
+  crossings(a.x + a.z, b.x + b.z, cell);
   cuts.sort((x, y) => x - y);
   const point = (t: number) => ({ x: mix(a.x, b.x, t), y: mix(a.y, b.y, t), z: mix(a.z, b.z, t) });
   let previous = point(0);
-  let gap = previous.y - terrainHeight(previous.x, previous.z);
-  if (gap <= 0) return { ...previous, y: terrainHeight(previous.x, previous.z) };
+  let gap = previous.y - height(previous.x, previous.z);
+  if (gap <= 0) return { ...previous, y: height(previous.x, previous.z) };
   for (let i = 1; i < cuts.length; i++) {
     const next = point(cuts[i]!);
-    const nextGap = next.y - terrainHeight(next.x, next.z);
+    const nextGap = next.y - height(next.x, next.z);
     if (nextGap <= 0) {
       const t = gap / (gap - nextGap);
       return { x: mix(previous.x, next.x, t), y: mix(previous.y, next.y, t), z: mix(previous.z, next.z, t) };

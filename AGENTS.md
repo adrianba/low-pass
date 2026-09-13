@@ -45,6 +45,10 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 | `src/game/targets.ts` | Available target kinds and seeded per-encounter selection |
 | `src/simulation/` | Engine-independent math and shared bomb/impact prediction |
 | `src/terrain/heightfield.ts` | Canonical triangulated terrain and swept collision |
+| `src/terrain/surface.ts`, `river-canyon.ts` | Per-run physical surfaces, river contacts, stable canyon/shelf geometry |
+| `src/game/canyon-flight.ts` | Canyon shelf intercepts, motion joins, clearance, and acquisition range |
+| `src/simulation/chase-camera.ts` | Shared chase pose/projection and complete-ring visibility for planning/rendering |
+| `src/rendering/river.ts` | Canonical shoreline meshes, procedural flow, bounded splash pool |
 | `src/game/missile.ts` | Deterministic cosmetic missile trajectories and finale timing |
 | `src/rendering/world.ts` | Scene, camera, chunks, origin rebasing, model/effect integration |
 | `src/rendering/target-model.ts`, `target-*.ts` | Cached tank/radar/SAM models and reversible wreck visuals |
@@ -86,8 +90,46 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   flight paths, visibility distances, and shared scores. Sand ripples never
   displace the ground. Keep shader phase stable across chunks and origin rebases.
 - Terrain selection previews on menu/results screens and is locked during play,
-  pause, and finale, in both UI and application wiring. Cache only two theme
-  resource sets, rebuild chunks on switching, and retain the open prop corridor.
+  pause, and finale, in both UI and application wiring. Cache bounded theme
+  resources, rebuild chunks on switching, and retain open flight/target space.
+- River Canyon is a different physical course: fixed per Run, narrow and steep,
+  with dry shelf targets on both banks. Keep radius 28 and the existing forward
+  speed schedule. Higher difficulty comes from real jinks and measured shorter
+  warning/hit windows, not artificial release lockouts or smaller scoring rings.
+- Generate canyon shelves before encounters; never flatten terrain beneath an
+  active bomb. Full painted rings and model footprints must fit on flat canonical
+  triangles above water. Canyon's 8-unit grid and legacy 16-unit grid are fixed
+  across graphics presets. Preserve the shared triangle diagonal.
+- Real bombs and prediction share typed first ground/water contact through
+  `Surface`. Water/wall contacts cannot score via an x/z-only radius check.
+  Water causes one miss/splash, no ground scar, and normal damage/finale handling.
+  River meshes clip canonical wet triangles; never use an independent shoreline.
+- Canyon flight carries full motion through joins/dive/recovery. Validate swept
+  conservative aircraft bounds, real camera acquisition/clearance, successful
+  release intervals at every tier, and bounded planning work. Keep the pilot
+  inside the gorge without adding aircraft crashes or impossible passes.
+- Keep shelf tapers long enough that the approach wall cannot hide outer scoring
+  rings. Planning checks the shared camera/occlusion rules before the dive
+  deadline, with frame/interpolation margin and bounded candidate selection.
+  Do not suppress `seeTarget`'s fairness guard to accommodate a hidden target.
+  Exercise sequential passes beyond the speed cap, not only isolated tiers at
+  arbitrary world positions. Refresh Babylon's view matrix before reading its
+  cached camera target for projection/acquisition.
+- Canyon missiles launch on dry terrain and the finale uses a frozen curved
+  flight continuation, not a tangent through a wall or a resumed ended Run.
+  Preview Runs never save scores or mutate completed runs. Reset presentation,
+  prediction caches, and camera when switching preview courses.
+- Canyon streams four 256-unit lateral columns; water occupies the central two.
+  Recheck wall, bomb, camera, and missile coverage if widening or shifting the
+  bounded centerline. Legacy terrain retains its original ten columns.
+- River flow uses a pause-aware bounded phase; splash meshes/materials are pooled.
+  Keep water/effects rebased, freeze on pause, and clear on restart/preview reset.
+  Canyon cliff shading shares the existing grass/rock maps, without changing the
+  original valley material or adding external assets.
+- Every custom MaterialPluginBase subclass needs a distinct `getClassName`;
+  shader-code variants within a class also need distinct defines (for example
+  `CANYON_TERRAIN`). Plugin display names alone do not separate Babylon's effect
+  cache. Test prewarming, theme switching and both shelf-wall directions.
 
 ## Lifecycle and persistence traps
 

@@ -51,15 +51,25 @@ Open **Flight Settings > Terrain** before starting a flight:
 - **Green Valley** (default) keeps the original green hills, pines, and exposed rock.
 - **Desert** uses warm sand, procedural wind ripples and dune-like shading, sparse
   sandstone rocks, and warm lighting. No extra assets are downloaded.
+- **River Canyon** follows a much narrower green rocky gorge, with steep sides,
+  flowing water, and dry flat target shelves on either bank. Stronger turns/jinks
+  and shorter warning and release windows make it harder. The pilot keeps the
+  aircraft clear of the walls; you still control only bomb release.
 
 The menu previews your choice immediately and remembers it for future visits.
 Terrain is fixed during a flight, including pauses and the final missile sequence;
 choose again on the results screen or after ending a run and returning to the menu.
 Graphics and audio settings remain adjustable while paused.
 
-Both choices use **identical ground geometry, collision, flight paths, difficulty,
-and scoring**. Desert dunes are a surface-shading effect, not newly raised terrain.
-Existing scores and settings are preserved, and both themes share the same top-10
+Green Valley and Desert use **identical ground geometry, collision, flight paths,
+difficulty, and scoring**. Desert dunes are a surface-shading effect, not newly
+raised terrain. River Canyon has its own ground/collision and flight course, but
+keeps the same speed progression (350 on pass 13), target size, and scoring.
+The entire target stays on dry ground. Bombs stop at their first contact with
+water, bank, or wall; a river hit is one miss with a splash, not a crater.
+Water animation and splashes freeze on pause. There are no aircraft crashes,
+waterfalls, water physics, or additional lives.
+Existing scores and settings are preserved, and all three terrains share the same top-10
 leaderboard. Older saved settings default to Green Valley; an invalid terrain
 choice produces a warning without discarding otherwise-valid saved records.
 
@@ -83,7 +93,7 @@ attitude is interpolated between simulation steps.
 
 Each encounter independently chooses a **tank**, **radar station**, or **SAM
 launcher**, with an equal chance of each; consecutive repeats are allowed.
-The choice stays fixed for that encounter in either terrain theme. These original
+The choice stays fixed for that encounter in every terrain. These original
 models occupy the target center and become damaged wrecks after a successful hit.
 The radar has an equipment shelter and raised dish; the wheeled launcher carries
 elevated launch tubes. Both are static visual models, not active weapons systems.
@@ -234,6 +244,9 @@ Sound, target artwork, tank/radar/SAM and missile models, procedural desert sand
 generation are original. Target models are generated locally by
 `src/rendering/target-vehicle.ts`, `target-radar.ts`, and `target-sam.ts`;
 `src/rendering/combat-effects.ts` generates the flying missiles and their effects.
+The canyon landform, water shading, and splash geometry are original, generated
+by `src/terrain/river-canyon.ts` and `src/rendering/river.ts`; cliff shading reuses
+the existing CC0 terrain maps without additional downloads.
 The current soundscape is synthesized rather than downloaded recordings.
 
 After intentionally regenerating/replacing approved assets:
@@ -263,8 +276,30 @@ IDs and labels are in `src/config/terrain.ts`; rendering palettes and prop
 selection are in `src/rendering/terrain-style.ts`. The desert PBR shader lives in
 `src/rendering/desert-material.ts`, uses bounded periodic world coordinates to
 stay stable across chunks/origin rebasing, and filters distant ripple detail.
-Both themes' materials and reflection textures are cached per scene and disposed
-with it. Theme switching invalidates chunks without changing the simulation.
+Terrain materials and reflection textures are cached per scene and disposed
+with it. Green Valley and River Canyon share the loaded grass/rock textures.
+`src/terrain/surface.ts` owns the canonical triangle sampling and first ground/
+water contact. Each Run owns a fixed surface; previews use a separate Run so
+switching terrain cannot modify an active/completed flight or its saved score.
+`src/game/canyon-flight.ts` joins safe shelf attack routes with the current full
+motion state. Shelves exist before encounters and never move beneath bombs.
+Gradual shelf transitions leave clear sightlines to the entire scoring target.
+The planner and renderer share chase-camera visibility rules, with a pre-dive
+timing margin and bounded selection of a suitable upcoming shelf. The fairness
+guard remains enabled; hidden targets are not accepted as playable approaches.
+Canyon uses an 8-unit canonical grid (the original course retains 16); quality
+settings do not alter collision. Water meshes clip the same ground triangles at
+the water level, and their shader phase remains continuous across origin rebases.
+Missile launches use the selected surface; the canyon finale follows a safe
+curved continuation without resuming the ended game.
+Custom terrain/water shader plugins use distinct cache identities, including a
+separate canyon variant, so prewarming or switching themes cannot substitute the
+wrong shader on a cliff face.
+Fixed-seed release-window regressions compare every difficulty tier with the
+original course. The initial measured mean canyon hit windows range from about
+0.67 seconds on pass 1 to 0.14 seconds on pass 13, versus about 0.74 and 0.16
+seconds in the valley sample. These are simulation timing measurements, not
+rendering-performance guarantees.
 `src/game/targets.ts` defines target kinds and seeded selection; `planEncounter`
 stores the choice once, separately from flight randomness.
 `src/rendering/target-model.ts` keeps one cached model per kind and enables only

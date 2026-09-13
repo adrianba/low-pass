@@ -1,10 +1,11 @@
 import { EDGE_EPSILON, GRAVITY, STEP, TARGET_RADIUS } from '../config/game';
-import { terrainImpact } from '../terrain/heightfield';
+import { valleySurface } from '../terrain/surface';
+import type { Contact, Surface } from '../terrain/surface';
 import type { Vec3 } from './math';
 
 export interface Bomb { position: Vec3; velocity: Vec3; age: number }
 
-export function advanceBomb(bomb: Bomb, dt = STEP): Vec3 | null {
+export function advanceBomb(bomb: Bomb, dt = STEP, surface: Surface = valleySurface): Contact | null {
   const old = bomb.position;
   const next = {
     x: old.x + bomb.velocity.x * dt,
@@ -13,18 +14,25 @@ export function advanceBomb(bomb: Bomb, dt = STEP): Vec3 | null {
   };
   bomb.velocity.y -= GRAVITY * dt;
   bomb.age += dt;
-  const impact = terrainImpact(old, next);
+  const impact = surface.contact(old, next);
   bomb.position = impact ?? next;
   return impact;
 }
 
-export function predictImpact(launch: Bomb): Vec3 {
+export function predictImpact(launch: Bomb, surface: Surface = valleySurface): Contact {
   const bomb = { position: { ...launch.position }, velocity: { ...launch.velocity }, age: 0 };
   for (let i = 0; i < 2400; i++) {
-    const impact = advanceBomb(bomb);
+    const impact = advanceBomb(bomb, STEP, surface);
     if (impact) return impact;
   }
+
   throw new Error('Bomb trajectory exceeded its supported flight duration.');
+}
+
+export function contactAccuracy(impact: Vec3, target: Vec3, surface: Surface): number {
+  if (surface.canyon && (surface.wet(impact.x, impact.z) || Math.abs(impact.y - target.y) > 0.1
+    || surface.normal(impact.x, impact.z).y < 0.999)) return 0;
+  return accuracy(impact, target);
 }
 
 export function accuracy(impact: Vec3, target: Vec3, radius = TARGET_RADIUS): number {

@@ -1,7 +1,7 @@
 import type { Run } from '../game/run';
 import { difficulty, MAX_MISSES } from '../config/game';
 import type { Quality } from '../config/game';
-import { accuracy } from '../simulation/ballistics';
+import { contactAccuracy } from '../simulation/ballistics';
 import type { Vec3 } from '../simulation/math';
 import type { Settings, Score } from '../storage/records';
 import type { FinalePhase } from '../game/missile';
@@ -45,8 +45,8 @@ export class UI {
         </div>
         <details id="settings"><summary>FLIGHT SETTINGS <span>+</span></summary>
           <div class="settings-body">
-            <label>Terrain <select id="terrain" aria-describedby="terrain-note"><option value="green-valley">Green Valley</option><option value="desert">Desert</option></select></label>
-            <p id="terrain-note">Preview your terrain here. Fixed for each flight; gameplay is identical.</p>
+            <label>Terrain <select id="terrain" aria-describedby="terrain-note">${Object.entries(TERRAIN_THEMES).map(([id, theme]) => `<option value="${id}">${theme.label}</option>`).join('')}</select></label>
+            <p id="terrain-note">Preview your terrain here. Fixed for each flight; River Canyon is harder.</p>
             <label>Graphics quality <select id="quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
             <label>Predicted impact marker <input id="assist" type="checkbox"></label>
             <label>Mute sound <input id="mute" type="checkbox"></label>
@@ -56,7 +56,7 @@ export class UI {
         </details>
         <details id="records"><summary>LOCAL FLIGHT RECORDS <span>+</span></summary><ol id="score-list"></ol><p class="fine-print">Stored in this browser profile only. Clearing site data removes your records.</p></details>
         <details id="credits"><summary>AIRCRAFT & ASSET CREDITS <span>+</span></summary>
-          <p class="fine-print">Kestrel aircraft, tank, radar station, SAM launcher, missiles, scenery, procedural sand, and synthesized audio: original Low Pass assets.<br>
+          <p class="fine-print">Kestrel aircraft, tank, radar station, SAM launcher, missiles, scenery, procedural sand, river water/splashes, and synthesized audio: original Low Pass assets.<br>
           Ground037 and Rock030: ambientCG, CC0 1.0. Babylon.js: Apache-2.0.<br>
           <a href="/assets/credits.txt" target="_blank" rel="noopener">Asset notices</a></p>
         </details>
@@ -130,7 +130,7 @@ export class UI {
     const preflight = screen === 'menu' || screen === 'over';
     this.get<HTMLSelectElement>('#terrain').disabled = !preflight;
     this.get('#terrain-note').textContent = preflight
-      ? 'Preview your terrain here. Fixed for each flight; gameplay is identical.'
+      ? 'Preview your terrain here. Fixed for each flight; River Canyon is harder.'
       : 'Terrain is fixed for this flight. Choose again before your next flight.';
     this.panel.hidden = screen === 'playing' || screen === 'ending';
     this.get('#hud').hidden = screen !== 'playing' && screen !== 'ending';
@@ -185,6 +185,8 @@ export class UI {
     this.app.dataset.missile = String(missileActive);
     this.app.dataset.damage = String(damageLevel);
     this.app.dataset.targetKind = run.encounter.targetKind;
+    this.app.dataset.impactKind = run.result?.impact?.kind ?? 'none';
+    this.app.dataset.predictionKind = prediction ? run.surface.wet(prediction.x, prediction.z) ? 'water' : 'ground' : 'none';
     if (this.screen !== 'playing' && this.screen !== 'ending') return;
     const pose = run.pose, d = difficulty(run.encounter.id - 1);
     this.get('#score').textContent = String(run.score).padStart(4, '0');
@@ -207,7 +209,7 @@ export class UI {
       this.get('#release-hint').textContent = hint;
       this.previousRunLabel = label;
     }
-    const predictedScore = prediction ? accuracy(prediction, run.encounter.target) : 0;
+    const predictedScore = prediction ? contactAccuracy(prediction, run.encounter.target, run.surface) : 0;
     const readout = this.get('#aim-readout');
     readout.textContent = this.settings.assist
       ? run.ready ? `PREDICTED ACCURACY ${predictedScore}%` : 'IMPACT ASSIST ON'

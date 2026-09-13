@@ -86,12 +86,12 @@ export class FlightAudio {
       this.fallingGain = null;
     }
   }
-  cue(type: 'release' | 'hit' | 'miss' | 'over' | 'target' | CombatCue): void {
+  cue(type: 'release' | 'hit' | 'miss' | 'splash' | 'over' | 'target' | CombatCue): void {
     const ctx = this.context, master = this.master;
     if (!ctx || !master || ctx.state !== 'running' || this.voices > 6) return;
     const gain = ctx.createGain();
     const now = ctx.currentTime;
-    const impact = type === 'hit' || type === 'miss' || type === 'destroyed' || type === 'damaged';
+    const impact = type === 'hit' || type === 'miss' || type === 'splash' || type === 'destroyed' || type === 'damaged';
     const duration = type === 'destroyed' ? 2.6 : type === 'damaged' ? 0.65 : impact ? 1.2 : type === 'flyby' ? 0.5
       : type === 'over' || type === 'missile' ? 0.8 : 0.18;
     let source: OscillatorNode | AudioBufferSourceNode;
@@ -101,8 +101,8 @@ export class FlightAudio {
       noise.loop = true;
       source = noise;
       const filter = ctx.createBiquadFilter();
-      filter.type = type === 'flyby' ? 'bandpass' : 'lowpass';
-      filter.frequency.value = type === 'flyby' ? 1800 : type === 'destroyed' ? 1100 : 700;
+      filter.type = type === 'flyby' || type === 'splash' ? 'bandpass' : 'lowpass';
+      filter.frequency.value = type === 'splash' ? 2800 : type === 'flyby' ? 1800 : type === 'destroyed' ? 1100 : 700;
       source.connect(filter).connect(gain);
       source.onended = () => { this.voices--; source.disconnect(); filter.disconnect(); gain.disconnect(); };
     } else {

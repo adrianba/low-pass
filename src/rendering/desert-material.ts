@@ -12,6 +12,7 @@ export class DesertSurface extends MaterialPluginBase {
   constructor(readonly material: PBRMaterial) {
     super(material, 'DesertSurface', 200, {}, true, true);
   }
+  override getClassName(): string { return 'LowPassDesertSurface'; }
 
   override getUniforms() {
     return {

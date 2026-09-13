@@ -1,5 +1,5 @@
 import { ATTACK_HEIGHT, CRUISE_HEIGHT, FLOOR, GRAVITY, MAX_MISSES, STEP, difficulty } from '../config/game';
-import { accuracy, advanceBomb, predictImpact } from '../simulation/ballistics';
+import { contactAccuracy, advanceBomb, predictImpact } from '../simulation/ballistics';
 import type { Bomb } from '../simulation/ballistics';
 import { clamp, hash, mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
@@ -8,16 +8,23 @@ import { joinMotion } from '../simulation/curves';
 import type { Motion } from '../simulation/curves';
 import { selectTargetKind } from './targets';
 import type { TargetKind } from './targets';
+import type { TerrainTheme } from '../config/terrain';
+import { surfaceFor, valleySurface } from '../terrain/surface';
+import type { Contact, Surface } from '../terrain/surface';
+import { canyonPose, planCanyon } from './canyon-flight';
+import type { CanyonFlight } from './canyon-flight';
 
 export const APPROACH_DURATION = 3;
 const ENCOUNTER_START = -8;
 
 export type RunStatus = 'running' | 'paused' | 'over';
-export interface Result { points: number; impact: Vec3 | null; id: number }
+export interface Result { points: number; impact: Contact | null; id: number }
 export interface Pose { position: Vec3; velocity: Vec3; acceleration: Vec3; bank: number; pitch: number }
 export interface Encounter {
   id: number;
   readonly targetKind: TargetKind;
+  readonly surface: Surface;
+  readonly canyon?: CanyonFlight;
   time: number;
   origin: number;
   phase: number;
@@ -29,6 +36,7 @@ export interface Encounter {
 }
 
 export function poseAt(encounter: Encounter, time: number, count: number): Pose {
+  if (encounter.canyon) return canyonPose(encounter, time, count);
   const { amplitude, frequency, speed, diveDuration } = difficulty(count);
   const nominal = (t: number): Record<keyof Vec3, Motion> => {
     const z = encounter.origin + speed * t;
@@ -98,10 +106,11 @@ export function interpolatePose(previous: Pose, current: Pose, alpha: number): P
     bank: mix(previous.bank, current.bank, alpha), pitch: mix(previous.pitch, current.pitch, alpha) };
 }
 
-export function planEncounter(count: number, seed: number, previous: Pose): Encounter {
+export function planEncounter(count: number, seed: number, previous: Pose, surface = valleySurface): Encounter {
+  if (surface.canyon) return planCanyon(count, seed, previous);
   const d = difficulty(count);
   const encounter: Encounter = {
-    id: count + 1, targetKind: selectTargetKind(count, seed), time: ENCOUNTER_START,
+    id: count + 1, targetKind: selectTargetKind(count, seed), surface, time: ENCOUNTER_START,
     origin: previous.position.z - d.speed * ENCOUNTER_START - (d.speed - previous.velocity.z) * APPROACH_DURATION / 2,
     phase: hash(count, 71, seed) * Math.PI * 2,
     start: { ...previous, position: { ...previous.position }, velocity: { ...previous.velocity }, acceleration: { ...previous.acceleration } },
@@ -127,10 +136,12 @@ export class Run {
   encounter: Encounter;
   bomb: Bomb | null = null;
   result: Result | null = null;
-  readonly events: Array<'release' | 'hit' | 'miss' | 'over' | 'target'> = [];
+  readonly events: Array<'release' | 'hit' | 'miss' | 'splash' | 'over' | 'target'> = [];
+  readonly surface: Surface;
 
-  constructor(readonly seed = 1) {
-    this.encounter = planEncounter(0, seed, initialPose());
+  constructor(readonly seed = 1, readonly terrain: TerrainTheme = 'green-valley') {
+    this.surface = surfaceFor(terrain);
+    this.encounter = planEncounter(0, seed, initialPose(), this.surface);
   }
 
   get pose(): Pose { return poseAt(this.encounter, this.encounter.time, this.encounter.id - 1); }
@@ -138,7 +149,7 @@ export class Run {
     return this.status === 'running' && this.encounter.visibleAt !== null && !this.encounter.released
       && this.encounter.resolvedAt === null && this.pose.position.z <= this.encounter.target.z + 90;
   }
-  get prediction(): Vec3 { return predictImpact(launchFrom(this.pose)); }
+  get prediction(): Contact { return predictImpact(launchFrom(this.pose), this.surface); }
 
   seeTarget(): void {
     if (this.status !== 'running' || this.encounter.visibleAt !== null) return;
@@ -157,15 +168,15 @@ export class Run {
     return true;
   }
 
-  private finish(impact: Vec3 | null): void {
+  private finish(impact: Contact | null): void {
     if (this.encounter.resolvedAt !== null) return;
-    const points = impact ? accuracy(impact, this.encounter.target) : 0;
+    const points = impact ? contactAccuracy(impact, this.encounter.target, this.surface) : 0;
     this.encounter.resolvedAt = this.encounter.time;
     this.score += points;
     this.resolved++;
     if (!points) this.misses++;
     this.result = { points, impact, id: this.encounter.id };
-    this.events.push(points ? 'hit' : 'miss');
+    this.events.push(points ? 'hit' : impact?.kind === 'water' ? 'splash' : 'miss');
     if (this.misses >= MAX_MISSES) {
       this.status = 'over';
       this.events.push('over');
@@ -177,14 +188,14 @@ export class Run {
     this.assisted ||= assist;
     this.encounter.time += STEP;
     if (this.bomb) {
-      const impact = advanceBomb(this.bomb);
+      const impact = advanceBomb(this.bomb, STEP, this.surface);
       if (impact) { this.bomb = null; this.finish(impact); }
       else if (this.bomb.age > 20) throw new Error('Active bomb exceeded the supported flight duration.');
     }
     if (!this.encounter.released && this.pose.position.z > this.encounter.target.z + 90) this.finish(null);
     if (this.misses >= MAX_MISSES) return;
     if (this.encounter.resolvedAt !== null && this.encounter.time >= Math.max(7, this.encounter.resolvedAt + 3)) {
-      this.encounter = planEncounter(this.resolved, this.seed, this.pose);
+      this.encounter = planEncounter(this.resolved, this.seed, this.pose, this.surface);
       this.result = null;
     }
   }

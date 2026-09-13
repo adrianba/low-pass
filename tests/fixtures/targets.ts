@@ -55,7 +55,7 @@ window.targetProbe = async kind => {
   const intact = state();
   const enabled = Object.values(roots).filter(name => world.scene.getTransformNodeByName(name)?.isEnabled());
   const resourceCounts = [counts()], shadowCounts = [shadows()];
-  run.result = { id: run.encounter.id, points: 80, impact: run.encounter.target };
+  run.result = { id: run.encounter.id, points: 80, impact: { ...run.encounter.target, kind: 'ground', normal: { x: 0, y: 1, z: 0 } } };
   render(3);
   render();
   const damaged = state();
@@ -66,7 +66,7 @@ window.targetProbe = async kind => {
   run = encounter(kind, 1);
   render();
   const sameKindReset = state() === intact;
-  run.result = { id: run.encounter.id, points: 80, impact: run.encounter.target };
+  run.result = { id: run.encounter.id, points: 80, impact: { ...run.encounter.target, kind: 'ground', normal: { x: 0, y: 1, z: 0 } } };
   render(3);
   world.reset();
   run = encounter(kind);
@@ -95,7 +95,7 @@ window.targetFrame = async (kind, terrain, damaged, closeup, count = 0) => {
   world.configure('low');
   const run = encounter(kind, count);
   run.encounter.time = closeup ? 2.2 : -1.5;
-  if (damaged) run.result = { id: run.encounter.id, points: 80, impact: run.encounter.target };
+  if (damaged) run.result = { id: run.encounter.id, points: 80, impact: { ...run.encounter.target, kind: 'ground', normal: { x: 0, y: 1, z: 0 } } };
   world.update(run, run.pose, null, damaged ? 3 : 0);
   world.update(run, run.pose, null, 0);
   if (closeup) {

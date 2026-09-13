@@ -12,6 +12,10 @@ Flying missile generator: src/rendering/combat-effects.ts.
 These models are original fictional game props, not replicas of real systems.
 Original procedural desert sand/ripple shader: src/rendering/desert-material.ts.
 The desert theme uses no downloaded sand assets and retains the same ground geometry.
+Original river canyon landform and dry shelves: src/terrain/river-canyon.ts.
+Original animated water and splash geometry: src/rendering/river.ts.
+Canyon cliffs reuse the existing licensed grass/rock maps, with triplanar rock
+color mapping; no additional assets are downloaded.
 
 Ground037 and Rock030
 Creator: ambientCG / Lennart Demes

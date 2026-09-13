@@ -13,9 +13,10 @@ export async function loadTexture(scene: Scene, url: string): Promise<Texture> {
 }
 
 class TerrainBlend extends MaterialPluginBase {
-  constructor(material: PBRMaterial, private readonly maps: Record<string, Texture>) {
-    super(material, 'TerrainBlend', 200, {}, true, true);
+  constructor(material: PBRMaterial, private readonly maps: Record<string, Texture>, private canyon = false) {
+    super(material, 'TerrainBlend', 200, { CANYON_TERRAIN: canyon }, true, true);
   }
+  override getClassName(): string { return 'LowPassTerrainBlend'; }
   override getSamplers(samplers: string[]): void { samplers.push(...Object.keys(this.maps)); }
   override bindForSubMesh(buffer: UniformBuffer): void {
     for (const [name, texture] of Object.entries(this.maps)) buffer.setTexture(name, texture);
@@ -32,7 +33,14 @@ class TerrainBlend extends MaterialPluginBase {
         float terrainMix() { return smoothstep(0.04, 0.26, 1.0 - normalize(vNormalW).y); }
       `,
       CUSTOM_FRAGMENT_UPDATE_ALBEDO: `
-        vec3 rock = toLinearSpace(texture2D(rockColor, vMainUV1 * 0.65).rgb) * 0.8;
+        ${this.canyon ? `
+        vec3 wallWeights = pow(abs(normalize(vNormalW)), vec3(4.0));
+        wallWeights /= max(0.001, wallWeights.x + wallWeights.y + wallWeights.z);
+        vec3 rockSample = texture2D(rockColor, vec2(vMainUV1.y * 24.0, vPositionW.y) / 24.0).rgb * wallWeights.x
+          + texture2D(rockColor, vMainUV1 * 0.65).rgb * wallWeights.y
+          + texture2D(rockColor, vPositionW.xy / 24.0).rgb * wallWeights.z;
+        vec3 rock = toLinearSpace(rockSample) * 0.8;
+        ` : 'vec3 rock = toLinearSpace(texture2D(rockColor, vMainUV1 * 0.65).rgb) * 0.8;'}
         surfaceAlbedo = mix(surfaceAlbedo, rock, terrainMix());
       `,
       CUSTOM_FRAGMENT_UPDATE_METALLICROUGHNESS: `
@@ -52,6 +60,29 @@ class TerrainBlend extends MaterialPluginBase {
   }
 }
 
+interface TerrainMaps {
+  albedo: Texture; rockColor: Texture; grassNormal: Texture; rockNormal: Texture; grassRough: Texture; rockRough: Texture;
+}
+const sharedMaps = new WeakMap<PBRMaterial, TerrainMaps>();
+
+function terrainMaterial(scene: Scene, maps: TerrainMaps, canyon: boolean): PBRMaterial {
+  const { albedo, ...details } = maps;
+  const material = new PBRMaterial(canyon ? 'Canyon meadow and cliffs' : 'Meadow and exposed rock', scene);
+  material.albedoTexture = albedo;
+  material.metallic = 0;
+  material.roughness = 0.94;
+  material.environmentIntensity = 0.45;
+  new TerrainBlend(material, details, canyon);
+  sharedMaps.set(material, maps);
+  return material;
+}
+
+export function createCanyonMaterial(scene: Scene, valley: PBRMaterial): PBRMaterial {
+  const maps = sharedMaps.get(valley);
+  if (!maps) throw new Error('Missing shared canyon terrain maps.');
+  return terrainMaterial(scene, maps, true);
+}
+
 export async function createTerrainMaterial(scene: Scene): Promise<PBRMaterial> {
   const path = '/assets/terrain/';
   const [albedo, rockColor, grassNormal, rockNormal, grassRough, rockRough] = await Promise.all([
@@ -60,11 +91,5 @@ export async function createTerrainMaterial(scene: Scene): Promise<PBRMaterial> 
     'Ground037_1K-JPG_Roughness.jpg', 'Rock030_1K-JPG_Roughness.jpg',
   ].map(name => loadTexture(scene, path + name)));
   if (!albedo || !rockColor || !grassNormal || !rockNormal || !grassRough || !rockRough) throw new Error('Incomplete terrain material.');
-  const material = new PBRMaterial('Meadow and exposed rock', scene);
-  material.albedoTexture = albedo;
-  material.metallic = 0;
-  material.roughness = 0.94;
-  material.environmentIntensity = 0.45;
-  new TerrainBlend(material, { rockColor, grassNormal, rockNormal, grassRough, rockRough });
-  return material;
+  return terrainMaterial(scene, { albedo, rockColor, grassNormal, rockNormal, grassRough, rockRough }, false);
 }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SETTINGS, RecordStore, validSettings, STORAGE_KEY } from '../../src/storage/records';
 
 describe('local records', () => {
-  it.each(['green-valley', 'desert'] as const)('remembers %s without changing completed scores', terrain => {
+  it.each(['green-valley', 'desert', 'river-canyon'] as const)('remembers %s without changing completed scores', terrain => {
     let json: string | null = null;
     const storage = { getItem: () => json, setItem: (key: string, value: string) => {
       expect(key).toBe(STORAGE_KEY); json = value;

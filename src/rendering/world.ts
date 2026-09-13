@@ -24,14 +24,19 @@ import '@babylonjs/loaders/glTF/2.0/glTFLoader';
 import '@babylonjs/core/Meshes/thinInstanceMesh';
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { AssetContainer } from '@babylonjs/core/assetContainer';
-import { CHUNK, CELL, QUALITY, TARGET_RADIUS, FLOOR, targetSightDistance } from '../config/game';
+import { CHUNK, QUALITY, TARGET_RADIUS, targetSightDistance } from '../config/game';
 import type { Quality } from '../config/game';
 import type { TerrainTheme } from '../config/terrain';
 import type { Run, Pose } from '../game/run';
 import { hash, mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
-import { terrainHeight, terrainImpact, vertexHeight, valleyCenter } from '../terrain/heightfield';
-import { createTerrainMaterial } from './terrain-material';
+import { surfaceFor } from '../terrain/surface';
+import type { Surface } from '../terrain/surface';
+import { canyonSightDistance } from '../game/canyon-flight';
+import { contactAccuracy } from '../simulation/ballistics';
+import { River } from './river';
+import { CHASE_FOV, chaseView, targetInChaseView } from '../simulation/chase-camera';
+import { createTerrainMaterial, createCanyonMaterial } from './terrain-material';
 import { createDesertMaterial } from './desert-material';
 import type { DesertSurface } from './desert-material';
 import { TERRAIN_PALETTES, terrainTint, terrainProp } from './terrain-style';
@@ -39,7 +44,7 @@ import { TargetModels } from './target-model';
 import { CombatEffects } from './combat-effects';
 import { shouldFlyby } from '../game/missile';
 
-interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; z: number }
+interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; water: Mesh | null; z: number }
 interface Burst { mesh: Mesh; velocity: Vector3; age: number }
 
 export class World {
@@ -74,9 +79,12 @@ export class World {
   private cameraInitialized = false;
   private lastChunk = -Infinity;
   private containers: AssetContainer[] = [];
+  private surface: Surface;
+  private river: River;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality, private terrain: TerrainTheme = 'green-valley') {
     this.quality = quality;
+    this.surface = surfaceFor(terrain);
     this.engine = new Engine(canvas, true, { stencil: true, powerPreference: 'high-performance' });
     if (this.engine.webGLVersion < 2) {
       this.engine.dispose();
@@ -94,7 +102,7 @@ export class World {
     this.camera = new FreeCamera('Chase camera', new Vector3(0, 180, -40), this.scene);
     this.camera.minZ = 0.5;
     this.camera.maxZ = 3500;
-    this.camera.fov = 0.92;
+    this.camera.fov = CHASE_FOV;
     this.sun = new DirectionalLight('Afternoon sun', new Vector3(-0.5, -0.85, 0.45).normalize(), this.scene);
     this.sun.diffuse = new Color3(1, 0.92, 0.78);
     this.sun.intensity = 2.7;
@@ -110,7 +118,8 @@ export class World {
     ambient.intensity = 0.35;
     ambient.diffuse = new Color3(0.69, 0.8, 1);
     ambient.groundColor = new Color3(0.21, 0.25, 0.16);
-    this.environments = { 'green-valley': this.makeEnvironment('green-valley'), desert: this.makeEnvironment('desert') };
+    this.environments = { 'green-valley': this.makeEnvironment('green-valley'), desert: this.makeEnvironment('desert'),
+      'river-canyon': this.makeEnvironment('river-canyon') };
     this.shadows = new ShadowGenerator(QUALITY[quality].shadow, this.sun);
     this.shadows.usePercentageCloserFiltering = true;
     this.shadows.bias = 0.0005;
@@ -149,6 +158,7 @@ export class World {
     this.targetModels = new TargetModels(this.scene);
     for (const mesh of this.targetModels.root.getChildMeshes()) this.shadows.addShadowCaster(mesh);
     this.combat = new CombatEffects(this.scene);
+    this.river = new River(this.scene);
     const markerMaterial = new StandardMaterial('Impact predictor', this.scene);
     markerMaterial.emissiveColor = new Color3(0.38, 1, 0.82);
     markerMaterial.disableLighting = true;
@@ -208,9 +218,11 @@ export class World {
     if (theme === this.terrain) return;
     if (!this.terrainMaterials) throw new Error('Terrain materials are not ready.');
     this.terrain = theme;
+    this.surface = surfaceFor(theme);
     this.terrainMaterial = this.terrainMaterials[theme];
     this.applyPalette();
     this.clearChunks();
+    this.river.reset();
   }
 
   private makeTarget(): Mesh {
@@ -271,7 +283,8 @@ export class World {
     for (const node of carried.rootNodes) node.parent = this.carriedBomb;
     this.bombRoot.setEnabled(false);
     this.desertSurface = createDesertMaterial(this.scene);
-    this.terrainMaterials = { 'green-valley': terrain, desert: this.desertSurface.material };
+    this.terrainMaterials = { 'green-valley': terrain, desert: this.desertSurface.material,
+      'river-canyon': createCanyonMaterial(this.scene, terrain) };
     this.terrainMaterial = this.terrainMaterials[this.terrain];
     progress('Building the flight corridor...');
     this.stream(0, true);
@@ -284,6 +297,7 @@ export class World {
           for (const material of Object.values(this.terrainMaterials!)) {
             await material.forceCompilationAsync(sample);
           }
+          await this.river.material.forceCompilationAsync(sample);
           await this.scene.whenReadyAsync();
         })(),
         new Promise<never>((_, reject) => {
@@ -313,11 +327,14 @@ export class World {
     chunk.mesh.dispose();
     chunk.trees.dispose();
     chunk.rocks.dispose();
+    chunk.water?.dispose();
   }
 
   private makeChunk(cx: number, cz: number): Chunk {
     const mesh = new Mesh(`Terrain ${cx},${cz}`, this.scene);
     const positions: number[] = [], normals: number[] = [], indices: number[] = [], uvs: number[] = [], colors: number[] = [];
+    const CELL = this.surface.cell;
+    const vertexHeight = this.surface.vertex;
     const n = CHUNK / CELL;
     for (let z = 0; z <= n; z++) for (let x = 0; x <= n; x++) {
       const wx = cx * CHUNK + x * CELL, wz = cz * CHUNK + z * CELL;
@@ -350,10 +367,11 @@ export class World {
       if (!prop) continue;
       const wx = (cx + hash(cx * 41 + i, cz, 12)) * CHUNK;
       const wz = (cz + hash(cx, cz * 37 + i, 45)) * CHUNK;
-      if (Math.abs(wx - valleyCenter(wz)) < 180) continue;
+      if (this.surface.canyon ? Math.abs(wx - this.surface.center(wz)) < 170
+        || this.surface.normal(wx, wz).y < 0.82 : Math.abs(wx - this.surface.center(wz)) < 180) continue;
       const scale = 0.7 + hash(cx + i, cz, 56) * 1.2;
       const matrix = Matrix.Compose(new Vector3(scale, scale, scale), Quaternion.RotationAxis(Vector3.Up(), hash(cx, cz + i) * 6),
-        new Vector3(wx, terrainHeight(wx, wz), wz - cz * CHUNK));
+        new Vector3(wx, this.surface.height(wx, wz), wz - cz * CHUNK));
       const matrices = prop === 'tree' ? treeMatrices : rockMatrices;
       matrix.copyToArray(matrices, matrices.length);
     }
@@ -362,7 +380,8 @@ export class World {
     rocks.setEnabled(rockMatrices.length > 0);
     if (treeMatrices.length) trees.thinInstanceSetBuffer('matrix', new Float32Array(treeMatrices), 16);
     if (rockMatrices.length) rocks.thinInstanceSetBuffer('matrix', new Float32Array(rockMatrices), 16);
-    return { mesh, trees, rocks, z: cz * CHUNK };
+    return { mesh, trees, rocks, water: this.surface.canyon && (cx === -1 || cx === 0)
+      ? this.river.chunk(cx, cz, this.origin) : null, z: cz * CHUNK };
   }
 
   private stream(z: number, immediate = false): void {
@@ -376,7 +395,10 @@ export class World {
         this.chunks.delete(key);
       }
     }
-    for (let cz = center - 3; cz <= center + ahead; cz++) for (let cx = -5; cx <= 4; cx++) {
+    // The canyon's bounded centerline, cliff rims and missile launch sites fit
+    // within +/-512; terrain beyond these walls cannot be seen from the route.
+    const left = this.surface.canyon ? -2 : -5, right = this.surface.canyon ? 1 : 4;
+    for (let cz = center - 3; cz <= center + ahead; cz++) for (let cx = left; cx <= right; cx++) {
       const key = `${cx},${cz}`;
       if (!this.chunks.has(key)) this.chunks.set(key, this.makeChunk(cx, cz));
     }
@@ -391,13 +413,14 @@ export class World {
     this.aircraft.setEnabled(true);
     this.targetModels.reset();
     this.combat.reset();
+    this.river.reset();
     for (const burst of this.bursts) burst.mesh.dispose();
     this.bursts = [];
   }
 
   update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number): void {
     this.scene.fogEnd = Math.max(QUALITY[this.quality].distance, targetSightDistance(run.encounter.id - 1) + 400);
-    if (run.status === 'over') this.combat.startFinale(pose);
+    if (run.status === 'over') this.combat.startFinale(pose, run);
     this.combat.advance(dt);
     pose = this.combat.finalePose ?? pose;
     if (Math.abs(pose.position.z - this.origin) > 4096) {
@@ -405,7 +428,10 @@ export class World {
       const shift = nextOrigin - this.origin;
       this.origin = nextOrigin;
       this.camera.position.z -= shift;
-      for (const chunk of this.chunks.values()) chunk.mesh.position.z = chunk.trees.position.z = chunk.rocks.position.z = chunk.z - this.origin;
+      for (const chunk of this.chunks.values()) {
+        chunk.mesh.position.z = chunk.trees.position.z = chunk.rocks.position.z = chunk.z - this.origin;
+        if (chunk.water) chunk.water.position.z = chunk.z - this.origin;
+      }
       for (const burst of this.bursts) burst.mesh.position.z -= shift;
       this.impactMark.position.z -= shift;
     }
@@ -421,14 +447,11 @@ export class World {
       this.bombRoot.rotation.set(-Math.atan2(run.bomb.velocity.y, run.bomb.velocity.z),
         Math.atan2(run.bomb.velocity.x, run.bomb.velocity.z), 0);
     }
-    const center = valleyCenter(pose.position.z);
-    const desired = this.local({ x: mix(center, pose.position.x, 0.7), y: pose.position.y + 16, z: pose.position.z - 40 });
-    desired.y = Math.max(desired.y, terrainHeight(desired.x, desired.z + this.origin) + 16);
-    if (!this.cameraInitialized) {
-      this.camera.position.copyFrom(desired);
-      this.cameraInitialized = true;
-    } else Vector3.LerpToRef(this.camera.position, desired, 1 - Math.exp(-dt * 6), this.camera.position);
-    this.camera.setTarget(this.local({ x: mix(valleyCenter(pose.position.z + 95), pose.position.x, 0.45), y: pose.position.y - 9, z: pose.position.z + 95 }));
+    const view = chaseView(pose, this.surface, this.cameraInitialized
+      ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
+    this.camera.position.copyFrom(this.local(view.position));
+    this.camera.setTarget(this.local(view.target));
+    this.cameraInitialized = true;
     this.sun.position.copyFrom(this.aircraft.position).addInPlace(new Vector3(160, 290, -150));
     this.target.position.copyFrom(this.local(run.encounter.target));
     this.target.position.y += 0.08;
@@ -437,9 +460,10 @@ export class World {
     if (prediction) {
       this.marker.position.copyFrom(this.local(prediction));
       this.marker.position.y += 0.5;
-      const radius = Math.hypot(prediction.x - run.encounter.target.x, prediction.z - run.encounter.target.z);
+      this.alignSurface(this.marker, prediction, false);
+      const hit = contactAccuracy(prediction, run.encounter.target, run.surface) > 0;
       const material = this.marker.material as StandardMaterial;
-      material.emissiveColor.set(radius <= TARGET_RADIUS ? 0.3 : 1, radius <= TARGET_RADIUS ? 1 : 0.58, 0.5);
+      material.emissiveColor.set(hit ? 0.3 : 1, hit ? 1 : 0.58, 0.5);
     }
     if (this.lastEncounter !== run.encounter.id) {
       this.lastEncounter = run.encounter.id;
@@ -449,7 +473,10 @@ export class World {
     }
     if (run.result && this.resultId !== run.result.id) {
       this.resultId = run.result.id;
-      if (run.result.impact) this.explode(run.result.impact);
+      if (run.result.impact?.kind === 'water') {
+        this.impactMark.setEnabled(false);
+        this.river.splash(run.result.impact);
+      } else if (run.result.impact) this.explode(run.result.impact);
       if (run.result.points > 0) {
         this.targetModels.setDestroyed(true);
         if (run.status !== 'over' && shouldFlyby(run.encounter.id, run.seed)) this.combat.startFlyby(run);
@@ -465,11 +492,13 @@ export class World {
     }
     this.bursts = this.bursts.filter(burst => burst.age < 2);
     this.combat.render(pose, this.origin, dt);
+    this.river.update(dt, this.origin);
   }
 
   private explode(impact: Vec3): void {
     this.impactMark.position.copyFrom(this.local(impact));
     this.impactMark.position.y += 0.15;
+    this.alignSurface(this.impactMark, impact, true);
     this.impactMark.setEnabled(true);
     for (let i = 0; i < 14; i++) {
       const dust = CreateIcoSphere('Impact dust', { radius: 1.1, subdivisions: 1 }, this.scene);
@@ -479,14 +508,31 @@ export class World {
     }
   }
 
+  private alignSurface(mesh: Mesh, point: Vec3, disc: boolean): void {
+    const n = this.surface.canyon && !this.surface.wet(point.x, point.z)
+      ? this.surface.normal(point.x, point.z) : { x: 0, y: 1, z: 0 };
+    const axis = new Vector3(n.z, 0, -n.x);
+    const rotation = axis.lengthSquared() > 1e-10
+      ? Quaternion.RotationAxis(axis.normalize(), Math.acos(Math.min(1, n.y))) : Quaternion.Identity();
+    mesh.rotationQuaternion = disc ? rotation.multiply(Quaternion.RotationAxis(Vector3.Right(), Math.PI / 2)) : rotation;
+  }
+
   targetVisible(run: Run): boolean {
     const target = this.local(run.encounter.target);
     const camera = this.camera.position;
+    if (run.surface.canyon) {
+      this.camera.getViewMatrix(true);
+      const look = this.camera.getTarget();
+      return targetInChaseView(run.encounter.target, {
+        position: { x: camera.x, y: camera.y, z: camera.z + this.origin },
+        target: { x: look.x, y: look.y, z: look.z + this.origin },
+      }, this.surface, this.engine.getRenderWidth() / this.engine.getRenderHeight(), canyonSightDistance(run.encounter.id - 1));
+    }
     if (Vector3.Distance(camera, target) > targetSightDistance(run.encounter.id - 1)) return false;
     const screen = this.projectPoint(run.encounter.target);
     if (!screen || screen.x < 0.05 || screen.x > 0.95 || screen.y < 0.1 || screen.y > 0.94) return false;
-    const hit = terrainImpact({ x: camera.x, y: camera.y, z: camera.z + this.origin },
-      { ...run.encounter.target, y: FLOOR + 0.5 });
+    const hit = this.surface.ground({ x: camera.x, y: camera.y, z: camera.z + this.origin },
+      { ...run.encounter.target, y: run.encounter.target.y + 0.5 });
     return hit === null;
   }
 

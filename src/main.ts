@@ -17,7 +17,8 @@ const store = new RecordStore(() => localStorage, warn);
 let settings = store.settings;
 const audio = new FlightAudio(settings, warn);
 let world: World | null = null;
-let run = new Run(7);
+let run = new Run(7, settings.terrain);
+let preview: Run | null = run;
 let screen: Screen = 'loading';
 let accumulator = 0;
 let last = performance.now();
@@ -42,7 +43,13 @@ function changeSettings(next: Settings): boolean {
   }
   try {
     if (next.quality !== settings.quality) world?.configure(next.quality);
-    if (next.terrain !== settings.terrain) world?.setTerrain(next.terrain);
+    if (next.terrain !== settings.terrain) {
+      const nextPreview = new Run(7, next.terrain);
+      world?.setTerrain(next.terrain);
+      world?.reset();
+      preview = nextPreview;
+      prediction = null;
+    }
   } catch (error) { fail(error); return false; }
   settings = next;
   store.update(next);
@@ -71,7 +78,9 @@ function fail(error: unknown): void {
 ui = new UI(settings, {
   start() {
     if (!world || (screen !== 'menu' && screen !== 'over')) return;
-    run = new Run(crypto.getRandomValues(new Uint32Array(1))[0]!);
+    try { run = new Run(crypto.getRandomValues(new Uint32Array(1))[0]!, settings.terrain); }
+    catch (error) { fail(error); return; }
+    preview = null;
     runId = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
     prediction = null;
     predictionClock = 0;
@@ -90,6 +99,8 @@ ui = new UI(settings, {
   },
   menu() {
     run.status = 'paused';
+    try { preview = new Run(7, settings.terrain); world?.reset(); }
+    catch (error) { fail(error); return; }
     setScreen('menu');
     void audio.pause();
   },
@@ -161,7 +172,8 @@ async function bootstrap(): Promise<void> {
       const current = run.pose;
       const alpha = screen === 'playing' ? accumulator / STEP : 1;
       const interpolated = interpolatePose(previous, current, alpha);
-      view.update(run, interpolated, prediction, screen === 'paused' ? 0 : dt);
+      const displayed = preview ?? run;
+      view.update(displayed, preview ? preview.pose : interpolated, preview ? null : prediction, screen === 'paused' ? 0 : dt);
       for (const event of view.combat.events.splice(0)) audio.cue(event);
       audio.update(current.velocity.z, run.bomb?.age ?? null, !view.combat.aircraftDestroyed);
       if (screen === 'ending' && view.combat.finalePhase === 'complete') {
