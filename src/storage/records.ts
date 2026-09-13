@@ -1,9 +1,11 @@
 import type { Quality } from '../config/game';
+import { isTerrainTheme } from '../config/terrain';
+import type { TerrainTheme } from '../config/terrain';
 
-export interface Settings { quality: Quality; assist: boolean; muted: boolean; volume: number }
+export interface Settings { quality: Quality; assist: boolean; muted: boolean; volume: number; terrain: TerrainTheme }
 export interface Score { id: string; score: number; date: string; assisted: boolean }
 interface Records { version: 1; scores: Score[]; settings: Settings }
-export const DEFAULT_SETTINGS: Settings = { quality: 'medium', assist: true, muted: false, volume: 0.55 };
+export const DEFAULT_SETTINGS: Settings = { quality: 'medium', assist: true, muted: false, volume: 0.55, terrain: 'green-valley' };
 export const STORAGE_KEY = 'low-pass.records.v1';
 export interface StoragePort { getItem(key: string): string | null; setItem(key: string, value: string): void }
 
@@ -19,7 +21,8 @@ function validScore(value: unknown): value is Score {
 export function validSettings(value: unknown): value is Settings {
   return object(value) && ['low', 'medium', 'high'].includes(String(value.quality))
     && typeof value.assist === 'boolean' && typeof value.muted === 'boolean'
-    && typeof value.volume === 'number' && Number.isFinite(value.volume) && value.volume >= 0 && value.volume <= 1;
+    && typeof value.volume === 'number' && Number.isFinite(value.volume) && value.volume >= 0 && value.volume <= 1
+    && isTerrainTheme(value.terrain);
 }
 function validRecords(value: unknown): value is Records {
   return object(value) && value.version === 1 && Array.isArray(value.scores)
@@ -35,9 +38,15 @@ export class RecordStore {
       this.storage = getStorage();
       const raw = this.storage.getItem(STORAGE_KEY);
       if (raw !== null) {
-        const value: unknown = JSON.parse(raw);
+        let value: unknown = JSON.parse(raw);
+        let recoveredTerrain = false;
+        if (object(value) && value.version === 1 && object(value.settings) && !isTerrainTheme(value.settings.terrain)) {
+          recoveredTerrain = Object.hasOwn(value.settings, 'terrain');
+          value = { ...value, settings: { ...value.settings, terrain: 'green-valley' } };
+        }
         if (!validRecords(value)) throw new Error('Saved data has an invalid format.');
         this.records = value;
+        if (recoveredTerrain) this.warn('Saved terrain choice was invalid. Using Green Valley; your scores and other settings are retained.');
       }
     } catch (error) {
       this.storage = null;

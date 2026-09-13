@@ -39,6 +39,8 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 | Path | Responsibility |
 | --- | --- |
 | `src/config/game.ts` | Gameplay constants, difficulty, quality, acquisition distance |
+| `src/config/terrain.ts`, `src/rendering/terrain-style.ts` | Terrain IDs/labels and visual palettes/props |
+| `src/rendering/desert-material.ts` | Original periodic, distance-filtered sand/ripple shading |
 | `src/game/run.ts` | Encounter planning, flight poses, release, score/miss lifecycle |
 | `src/simulation/` | Engine-independent math and shared bomb/impact prediction |
 | `src/terrain/heightfield.ts` | Canonical triangulated terrain and swept collision |
@@ -70,6 +72,12 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   object. Decorative props must not obstruct the open flight/target corridor.
 - The HUD impact reticle projects the true impact point and overlays the aircraft.
   Keep it legible across resolutions and hide it when assistance/release is off.
+- Green Valley and Desert are visual themes: identical ground geometry/collision,
+  flight paths, visibility distances, and shared scores. Sand ripples never
+  displace the ground. Keep shader phase stable across chunks and origin rebases.
+- Terrain selection previews on menu/results screens and is locked during play,
+  pause, and finale, in both UI and application wiring. Cache only two theme
+  resource sets, rebuild chunks on switching, and retain the open prop corridor.
 
 ## Lifecycle and persistence traps
 
@@ -90,6 +98,8 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 - `low-pass.records.v1` stores the top 10 completed runs and settings. Any use of
   assistance marks the run assisted. Do not count abandoned active runs.
   Validate stored data and surface failures without blocking session play.
+- Older v1 settings without `terrain` normalize to `green-valley` without losing
+  scores. Explicitly invalid terrain IDs warn and recover only that field.
 - Preserve the deployment origin: browser storage is origin/profile-specific,
   not a Docker volume. Never silently reset records for a gameplay adjustment.
 

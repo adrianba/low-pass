@@ -35,12 +35,20 @@ function setScreen(next: Screen): void {
   last = performance.now();
 }
 
-function changeSettings(next: Settings): void {
-  if (next.quality !== settings.quality) world?.configure(next.quality);
+function changeSettings(next: Settings): boolean {
+  if (next.terrain !== settings.terrain && screen !== 'menu' && screen !== 'over') {
+    warn('Terrain is fixed for this flight. Choose again before your next flight.');
+    return false;
+  }
+  try {
+    if (next.quality !== settings.quality) world?.configure(next.quality);
+    if (next.terrain !== settings.terrain) world?.setTerrain(next.terrain);
+  } catch (error) { fail(error); return false; }
   settings = next;
   store.update(next);
   audio.configure(next);
   if (screen === 'playing') run.assisted ||= next.assist;
+  return true;
 }
 
 function pause(): void {
@@ -115,7 +123,7 @@ window.addEventListener('pagehide', () => { void audio.pause(); });
 async function bootstrap(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
   if (!canvas) throw new Error('Missing scene canvas.');
-  const view = new World(canvas, settings.quality);
+  const view = new World(canvas, settings.quality, settings.terrain);
   world = view;
   view.engine.onContextLostObservable.add(() => fail(new Error('Graphics context lost. Reload to restore the game. Your completed scores are retained.')));
   await view.load(message => ui?.loading(message));

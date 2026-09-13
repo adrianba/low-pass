@@ -5,11 +5,12 @@ import { accuracy } from '../simulation/ballistics';
 import type { Vec3 } from '../simulation/math';
 import type { Settings, Score } from '../storage/records';
 import type { FinalePhase } from '../game/missile';
+import { isTerrainTheme, TERRAIN_THEMES } from '../config/terrain';
 
 export type Screen = 'loading' | 'menu' | 'playing' | 'ending' | 'paused' | 'over' | 'error';
 export interface Actions {
   start(): void; pause(): void; resume(): void; menu(): void;
-  settings(settings: Settings): void;
+  settings(settings: Settings): boolean;
 }
 
 export class UI {
@@ -44,6 +45,8 @@ export class UI {
         </div>
         <details id="settings"><summary>FLIGHT SETTINGS <span>+</span></summary>
           <div class="settings-body">
+            <label>Terrain <select id="terrain" aria-describedby="terrain-note"><option value="green-valley">Green Valley</option><option value="desert">Desert</option></select></label>
+            <p id="terrain-note">Preview your terrain here. Fixed for each flight; gameplay is identical.</p>
             <label>Graphics quality <select id="quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
             <label>Predicted impact marker <input id="assist" type="checkbox"></label>
             <label>Mute sound <input id="mute" type="checkbox"></label>
@@ -53,7 +56,7 @@ export class UI {
         </details>
         <details id="records"><summary>LOCAL FLIGHT RECORDS <span>+</span></summary><ol id="score-list"></ol><p class="fine-print">Stored in this browser profile only. Clearing site data removes your records.</p></details>
         <details id="credits"><summary>AIRCRAFT & ASSET CREDITS <span>+</span></summary>
-          <p class="fine-print">Kestrel aircraft, tank, missiles, scenery, and synthesized audio: original Low Pass assets.<br>
+          <p class="fine-print">Kestrel aircraft, tank, missiles, scenery, procedural sand, and synthesized audio: original Low Pass assets.<br>
           Ground037 and Rock030: ambientCG, CC0 1.0. Babylon.js: Apache-2.0.<br>
           <a href="/assets/credits.txt" target="_blank" rel="noopener">Asset notices</a></p>
         </details>
@@ -68,11 +71,13 @@ export class UI {
         <button id="assist-toggle" class="assist-button">IMPACT ASSIST: ON <kbd>A</kbd></button>
       </section>
       <div id="notification" class="notification" role="alert" hidden></div>
-      <footer><span>KESTREL F/B-01 <span class="separator">/</span> GREEN VALLEY RANGE</span><span id="footer-note">BROWSER FLIGHT EXPERIMENT</span></footer>
+      <footer><span>KESTREL F/B-01 <span class="separator">/</span> <span id="range-name"></span></span><span id="footer-note">BROWSER FLIGHT EXPERIMENT</span></footer>
     `;
     this.panel = this.get('#panel');
     this.notification = this.get('#notification');
     this.scoreList = this.get('#score-list');
+    this.get<HTMLSelectElement>('#terrain').value = settings.terrain;
+    this.updateTerrainLabel();
     this.get<HTMLSelectElement>('#quality').value = settings.quality;
     this.get<HTMLInputElement>('#assist').checked = settings.assist;
     this.get<HTMLInputElement>('#mute').checked = settings.muted;
@@ -84,14 +89,20 @@ export class UI {
     this.get('#retry').onclick = () => location.reload();
     const settingsChanged = () => {
       const quality = this.get<HTMLSelectElement>('#quality').value;
+      const terrain = this.get<HTMLSelectElement>('#terrain').value;
       if (quality !== 'low' && quality !== 'medium' && quality !== 'high') throw new Error('Invalid graphics quality.');
-      this.settings = {
+      if (!isTerrainTheme(terrain)) throw new Error('Invalid terrain choice.');
+      const next: Settings = {
         quality: quality as Quality, assist: this.get<HTMLInputElement>('#assist').checked,
         muted: this.get<HTMLInputElement>('#mute').checked, volume: Number(this.get<HTMLInputElement>('#volume').value) / 100,
+        terrain,
       };
-      actions.settings(this.settings);
+      if (actions.settings(next)) {
+        this.settings = next;
+        this.updateTerrainLabel();
+      } else this.get<HTMLSelectElement>('#terrain').value = this.settings.terrain;
     };
-    for (const id of ['#quality', '#assist', '#mute', '#volume']) this.get(id).onchange = settingsChanged;
+    for (const id of ['#terrain', '#quality', '#assist', '#mute', '#volume']) this.get(id).onchange = settingsChanged;
     this.get('#assist-toggle').onclick = () => {
       this.get<HTMLInputElement>('#assist').checked = !this.settings.assist;
       settingsChanged();
@@ -105,9 +116,22 @@ export class UI {
   }
   toggleAssist(): void { this.get<HTMLButtonElement>('#assist-toggle').click(); }
 
+  private updateTerrainLabel(): void {
+    const theme = TERRAIN_THEMES[this.settings.terrain];
+    this.app.dataset.terrain = this.settings.terrain;
+    this.get('#range-name').textContent = theme.range;
+    if (this.screen === 'menu') this.get('#description').textContent =
+      `The pilot has the aircraft. You have one moment. Chase the perfect drop through ${theme.landscape}.`;
+  }
+
   show(screen: Screen, run?: Run): void {
     this.screen = screen;
     this.app.dataset.screen = screen;
+    const preflight = screen === 'menu' || screen === 'over';
+    this.get<HTMLSelectElement>('#terrain').disabled = !preflight;
+    this.get('#terrain-note').textContent = preflight
+      ? 'Preview your terrain here. Fixed for each flight; gameplay is identical.'
+      : 'Terrain is fixed for this flight. Choose again before your next flight.';
     this.panel.hidden = screen === 'playing' || screen === 'ending';
     this.get('#hud').hidden = screen !== 'playing' && screen !== 'ending';
     this.get('#start-actions').hidden = screen !== 'menu' && screen !== 'over';
@@ -119,7 +143,7 @@ export class UI {
     const title = this.get('#title'), description = this.get('#description');
     if (screen === 'menu') {
       title.innerHTML = 'Stay low.<br><em>Make it count.</em>';
-      description.textContent = 'The pilot has the aircraft. You have one moment. Chase the perfect drop through an endless mountain valley.';
+      this.updateTerrainLabel();
       this.get('#start').innerHTML = 'BEGIN FLIGHT <span>↗</span>';
     } else if (screen === 'paused') {
       title.innerHTML = 'Holding<br><em>position.</em>';

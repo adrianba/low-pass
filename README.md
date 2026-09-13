@@ -42,7 +42,26 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 | Space | Release the single bomb during BOMB READY |
 | Escape | Pause/resume |
 | A | Toggle the predicted-impact marker |
-| Menu controls | Graphics quality, sound, volume, records, credits |
+| Menu controls | Terrain, graphics quality, sound, volume, records, credits |
+
+### Terrain choice
+
+Open **Flight Settings > Terrain** before starting a flight:
+
+- **Green Valley** (default) keeps the original green hills, pines, and exposed rock.
+- **Desert** uses warm sand, procedural wind ripples and dune-like shading, sparse
+  sandstone rocks, and warm lighting. No extra assets are downloaded.
+
+The menu previews your choice immediately and remembers it for future visits.
+Terrain is fixed during a flight, including pauses and the final missile sequence;
+choose again on the results screen or after ending a run and returning to the menu.
+Graphics and audio settings remain adjustable while paused.
+
+Both choices use **identical ground geometry, collision, flight paths, difficulty,
+and scoring**. Desert dunes are a surface-shading effect, not newly raised terrain.
+Existing scores and settings are preserved, and both themes share the same top-10
+leaderboard. Older saved settings default to Green Valley; an invalid terrain
+choice produces a warning without discarding otherwise-valid saved records.
 
 The aircraft automatically descends when a target becomes visible. Its bomb
 inherits its movement and falls under arcade gravity. The marker forecasts that
@@ -203,7 +222,7 @@ uv run scripts/optimize-textures.py /path/to/Ground037_1K-JPG.zip /path/to/Rock0
 Terrain maps are freely redistributable **CC0** ambientCG Ground037 and Rock030
 assets. Source URLs, creator, license, modifications, sizes, and SHA-256 checksums
 are in `public/assets/manifest.json`; notices are in `public/assets/credits.txt`.
-Sound, target artwork, tank and missile models, environment lighting, and scenery
+Sound, target artwork, tank and missile models, procedural desert sand shading, environment lighting, and scenery
 generation are original. The tank and missile geometry is generated locally by
 `src/rendering/target-vehicle.ts` and `src/rendering/combat-effects.ts`.
 The current soundscape is synthesized rather than downloaded recordings.
@@ -230,8 +249,14 @@ Apache-2.0 notices in `dist/licenses/`.
 - `storage/`: validated, versioned local records with explicit failure warnings.
 - `ui/`, `input/`: keyboard-accessible menus, instruments, release-key gating.
 
-Gameplay constants and capped difficulty are in `src/config/game.ts`. The
-rendering quality presets alter resolution, shadow size, vegetation density, and
+Gameplay constants and capped difficulty are in `src/config/game.ts`. Terrain
+IDs and labels are in `src/config/terrain.ts`; rendering palettes and prop
+selection are in `src/rendering/terrain-style.ts`. The desert PBR shader lives in
+`src/rendering/desert-material.ts`, uses bounded periodic world coordinates to
+stay stable across chunks/origin rebasing, and filters distant ripple detail.
+Both themes' materials and reflection textures are cached per scene and disposed
+with it. Theme switching invalidates chunks without changing the simulation.
+The rendering quality presets alter resolution, shadow size, vegetation density, and
 view distance, not the simulation or target collision surface. Terrain currently
 keeps a fixed canonical mesh resolution, with bounded streaming rather than
 different geometric LODs. The broad, winding open valley ensures release-only

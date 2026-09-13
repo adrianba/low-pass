@@ -26,11 +26,15 @@ import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { AssetContainer } from '@babylonjs/core/assetContainer';
 import { CHUNK, CELL, QUALITY, TARGET_RADIUS, FLOOR, targetSightDistance } from '../config/game';
 import type { Quality } from '../config/game';
+import type { TerrainTheme } from '../config/terrain';
 import type { Run, Pose } from '../game/run';
-import { hash, mix, noise } from '../simulation/math';
+import { hash, mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { terrainHeight, terrainImpact, vertexHeight, valleyCenter } from '../terrain/heightfield';
 import { createTerrainMaterial } from './terrain-material';
+import { createDesertMaterial } from './desert-material';
+import type { DesertSurface } from './desert-material';
+import { TERRAIN_PALETTES, terrainTint, terrainProp } from './terrain-style';
 import { TargetVehicle } from './target-vehicle';
 import { CombatEffects } from './combat-effects';
 import { shouldFlyby } from '../game/missile';
@@ -47,6 +51,9 @@ export class World {
   private carriedBomb: TransformNode | null = null;
   private chunks = new Map<string, Chunk>();
   private terrainMaterial!: PBRMaterial;
+  private terrainMaterials: Record<TerrainTheme, PBRMaterial> | null = null;
+  private desertSurface: DesertSurface | null = null;
+  private environments: Record<TerrainTheme, RawCubeTexture>;
   private treeTemplate: Mesh;
   private rockTemplate: Mesh;
   private target: Mesh;
@@ -55,6 +62,8 @@ export class World {
   private marker: Mesh;
   private impactMark: Mesh;
   private sun: DirectionalLight;
+  private ambient: HemisphericLight;
+  private rockMaterial: StandardMaterial;
   private shadows: ShadowGenerator;
   private origin = 0;
   private quality: Quality;
@@ -66,7 +75,7 @@ export class World {
   private lastChunk = -Infinity;
   private containers: AssetContainer[] = [];
 
-  constructor(canvas: HTMLCanvasElement, quality: Quality) {
+  constructor(canvas: HTMLCanvasElement, quality: Quality, private terrain: TerrainTheme = 'green-valley') {
     this.quality = quality;
     this.engine = new Engine(canvas, true, { stencil: true, powerPreference: 'high-performance' });
     if (this.engine.webGLVersion < 2) {
@@ -97,10 +106,11 @@ export class World {
     this.sun.orthoTop = 150;
     this.sun.orthoBottom = -150;
     const ambient = new HemisphericLight('Sky fill', Vector3.Up(), this.scene);
+    this.ambient = ambient;
     ambient.intensity = 0.35;
     ambient.diffuse = new Color3(0.69, 0.8, 1);
     ambient.groundColor = new Color3(0.21, 0.25, 0.16);
-    this.makeEnvironment();
+    this.environments = { 'green-valley': this.makeEnvironment('green-valley'), desert: this.makeEnvironment('desert') };
     this.shadows = new ShadowGenerator(QUALITY[quality].shadow, this.sun);
     this.shadows.usePercentageCloserFiltering = true;
     this.shadows.bias = 0.0005;
@@ -129,6 +139,7 @@ export class World {
     this.treeTemplate = merged;
     this.treeTemplate.setEnabled(false);
     const rockMaterial = new StandardMaterial('Rock props', this.scene);
+    this.rockMaterial = rockMaterial;
     rockMaterial.diffuseColor = new Color3(0.36, 0.37, 0.32);
     rockMaterial.specularColor = Color3.Black();
     this.rockTemplate = CreateIcoSphere('Rock', { radius: 2, subdivisions: 1, flat: true }, this.scene);
@@ -154,10 +165,12 @@ export class World {
     this.burstMaterial = new StandardMaterial('Dust', this.scene);
     this.burstMaterial.diffuseColor = new Color3(0.5, 0.43, 0.31);
     this.burstMaterial.specularColor = Color3.Black();
+    this.applyPalette();
     this.configure(quality);
   }
 
-  private makeEnvironment(): void {
+  private makeEnvironment(theme: TerrainTheme): RawCubeTexture {
+    const palette = TERRAIN_PALETTES[theme];
     const size = 32;
     const faces = Array.from({ length: 6 }, (_, face) => {
       const data = new Uint8Array(size * size * 3);
@@ -165,9 +178,9 @@ export class World {
         const height = face === 2 ? 1 : face === 3 ? 0 : 1 - y / size;
         for (let x = 0; x < size; x++) {
           const i = (y * size + x) * 3;
-          data[i] = mix(64, 142, height);
-          data[i + 1] = mix(75, 181, height);
-          data[i + 2] = mix(43, 217, height);
+          for (let channel = 0; channel < 3; channel++) {
+            data[i + channel] = mix(palette.reflectionGround[channel]!, palette.reflectionSky[channel]!, height);
+          }
         }
       }
       return data;
@@ -175,8 +188,29 @@ export class World {
     const environment = new RawCubeTexture(this.scene, faces, size, Constants.TEXTUREFORMAT_RGB,
       Constants.TEXTURETYPE_UNSIGNED_BYTE, true, false);
     environment.gammaSpace = true;
-    this.scene.environmentTexture = environment;
     this.scene.environmentIntensity = 0.65;
+    return environment;
+  }
+
+  private applyPalette(): void {
+    const palette = TERRAIN_PALETTES[this.terrain];
+    this.scene.clearColor.set(palette.sky.r, palette.sky.g, palette.sky.b, 1);
+    this.scene.fogColor.copyFrom(palette.sky);
+    this.sun.diffuse.copyFrom(palette.sun);
+    this.ambient.diffuse.copyFrom(palette.fill);
+    this.ambient.groundColor.copyFrom(palette.ground);
+    this.rockMaterial.diffuseColor.copyFrom(palette.rock);
+    this.burstMaterial.diffuseColor.copyFrom(palette.dust);
+    this.scene.environmentTexture = this.environments[this.terrain];
+  }
+
+  setTerrain(theme: TerrainTheme): void {
+    if (theme === this.terrain) return;
+    if (!this.terrainMaterials) throw new Error('Terrain materials are not ready.');
+    this.terrain = theme;
+    this.terrainMaterial = this.terrainMaterials[theme];
+    this.applyPalette();
+    this.clearChunks();
   }
 
   private makeTarget(): Mesh {
@@ -236,13 +270,22 @@ export class World {
     this.carriedBomb.position.y = -2.2;
     for (const node of carried.rootNodes) node.parent = this.carriedBomb;
     this.bombRoot.setEnabled(false);
-    this.terrainMaterial = terrain;
+    this.desertSurface = createDesertMaterial(this.scene);
+    this.terrainMaterials = { 'green-valley': terrain, desert: this.desertSurface.material };
+    this.terrainMaterial = this.terrainMaterials[this.terrain];
     progress('Building the flight corridor...');
     this.stream(0, true);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        this.scene.whenReadyAsync(),
+        (async () => {
+          const sample = this.chunks.values().next().value?.mesh;
+          if (!sample) throw new Error('Missing terrain shader preview.');
+          for (const material of Object.values(this.terrainMaterials!)) {
+            await material.forceCompilationAsync(sample);
+          }
+          await this.scene.whenReadyAsync();
+        })(),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error('Graphics initialization timed out. Try reloading with graphics acceleration enabled.')), 30_000);
         }),
@@ -256,12 +299,14 @@ export class World {
     this.engine.setHardwareScalingLevel(preset.scale / Math.min(window.devicePixelRatio, 1.5));
     this.scene.fogEnd = preset.distance;
     this.shadows.mapSize = preset.shadow;
-    this.lastChunk = -Infinity;
-    if (this.terrainMaterial) {
-      for (const chunk of this.chunks.values()) this.disposeChunk(chunk);
-      this.chunks.clear();
-    }
+    this.clearChunks();
     this.engine.resize();
+  }
+
+  private clearChunks(): void {
+    this.lastChunk = -Infinity;
+    for (const chunk of this.chunks.values()) this.disposeChunk(chunk);
+    this.chunks.clear();
   }
 
   private disposeChunk(chunk: Chunk): void {
@@ -281,8 +326,7 @@ export class World {
         2 * CELL, vertexHeight(wx, wz - CELL) - vertexHeight(wx, wz + CELL)).normalize();
       normals.push(normal.x, normal.y, normal.z);
       uvs.push(wx / 24, ((cz % 24) * CHUNK + z * CELL) / 24);
-      const variation = noise(wx / 160, wz / 160, 77);
-      colors.push(0.35 + variation * 0.24, 0.48 + variation * 0.26, 0.24 + variation * 0.18, 1);
+      colors.push(...terrainTint(this.terrain, wx, wz));
     }
     for (let z = 0; z < n; z++) for (let x = 0; x < n; x++) {
       const a = z * (n + 1) + x, b = a + 1, c = a + n + 1, d = c + 1;
@@ -302,13 +346,16 @@ export class World {
     const treeMatrices: number[] = [], rockMatrices: number[] = [];
     const density = QUALITY[this.quality].trees;
     for (let i = 0; i < density; i++) {
+      const prop = terrainProp(this.terrain, i);
+      if (!prop) continue;
       const wx = (cx + hash(cx * 41 + i, cz, 12)) * CHUNK;
       const wz = (cz + hash(cx, cz * 37 + i, 45)) * CHUNK;
       if (Math.abs(wx - valleyCenter(wz)) < 180) continue;
       const scale = 0.7 + hash(cx + i, cz, 56) * 1.2;
       const matrix = Matrix.Compose(new Vector3(scale, scale, scale), Quaternion.RotationAxis(Vector3.Up(), hash(cx, cz + i) * 6),
         new Vector3(wx, terrainHeight(wx, wz), wz - cz * CHUNK));
-      matrix.copyToArray(i % 4 ? treeMatrices : rockMatrices, i % 4 ? treeMatrices.length : rockMatrices.length);
+      const matrices = prop === 'tree' ? treeMatrices : rockMatrices;
+      matrix.copyToArray(matrices, matrices.length);
     }
     trees.position.z = rocks.position.z = mesh.position.z;
     trees.setEnabled(treeMatrices.length > 0);
@@ -362,6 +409,7 @@ export class World {
       for (const burst of this.bursts) burst.mesh.position.z -= shift;
       this.impactMark.position.z -= shift;
     }
+    if (this.desertSurface) this.desertSurface.origin = this.origin;
     this.stream(pose.position.z);
     this.aircraft.position.copyFrom(this.local(pose.position));
     this.aircraft.setEnabled(!this.combat.aircraftDestroyed);

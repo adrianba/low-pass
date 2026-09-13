@@ -11,50 +11,57 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('loads real 3D assets, starts a flight, drops accurately, and pauses', async ({ page, baseURL }) => {
-  test.setTimeout(90_000);
-  const errors: string[] = [];
-  const externalRequests: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-  page.on('request', request => {
-    const url = new URL(request.url());
-    if (url.protocol.startsWith('http') && url.origin !== new URL(baseURL!).origin) externalRequests.push(url.href);
+for (const terrain of ['green-valley', 'desert'] as const) {
+  test(`loads real 3D assets, starts a flight, drops accurately, and pauses in ${terrain}`, async ({ page, baseURL }) => {
+    test.setTimeout(90_000);
+    const errors: string[] = [];
+    const externalRequests: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    page.on('request', request => {
+      const url = new URL(request.url());
+      if (url.protocol.startsWith('http') && url.origin !== new URL(baseURL!).origin) externalRequests.push(url.href);
+    });
+    await page.goto('/');
+    await expect(page.locator('#app')).toHaveAttribute('data-screen', 'menu', { timeout: 30_000 });
+    await page.locator('#settings summary').click();
+    await page.locator('#terrain').selectOption(terrain);
+    await page.screenshot({ path: `test-results/menu-${terrain}.png` });
+    await page.getByRole('button', { name: 'BEGIN FLIGHT' }).click();
+    await expect(page.locator('#app')).toHaveAttribute('data-ready', 'true');
+    const reticle = page.getByRole('img', { name: 'Predicted bomb impact' });
+    await expect(reticle).toBeVisible();
+    await expect(reticle).toHaveCSS('width', '26px');
+    await expect(reticle).toHaveCSS('z-index', '1');
+    await page.keyboard.press('KeyA');
+    await expect(reticle).toBeHidden();
+    await page.keyboard.press('KeyA');
+    await expect(reticle).toBeVisible();
+    await page.screenshot({ path: `test-results/aim-${terrain}.png` });
+    await page.waitForFunction(() => Number(document.querySelector('#aim-readout')?.getAttribute('data-accuracy')) >= 40,
+      undefined, { timeout: 25_000, polling: 'raf' });
+    await page.keyboard.press('Space');
+    await expect(page.locator('#flight-status')).toContainText('BOMB AWAY');
+    await expect(page.locator('#result')).toContainText(/ON TARGET|PRECISION HIT/, { timeout: 15_000 });
+    await expect(page.locator('#misses')).toHaveText('0 / 3');
+    await expect(page.locator('#app')).toHaveAttribute('data-damage', '0');
+    await expect(page.locator('#app')).toHaveAttribute('data-missile', 'true');
+    await expect(reticle).toBeHidden();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#app')).toHaveAttribute('data-screen', 'paused');
+    await page.screenshot({ path: `test-results/flight-${terrain}.png` });
+    await page.getByRole('button', { name: 'RESUME FLIGHT' }).click();
+    await expect(page.locator('#app')).toHaveAttribute('data-screen', 'playing');
+    expect(errors).toEqual([]);
+    expect(externalRequests).toEqual([]);
   });
-  await page.goto('/');
-  await expect(page.locator('#app')).toHaveAttribute('data-screen', 'menu', { timeout: 30_000 });
-  await page.screenshot({ path: 'test-results/menu.png' });
-  await page.getByRole('button', { name: 'BEGIN FLIGHT' }).click();
-  await expect(page.locator('#app')).toHaveAttribute('data-ready', 'true');
-  const reticle = page.getByRole('img', { name: 'Predicted bomb impact' });
-  await expect(reticle).toBeVisible();
-  await expect(reticle).toHaveCSS('width', '26px');
-  await expect(reticle).toHaveCSS('z-index', '1');
-  await page.keyboard.press('KeyA');
-  await expect(reticle).toBeHidden();
-  await page.keyboard.press('KeyA');
-  await expect(reticle).toBeVisible();
-  await page.waitForFunction(() => Number(document.querySelector('#aim-readout')?.getAttribute('data-accuracy')) >= 40,
-    undefined, { timeout: 25_000, polling: 'raf' });
-  await page.keyboard.press('Space');
-  await expect(page.locator('#flight-status')).toContainText('BOMB AWAY');
-  await expect(page.locator('#result')).toContainText(/ON TARGET|PRECISION HIT/, { timeout: 15_000 });
-  await expect(page.locator('#misses')).toHaveText('0 / 3');
-  await expect(page.locator('#app')).toHaveAttribute('data-damage', '0');
-  await expect(page.locator('#app')).toHaveAttribute('data-missile', 'true');
-  await expect(reticle).toBeHidden();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('#app')).toHaveAttribute('data-screen', 'paused');
-  await page.screenshot({ path: 'test-results/flight.png' });
-  await page.getByRole('button', { name: 'RESUME FLIGHT' }).click();
-  await expect(page.locator('#app')).toHaveAttribute('data-screen', 'playing');
-  expect(errors).toEqual([]);
-  expect(externalRequests).toEqual([]);
-});
+}
 
 test('two survivable missile hits precede the final strike and all damage resets on restart', async ({ page }) => {
   test.setTimeout(210_000);
   await page.goto('/');
+  await page.locator('#settings summary').click();
+  await page.locator('#terrain').selectOption('desert');
   await page.getByRole('button', { name: 'BEGIN FLIGHT' }).click();
   const app = page.locator('#app');
   await expect(app).toHaveAttribute('data-damage', '1', { timeout: 60_000 });
@@ -71,6 +78,9 @@ test('two survivable missile hits precede the final strike and all damage resets
   await expect(page.getByRole('img', { name: 'Predicted bomb impact' })).toBeHidden();
   await page.keyboard.press('Escape');
   await expect(app).toHaveAttribute('data-screen', 'paused');
+  await page.locator('#settings summary').click();
+  await expect(page.locator('#terrain')).toBeDisabled();
+  await expect(page.locator('#terrain')).toHaveValue('desert');
   const phase = await app.getAttribute('data-finale');
   await page.waitForTimeout(300);
   await expect(app).toHaveAttribute('data-finale', phase!);
@@ -89,6 +99,7 @@ test('two survivable missile hits precede the final strike and all damage resets
   await expect(app).toHaveAttribute('data-finale', 'none');
   await expect(app).toHaveAttribute('data-missile', 'false');
   await expect(app).toHaveAttribute('data-damage', '0');
+  await expect(app).toHaveAttribute('data-terrain', 'desert');
   await expect(page.locator('#damage')).toHaveText('AIRFRAME OK');
   await expect(page.locator('#misses')).toHaveText('0 / 3');
   await page.reload();

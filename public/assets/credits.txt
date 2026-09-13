@@ -8,6 +8,8 @@ See LICENSE in the source repository or /licenses/low-pass.txt in the distributi
 Generator: scripts/build-aircraft.py.
 Tank and missile generators: src/rendering/target-vehicle.ts and
 src/rendering/combat-effects.ts. These models are original fictional game props.
+Original procedural desert sand/ripple shader: src/rendering/desert-material.ts.
+The desert theme uses no downloaded sand assets and retains the same ground geometry.
 
 Ground037 and Rock030
 Creator: ambientCG / Lennart Demes
