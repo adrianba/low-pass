@@ -10,6 +10,7 @@ import { River, wetTriangle } from '../../src/rendering/river';
 import { CombatEffects } from '../../src/rendering/combat-effects';
 import { MissileFlight, MISSILE_INTERCEPT_TIME } from '../../src/game/missile';
 import { projectRoute, routeMotion } from '../../src/terrain/canyon-route';
+import { chaseView } from '../../src/simulation/chase-camera';
 
 describe('River Canyon', () => {
   it('retains the old shared physical course and gives canyon its own surface', () => {
@@ -131,20 +132,22 @@ describe('River Canyon', () => {
       run.encounter.time = 2.2;
       run.status = 'over';
       const pose = run.pose, future = poseAt(run.encounter, 2.2 + MISSILE_INTERCEPT_TIME, count);
-      const missile = new MissileFlight('damage', pose, future.position, 1, canyonSurface);
+      const motion = (t: number) => poseAt(run.encounter, 2.2 + t, count);
+      const view = { ...chaseView(pose, canyonSurface, null, 0), aspect: 16 / 9, range: 1500 };
+      const missile = new MissileFlight('damage', pose, future.position, 1, canyonSurface, motion, view);
       expect(canyonSurface.wet(missile.launch.x, missile.launch.z)).toBe(false);
       for (let t = 0; t < MISSILE_INTERCEPT_TIME; t += STEP) {
         const p = missile.positionAt(t);
         expect(p.y - canyonSurface.height(p.x, p.z)).toBeGreaterThan(2);
       }
-      const flyby = new MissileFlight('flyby', pose, future.position, -1, canyonSurface);
+      const flyby = new MissileFlight('flyby', pose, future.position, -1, canyonSurface, motion, view);
       for (let t = 0; t <= 2.8; t += STEP) {
         const p = flyby.positionAt(t);
         expect(p.y - canyonSurface.height(p.x, p.z)).toBeGreaterThan(2);
         expect(p.y).toBeLessThan(2000);
       }
       combat.reset();
-      combat.startFinale(pose, run);
+      combat.startFinale(pose, run, view);
       expect(combat.finalePose?.position).toEqual(pose.position);
       for (let t = 0; t < MISSILE_INTERCEPT_TIME; t += STEP) {
         combat.advance(STEP);

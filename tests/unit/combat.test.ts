@@ -8,6 +8,7 @@ import type { Pose } from '../../src/game/run';
 import { distance } from '../../src/simulation/math';
 import { CombatEffects } from '../../src/rendering/combat-effects';
 import { TargetVehicle } from '../../src/rendering/target-vehicle';
+import { chaseView } from '../../src/simulation/chase-camera';
 
 const pose: Pose = {
   position: { x: 20, y: 85, z: 4200 }, velocity: { x: 8, y: 12, z: 350 },
@@ -60,6 +61,40 @@ describe('missile choreography', () => {
 });
 
 describe('combat rendering lifecycle', () => {
+  it('freezes canyon motion snapshots and clears every floor-launch kind without changing track anchors', () => {
+    const engine = new NullEngine(), scene = new Scene(engine);
+    try {
+      const effects = new CombatEffects(scene), baseline = scene.meshes.length;
+      for (const kind of ['flyby', 'damage', 'finale'] as const) {
+        const run = new Run(7, 'river-canyon');
+        run.encounter.time = 2.2;
+        const pose = run.pose, anchors = structuredClone(run.encounter.canyon!.track.knots);
+        const view = { ...chaseView(pose, run.surface, null, 0), aspect: 16 / 9, range: 1500 };
+        if (kind === 'flyby') effects.startFlyby(run, view);
+        else if (kind === 'damage') effects.startDamage(run, view);
+        else { run.status = 'over'; effects.startFinale(pose, run, view); }
+        effects.advance(0.75);
+        effects.render(pose, 4096, 0.75);
+        const missile = scene.getTransformNodeByName('Surface-to-air missile')!;
+        const before = missile.position.clone(), frozenPose = effects.finalePose;
+        run.encounter.time += 20;
+        effects.advance(0);
+        effects.render(pose, 4096, 0);
+        expect(missile.position).toEqual(before);
+        expect(effects.finalePose).toEqual(frozenPose);
+        expect(run.encounter.canyon!.track.knots).toEqual(anchors);
+        effects.advance(MISSILE_INTERCEPT_TIME - 0.75);
+        effects.advance(0);
+        expect(effects.events).toEqual(['missile', kind === 'finale' ? 'destroyed' : kind === 'damage' ? 'damaged' : 'flyby']);
+        expect(run.score).toBe(0); expect(run.misses).toBe(0);
+        effects.reset();
+        expect(effects.events).toEqual([]);
+        expect(effects.missileActive).toBe(false);
+        expect(effects.damageLevel).toBe(0);
+        expect(scene.meshes.length).toBe(baseline);
+      }
+    } finally { scene.dispose(); engine.dispose(); }
+  });
   it('preserves the cloud alpha channel for aircraft smoke instead of rendering solid quads', () => {
     const engine = new NullEngine();
     const scene = new Scene(engine);

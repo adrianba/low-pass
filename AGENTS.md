@@ -51,6 +51,7 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
 | `src/simulation/chase-camera.ts` | Shared chase pose/projection and complete-ring visibility for planning/rendering |
 | `src/rendering/river.ts` | Canonical shoreline meshes, procedural flow, bounded splash pool |
 | `src/game/missile.ts` | Deterministic cosmetic missile trajectories and finale timing |
+| `src/game/canyon-missile.ts` | Visible low-bank launch selection and terrain-safe rising canyon paths |
 | `src/rendering/world.ts` | Scene, camera, chunks, origin rebasing, model/effect integration |
 | `src/rendering/target-model.ts`, `target-*.ts` | Cached tank/radar/SAM models and reversible wreck visuals |
 | `src/rendering/combat-effects.ts` | Flying missiles, smoke, and explosions |
@@ -127,8 +128,17 @@ can overwrite the system browser. Chromium-only results are not Edge validation.
   Exercise sequential passes beyond the speed cap, not only isolated tiers at
   arbitrary world positions. Refresh Babylon's view matrix before reading its
   cached camera target for projection/acquisition.
-- Canyon missiles launch on dry terrain and the finale uses a frozen curved
-  flight continuation, not a tangent through a wall or a resumed ended Run.
+- All canyon missiles launch from low dry banks beside the river, not rims or
+  water. Validate flat canonical footprints at floor height, full-body clearance,
+  actual chase-camera visibility and readable early ascent. Route-following
+  horizontal motion avoids inside-wall chords; strikes approach the moving
+  aircraft from below. Flybys may retain the +12-height, 24-side closest pass.
+  Preserve 1.7-second interception, 2.8-second flybys and the 5.5-second finale.
+  Canyon planning requires an actual world-space camera snapshot and frozen
+  future Poses for every kind; never mutate flight-track anchors or add runtime
+  height clamps/rim fallbacks. Candidate selection is bounded and fails explicitly.
+  The finale uses a frozen curved flight continuation, not a tangent through a
+  wall or a resumed ended Run.
   Preview Runs never save scores or mutate completed runs. Reset presentation,
   prediction caches, and camera when switching preview courses.
 - Canyon streams a bounded route-shaped set of 256-unit chunks, including

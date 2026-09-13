@@ -106,6 +106,10 @@ armor, collision rules, or target-specific bonuses.
 Successful hits occasionally prompt a surface-to-air missile flyby that misses
 the aircraft. These off-site missiles are independent of the visible target type;
 the model launcher does not fire, and hitting radar does not suppress missiles.
+In River Canyon, all missiles rise visibly from low dry banks beside the river,
+not from the canyon rim or water. Damage and final strikes approach from below;
+harmless flybys can pass slightly above the aircraft after rising from the bank.
+Their paths follow the winding gorge without changing interception timing.
 The first two misses each cause a survivable missile hit: an impact
 flash, damage status, and persistent aircraft smoke, heavier after the second hit.
 Smoke uses soft, irregular alpha-blended clouds with varied sizes and slow rolling

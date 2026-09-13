@@ -16,11 +16,32 @@ import type { CombatCue, FinalePhase } from '../game/missile';
 import { poseAt, aircraftPoint } from '../game/run';
 import type { Pose, Run } from '../game/run';
 import { joinMotion } from '../simulation/curves';
+import type { MissileView } from '../game/canyon-missile';
 
 interface Fragment {
   mesh: Mesh; position: Vec3; velocity: Vec3; age: number; duration: number; smoke: boolean;
 }
 interface DamagePuff { mesh: Mesh; position: Vec3; velocity: Vec3; age: number; size: number; spin: number }
+
+function flightContinuation(pose: Pose, run: Run): (time: number) => Pose {
+  const encounter = { ...run.encounter, start: structuredClone(run.encounter.start) };
+  const initial = poseAt(encounter, encounter.time, encounter.id - 1);
+  return (time: number): Pose => {
+    const next = poseAt(encounter, encounter.time + time, encounter.id - 1);
+    for (const axis of ['x', 'y', 'z'] as const) {
+      const correction = joinMotion({
+        position: pose.position[axis] - initial.position[axis],
+        velocity: pose.velocity[axis] - initial.velocity[axis],
+        acceleration: pose.acceleration[axis] - initial.acceleration[axis],
+      }, { position: 0, velocity: 0, acceleration: 0 }, MISSILE_INTERCEPT_TIME, time);
+      next.position[axis] += correction.position;
+      next.velocity[axis] += correction.velocity;
+      next.acceleration[axis] += correction.acceleration;
+    }
+    return { ...next, bank: pose.bank + (next.bank - pose.bank) * Math.min(1, time / 0.1),
+      pitch: pose.pitch + (next.pitch - pose.pitch) * Math.min(1, time / 0.1) };
+  };
+}
 
 function cloudTexture(scene: Scene): RawTexture {
   const size = 128;
@@ -140,42 +161,27 @@ export class CombatEffects {
   get missileActive(): boolean { return this.missile.isEnabled(); }
   get damageLevel(): number { return this.hits; }
 
-  startFlyby(run: Run): void {
-    this.startIncoming('flyby', run);
+  startFlyby(run: Run, view?: MissileView): void {
+    this.startIncoming('flyby', run, view);
   }
 
-  startDamage(run: Run): void {
-    this.startIncoming('damage', run);
+  startDamage(run: Run, view?: MissileView): void {
+    this.startIncoming('damage', run, view);
   }
 
-  private startIncoming(kind: 'flyby' | 'damage', run: Run): void {
+  private startIncoming(kind: 'flyby' | 'damage', run: Run, view?: MissileView): void {
     if (this.flight) return;
     const future = poseAt(run.encounter, run.encounter.time + MISSILE_INTERCEPT_TIME, run.encounter.id - 1);
-    this.flight = new MissileFlight(kind, run.pose, future.position, hash(run.encounter.id, 18, run.seed) < 0.5 ? -1 : 1, run.surface);
+    this.flight = new MissileFlight(kind, run.pose, future.position, hash(run.encounter.id, 18, run.seed) < 0.5 ? -1 : 1,
+      run.surface, run.surface.canyon ? flightContinuation(run.pose, run) : undefined, view);
     this.events.push('missile');
   }
 
-  startFinale(pose: Pose, run?: Run): void {
+  startFinale(pose: Pose, run?: Run, view?: MissileView): void {
     if (this.flight?.kind === 'finale') return;
     if (run?.surface.canyon) {
-      const encounter = { ...run.encounter, start: structuredClone(run.encounter.start) };
-      const initial = poseAt(encounter, encounter.time, encounter.id - 1);
-      const continuation = (t: number): Pose => {
-        const next = poseAt(encounter, encounter.time + t, encounter.id - 1);
-        for (const axis of ['x', 'y', 'z'] as const) {
-          const correction = joinMotion({
-            position: pose.position[axis] - initial.position[axis],
-            velocity: pose.velocity[axis] - initial.velocity[axis],
-            acceleration: pose.acceleration[axis] - initial.acceleration[axis],
-          }, { position: 0, velocity: 0, acceleration: 0 }, MISSILE_INTERCEPT_TIME, t);
-          next.position[axis] += correction.position;
-          next.velocity[axis] += correction.velocity;
-          next.acceleration[axis] += correction.acceleration;
-        }
-        return { ...next, bank: pose.bank + (next.bank - pose.bank) * Math.min(1, t / 0.1),
-          pitch: pose.pitch + (next.pitch - pose.pitch) * Math.min(1, t / 0.1) };
-      };
-      this.flight = new MissileFlight('finale', pose, continuation(MISSILE_INTERCEPT_TIME).position, 1, run.surface, continuation);
+      const continuation = flightContinuation(pose, run);
+      this.flight = new MissileFlight('finale', pose, continuation(MISSILE_INTERCEPT_TIME).position, 1, run.surface, continuation, view);
     } else this.flight = finaleFlight(pose);
     this.events.push('missile');
   }

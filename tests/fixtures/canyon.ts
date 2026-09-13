@@ -11,6 +11,7 @@ import { projectChase } from '../../src/simulation/chase-camera';
 import { projectRoute, routePoint } from '../../src/terrain/canyon-route';
 import { speedOf } from '../../src/simulation/flight-track';
 import type { Quality } from '../../src/config/game';
+import type { MissileKind } from '../../src/game/missile';
 
 let world: World;
 let current: Run;
@@ -23,6 +24,10 @@ declare global {
     canyonWall(index: number, reverse: boolean): Promise<{ source: boolean; distinct: boolean; cullingDifference: number }>;
     canyonTwist(along: number, quality: Quality, overhead: boolean): Promise<{ speed: number; terrain: number; water: number; covered: boolean }>;
     canyonRebase(): Promise<number>;
+    canyonMissile(kind: MissileKind, pass: number, turn: boolean, age: number, quality: Quality): Promise<{
+      launchY: number; ground: number; visible: boolean; below: boolean; frozen: boolean; meshes: number;
+      bank: number; origin: number; turnError: number;
+    }>;
   }
 }
 async function setup() {
@@ -215,9 +220,62 @@ window.canyonRebase = async () => {
     const pixels = await world.engine.readPixels(0, 0, world.engine.getRenderWidth(), world.engine.getRenderHeight());
     return new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
   };
+
   visit(pose.position.z + 9000);
   const before = await capture();
   visit(pose.position.z + 4100);
   const after = await capture();
   return before.reduce((sum, value, i) => sum + Math.abs(value - after[i]!), 0) / before.length;
+};
+
+window.canyonMissile = async (kind, pass, turn, age, quality) => {
+  await setup();
+  world.configure(quality);
+  world.reset();
+  const run = runAt(pass - 1, turn ? 9600 : 0);
+  const flight = run.encounter.canyon!;
+  const turnAlong = turn ? 12000 : 2400;
+  const time = turn ? flight.track.knots.reduce((best, k) =>
+    Math.abs(projectRoute(k.pose.position.x, k.pose.position.z).along - turnAlong)
+      < Math.abs(projectRoute(best.pose.position.x, best.pose.position.z).along - turnAlong) ? k : best).time : 2.2;
+  for (let t = time - 2; t < time; t += 1 / 30) {
+    run.encounter.time = t;
+    world.update(run, run.pose, null, 1 / 30);
+  }
+  run.encounter.time = time;
+  world.update(run, run.pose, null, 0);
+  const turnError = Math.abs(projectRoute(run.pose.position.x, run.pose.position.z).along - turnAlong);
+  const target = world.scene.getTransformNodeByName('Encounter target')!;
+  const origin = run.encounter.target.z - target.position.z;
+  world.camera.getViewMatrix(true);
+  const look = world.camera.getTarget(), camera = world.camera.position;
+  const view = { position: { x: camera.x, y: camera.y, z: camera.z + origin },
+    target: { x: look.x, y: look.y, z: look.z + origin },
+    aspect: world.engine.getRenderWidth() / world.engine.getRenderHeight(), range: world.scene.fogEnd };
+  if (kind === 'flyby') world.combat.startFlyby(run, view);
+  else if (kind === 'damage') world.combat.startDamage(run, view);
+  else { run.status = 'over'; world.combat.startFinale(run.pose, run, view); }
+  world.combat.render(run.pose, origin, 0);
+  const missile = world.scene.getTransformNodeByName('Surface-to-air missile')!;
+  const launch = { x: missile.position.x, y: missile.position.y, z: missile.position.z + origin };
+  let elapsed = 0, frame = 0;
+  const frameSteps = turn ? [0.1, 1 / 60, 1 / 30] : [1 / 60];
+  while (elapsed < age) {
+    const dt = Math.min(frameSteps[frame++ % frameSteps.length]!, age - elapsed);
+    elapsed += dt;
+    if (kind !== 'finale') run.encounter.time = time + elapsed;
+    world.update(run, run.pose, null, dt);
+  }
+  await world.scene.whenReadyAsync();
+  world.render();
+  const currentOrigin = run.encounter.target.z - target.position.z;
+  const point = { x: missile.position.x, y: missile.position.y, z: missile.position.z + currentOrigin };
+  const screen = world.projectPoint(point);
+  const before = missile.position.clone();
+  world.update(run, run.pose, null, 0);
+  const aircraft = world.scene.getTransformNodeByName('Aircraft pose')!;
+  return { launchY: launch.y, ground: canyonSurface.height(launch.x, launch.z),
+    visible: !!screen && screen.x > 0 && screen.x < 1 && screen.y > 0 && screen.y < 1,
+    below: missile.position.y < aircraft.position.y, frozen: missile.position.equals(before), meshes: world.scene.meshes.length,
+    bank: Math.sign(projectRoute(launch.x, launch.z).lateral), origin, turnError };
 };

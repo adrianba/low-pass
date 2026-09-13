@@ -43,6 +43,7 @@ import { TERRAIN_PALETTES, terrainTint, terrainProp } from './terrain-style';
 import { TargetModels } from './target-model';
 import { CombatEffects } from './combat-effects';
 import { shouldFlyby } from '../game/missile';
+import type { MissileView } from '../game/canyon-missile';
 
 interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; water: Mesh | null; z: number }
 interface Burst { mesh: Mesh; velocity: Vector3; age: number }
@@ -411,6 +412,14 @@ export class World {
 
   private local(p: Vec3): Vector3 { return new Vector3(p.x, p.y, p.z - this.origin); }
 
+  private missileView(): MissileView {
+    this.camera.getViewMatrix(true);
+    const look = this.camera.getTarget(), p = this.camera.position;
+    return { position: { x: p.x, y: p.y, z: p.z + this.origin },
+      target: { x: look.x, y: look.y, z: look.z + this.origin },
+      aspect: this.engine.getRenderWidth() / this.engine.getRenderHeight(), range: this.scene.fogEnd };
+  }
+
   reset(): void {
     this.resultId = this.lastEncounter = 0;
     this.cameraInitialized = false;
@@ -426,7 +435,7 @@ export class World {
   update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number): void {
     this.scene.fogEnd = Math.max(QUALITY[this.quality].distance,
       (run.encounter.canyon?.sightDistance ?? targetSightDistance(run.encounter.id - 1)) + 400);
-    if (run.status === 'over') this.combat.startFinale(pose, run);
+    if (run.status === 'over') this.combat.startFinale(pose, run, this.missileView());
     this.combat.advance(dt);
     pose = this.combat.finalePose ?? pose;
     if (Math.abs(pose.position.z - this.origin) > 4096) {
@@ -486,8 +495,8 @@ export class World {
       } else if (run.result.impact) this.explode(run.result.impact);
       if (run.result.points > 0) {
         this.targetModels.setDestroyed(true);
-        if (run.status !== 'over' && shouldFlyby(run.encounter.id, run.seed)) this.combat.startFlyby(run);
-      } else if (run.status !== 'over') this.combat.startDamage(run);
+        if (run.status !== 'over' && shouldFlyby(run.encounter.id, run.seed)) this.combat.startFlyby(run, this.missileView());
+      } else if (run.status !== 'over') this.combat.startDamage(run, this.missileView());
     }
     for (const burst of this.bursts) {
       burst.age += dt;

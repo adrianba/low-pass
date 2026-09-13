@@ -58,3 +58,40 @@ test('large turns retain river and wall coverage at both quality presets', async
   console.info('Winding terrain coverage', reports);
   expect(errors).toEqual([]);
 });
+
+test('canyon missiles visibly rise from dry banks rather than arriving from above', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.route('**/canyon.js', route => route.fulfill({ contentType: 'text/javascript', body: script }));
+  await page.route('**/canyon-fixture', route => route.fulfill({ contentType: 'text/html',
+    body: '<style>body{margin:0}canvas{width:100vw;height:100vh}</style><canvas></canvas><script src="/canyon.js"></script>' }));
+  await page.goto('/canyon-fixture');
+  const banks = new Set<number>();
+  for (const quality of ['low', 'high'] as const) {
+    await page.setViewportSize(quality === 'low' ? { width: 960, height: 540 } : { width: 720, height: 960 });
+    for (const [kind, pass, turn] of [['damage', 1, false], ['finale', 13, false], ['flyby', 7, false], ['damage', 13, true]] as const) {
+      let meshes: number | null = null;
+      for (const age of [0, 0.25, 0.75, 1.5, ...(kind === 'flyby' ? [1.7, 2.4, 2.79] : [])]) {
+        const report = await page.evaluate(({ kind, pass, turn, age, quality }) =>
+          window.canyonMissile(kind, pass, turn, age, quality), { kind, pass, turn, age, quality });
+        expect(report.ground).toBeCloseTo(12, 3);
+        expect(report.launchY).toBeCloseTo(20, 3);
+        if (age <= 0.25) expect(report.visible).toBe(true);
+        if (kind !== 'flyby' || age < 1) expect(report.below).toBe(true);
+        expect(report.frozen).toBe(true);
+        banks.add(report.bank);
+        if (turn) {
+          expect(report.origin).toBeGreaterThanOrEqual(8192);
+          expect(report.turnError).toBeLessThan(40);
+        }
+        if (meshes !== null) expect(Math.abs(report.meshes - meshes)).toBeLessThan(60);
+        else meshes = report.meshes;
+        await page.screenshot({ path: `test-results/floor-missile-${kind}-${pass}-${turn}-${quality}-${age}.png` });
+      }
+    }
+  }
+  expect(banks.size).toBe(2);
+  expect(errors).toEqual([]);
+});
