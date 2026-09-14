@@ -15,6 +15,8 @@ CC0-1.0, and Babylon.js is Apache-2.0. See
 [asset notices](public/assets/credits.txt) and the
 [asset manifest](public/assets/manifest.json) for attribution and provenance.
 Production builds include the MIT and Babylon.js license texts under `/licenses/`.
+The application container also includes notices for Node.js, Nginx, s6,
+skalibs and execline at that path.
 
 ## Run locally
 
@@ -60,7 +62,7 @@ connections at the shutdown deadline with a warning.
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
 | `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
 
-Invalid configuration exits unsuccessfully rather than silently enabling or
+Invalid configuration exits with code 78 rather than silently enabling or
 disabling a feature. No secrets are needed at this checkpoint.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
@@ -172,15 +174,29 @@ docker compose up --build
 ```
 
 Open <http://localhost:8080>. `docker compose down` stops this deployment.
-The multi-stage image builds using Node and serves static files with unprivileged
-Nginx. It needs no GPU, database, secrets, or persistent server volume. The client
-performs all rendering, simulation, and audio.
+The multi-stage image serves static files with unprivileged Nginx and runs the
+optional Node 24 service on private loopback, supervised by s6. Multiplayer is
+still disabled. It needs no GPU, database, secrets, or persistent server volume.
+The client performs all rendering, simulation, and audio. Single-player remains
+available if Node fails or its configuration is invalid.
 
 The runtime listens on port 8080 and exposes `/healthz`. A hosting reverse proxy
 should terminate HTTPS. Keep a stable public origin to retain users' local scores.
 Only content-hashed JS/CSS gets immutable caching; HTML and unversioned assets
 revalidate. Missing assets return 404, not an HTML fallback. All runtime assets and
 dependency notices ship in the image; no external asset CDN is used.
+
+Keep the read-only root, writable `/tmp` tmpfs (which may remain `noexec`),
+dropped capabilities and no-new-privileges setting. Allow **45 seconds** for
+container shutdown. The image still runs as UID/GID `101:101`. Its entrypoint now
+starts s6, not the vendor Nginx entrypoint; do not override its command.
+`/api/multiplayer/readyz` checks Node separately from static `/healthz`; it does
+not indicate that multiplayer is playable.
+
+See the [G0 container handoff](docs/application-container-checkpoint.md) for
+the exact configuration contract, local checks, Ansible-owned deployment
+validation, architecture limitation, rollback and pending coturn decision.
+No branch image has been published or deployed by this implementation.
 
 ### Published container
 
@@ -193,7 +209,8 @@ An OCI source label links the image to this repository.
 
 ```sh
 docker run --rm --read-only --tmpfs /tmp --cap-drop ALL \
-  --security-opt no-new-privileges:true -p 127.0.0.1:8080:8080 \
+  --security-opt no-new-privileges:true --stop-timeout 45 \
+  -p 127.0.0.1:8080:8080 \
   ghcr.io/adrianba/low-pass:latest
 ```
 
@@ -212,9 +229,22 @@ npm test
 npm run lint
 npm run assets:verify
 npm run build
+npm run build:server
 npx playwright install chromium
 npm run test:e2e -- --project=chromium
 ```
+
+For the isolated container lifecycle/proxy checks (Docker required):
+
+```sh
+docker build -t low-pass:multiplayer-g0 .
+npm run test:container
+```
+
+These tests create uniquely named local containers and remove them afterward;
+they do not use or replace a running deployment. `LOW_PASS_TEST_IMAGE` selects a
+different already-built image. They are deliberately separate from `npm test`,
+so ordinary unit tests and browser builds do not require Docker.
 
 To validate actual Microsoft Edge, use a Windows host with the latest stable Edge:
 

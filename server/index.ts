@@ -1,5 +1,5 @@
 import { ApplicationService } from './application.js';
-import { readServiceConfig } from './config.js';
+import { readServiceConfig, ServiceConfigurationError } from './config.js';
 
 async function main(): Promise<void> {
   const config = readServiceConfig(process.env);
@@ -28,5 +28,5 @@ async function main(): Promise<void> {
 
 void main().catch(error => {
   console.error('Application service startup failed:', error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+  process.exitCode = error instanceof ServiceConfigurationError ? 78 : 1;
 });

@@ -98,7 +98,7 @@ describe('compiled Node entrypoint', () => {
 
   it('exits unsuccessfully on invalid configuration without exposing its value', async () => {
     const running = launch({ LOW_PASS_MULTIPLAYER_ENABLED: 'private-invalid-value' });
-    expect(await running.exited).toEqual({ code: 1, signal: null });
+    expect(await running.exited).toEqual({ code: 78, signal: null });
     expect(running.output()).toContain('startup failed');
     expect(running.output()).toContain('not implemented');
     expect(running.output()).not.toContain('private-invalid-value');

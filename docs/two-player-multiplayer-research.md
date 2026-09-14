@@ -7,6 +7,13 @@ technical references, and the product decisions confirmed below. No multiplayer
 code or infrastructure has been implemented as part of this research. Proposed
 budgets and prototype gates are not measured performance results.
 
+**Implementation checkpoint:** the implementation branch now contains solo
+regression fixtures and an optional, explicitly disabled Node HTTP runtime.
+The first Nginx-plus-Node container handoff is documented in
+[G0: application container checkpoint](application-container-checkpoint.md).
+This is not playable multiplayer. Deployment compatibility, coturn packaging,
+formation approval and real Edge networking still require their stated gates.
+
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,
 not authorization to deploy, change Traefik/DNS/firewalls, or edit that Ansible

@@ -17,6 +17,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:server": "vitest run tests/server",
+    "test:container": "node --test --test-concurrency=1 --test-timeout=90000 tests/container/*.test.mjs",
     "test:e2e": "playwright test",
     "lint": "eslint src server tests",
     "assets:verify": "node scripts/verify-assets.mjs",

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+if [ "$#" -ne 0 ]; then
+    echo 'This image starts supervised Nginx and Node; do not override its command.' >&2
+    exit 64
+fi
+umask 027
+for service in nginx node; do
+    mkdir -p "/tmp/low-pass-services/$service"
+    for file in "/etc/low-pass/services/$service/"*; do
+        ln -sf "$file" "/tmp/low-pass-services/$service/$(basename "$file")"
+    done
+done
+exec s6-svscan /tmp/low-pass-services
