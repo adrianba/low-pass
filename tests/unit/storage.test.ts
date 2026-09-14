@@ -2,6 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SETTINGS, RecordStore, validSettings, STORAGE_KEY } from '../../src/storage/records';
 
 describe('local records', () => {
+  it('does not rewrite existing bytes on load or repeated completion', () => {
+    const score = { id: 'retained', score: 100, date: '2026-01-01T00:00:00Z', assisted: false };
+    const raw = JSON.stringify({ version: 1, scores: [score], settings: DEFAULT_SETTINGS }, null, 2);
+    const writes: string[] = [];
+    const store = new RecordStore(() => ({
+      getItem: () => raw, setItem: (_key, value) => { writes.push(value); },
+    }), () => { throw new Error('Unexpected warning'); });
+    expect(store.scores).toEqual([score]);
+    store.complete(score);
+    expect(writes).toEqual([]);
+  });
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('remembers %s without changing completed scores', terrain => {
     let json: string | null = null;
     const storage = { getItem: () => json, setItem: (key: string, value: string) => {
