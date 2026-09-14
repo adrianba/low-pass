@@ -131,6 +131,12 @@ show a warning and retain only session data.
 
 ## Docker
 
+The current game is single-player. The
+[two-player multiplayer research outline](docs/two-player-multiplayer-research.md)
+documents the proposed peer-to-peer architecture, confirmed gameplay rules,
+self-hosted infrastructure, and implementation/acceptance plan; it is not an
+implemented feature.
+
 ```sh
 docker compose up --build
 ```
