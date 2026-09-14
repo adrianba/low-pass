@@ -1,0 +1,26 @@
+export interface ServiceConfig {
+  port: number;
+  shutdownTimeoutMs: number;
+  multiplayerEnabled: false;
+}
+
+function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, maximum: number): number {
+  const raw = env[key];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${key} must be an integer from 1 to ${maximum}.`);
+  }
+  return value;
+}
+
+export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
+  if (env.LOW_PASS_MULTIPLAYER_ENABLED !== undefined && env.LOW_PASS_MULTIPLAYER_ENABLED !== 'false') {
+    throw new Error('LOW_PASS_MULTIPLAYER_ENABLED must be false; multiplayer is not implemented in this build.');
+  }
+  return {
+    port: integer(env, 'LOW_PASS_SERVICE_PORT', 8081, 65535),
+    shutdownTimeoutMs: integer(env, 'LOW_PASS_SHUTDOWN_TIMEOUT_MS', 5000, 30_000),
+    multiplayerEnabled: false,
+  };
+}

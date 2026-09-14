@@ -35,6 +35,36 @@ npm run preview
 The browser needs WebGL2 and graphics acceleration. Start the flight to unlock
 audio. Failed essential assets or a lost graphics context display a reload screen.
 
+### Optional application service (multiplayer preparation)
+
+Single-player builds and play remain independent of this service. The Node 24
+runtime is preparation only: it does not create rooms, signal peers, issue relay
+credentials, or enable multiplayer.
+
+```sh
+npm run build:server
+npm run start:server
+```
+
+It binds only to `127.0.0.1:8081`. `GET /livez` reports process health;
+`GET /readyz` reports HTTP-service readiness, **not multiplayer availability**.
+`GET /api/multiplayer/capabilities` returns
+`{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
+unknown routes (including `/signal` and room endpoints) return 404. SIGTERM and
+SIGINT stop accepting connections, drain requests, then close remaining HTTP
+connections at the shutdown deadline with a warning.
+
+| Environment variable | Default | Accepted values |
+| --- | --- | --- |
+| `LOW_PASS_SERVICE_PORT` | `8081` | Integer 1-65535; loopback only |
+| `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
+| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
+
+Invalid configuration exits unsuccessfully rather than silently enabling or
+disabling a feature. No secrets are needed at this checkpoint.
+`npm run test:server` exercises real local HTTP and independently compiled ESM
+startup/shutdown; these tests are also included in `npm test`.
+
 ## Controls and rules
 
 | Control | Action |
