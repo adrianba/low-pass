@@ -1,0 +1,56 @@
+# Ansible template. Render privately; never mount this template directly.
+listening-port=3478
+tls-listening-port=5349
+listening-ip={{ low_pass_turn_relay_ip | mandatory }}
+relay-ip={{ low_pass_turn_relay_ip | mandatory }}
+external-ip={{ low_pass_turn_public_ip | mandatory }}/{{ low_pass_turn_relay_ip | mandatory }}
+min-port=49160
+max-port=49223
+
+realm=turn.low-pass.biggsea.us
+server-name=turn.low-pass.biggsea.us
+fingerprint
+use-auth-secret
+static-auth-secret={{ low_pass_turn_secret | mandatory }}
+stale-nonce=600
+max-allocate-lifetime=600
+max-allocate-timeout=30
+user-quota=4
+total-quota=16
+max-bps=262144
+bps-capacity=4194304
+relay-threads=2
+
+cert=/run/coturn-tls/fullchain.pem
+pkey=/run/coturn-tls/privkey.pem
+# This pinned version defaults to TLS 1.2 or newer, DTLS off and administration off.
+# Do not enable tlsv1, tlsv1_1, dtls, cli, web-admin or prometheus.
+no-tcp-relay
+no-stun
+no-multicast-peers
+no-software-attribute
+
+# Internet peers only. Extend for provider-specific and publicly addressed infrastructure.
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.0.2.0-192.0.2.255
+denied-peer-ip=192.88.99.0-192.88.99.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=198.51.100.0-198.51.100.255
+denied-peer-ip=203.0.113.0-203.0.113.255
+denied-peer-ip=224.0.0.0-255.255.255.255
+denied-peer-ip=168.63.129.16
+# IPv4-only initial deployment: also reject IPv6 and IPv4-mapped IPv6 peer addresses.
+denied-peer-ip=::-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+pidfile=/tmp/turnserver.pid
+userdb=/var/lib/coturn/turndb
+log-file=stdout
+simple-log
+log-min-level=warning

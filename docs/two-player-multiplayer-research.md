@@ -11,8 +11,10 @@ budgets and prototype gates are not measured performance results.
 regression fixtures and an optional, explicitly disabled Node HTTP runtime.
 The first Nginx-plus-Node container handoff is documented in
 [G0: application container checkpoint](application-container-checkpoint.md).
-This is not playable multiplayer. Deployment compatibility, coturn packaging,
-formation approval and real Edge networking still require their stated gates.
+This is not playable multiplayer. Deployment compatibility, formation approval
+and real Edge networking still require their stated gates. The user subsequently
+selected a separate `coturn/coturn` container; see the
+[Compose and abuse-prevention guide](coturn-compose.md).
 
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,
@@ -25,8 +27,8 @@ separately shared access code, without accounts. Prefer evolving the existing
 application image/container to run both Nginx and Node, keeping single-player
 available while multiplayer is disabled or unavailable. Prove that packaging in
 an early deployment checkpoint; stop for alternatives if it cannot preserve the
-current deployment constraints. Coturn packaging remains open until that
-checkpoint. The user handles intermediate Ansible deployments and approves
+current deployment constraints. Coturn will run in its own `coturn/coturn`
+container. The user handles intermediate Ansible deployments and approves
 deployment compatibility, formation fairness, real Edge connectivity, and the
 complete game at explicit milestones. Implementation uses small tested local
 commits, including separate commits for individual UI screens.
@@ -76,7 +78,7 @@ These decisions were explicitly confirmed during the research.
 | Infrastructure | Self-hosted services on `docker.circlone.net`, with one public IP and full administrative control. |
 | Public deployment | Existing game hostname `low-pass.biggsea.us`; HTTPS is handled by Traefik. Preserve the current browser origin. |
 | Deployment workflow | Ansible in a separate repository owns production deployment. No deployment or changes to that repository are part of this research. |
-| Application packaging | Prefer one evolving existing image/container with Nginx and Node, preserving solo play; validate compatibility before relying on it. Coturn packaging is decided at the deployment checkpoint. |
+| Application packaging | One evolving existing image/container with Nginx and Node, preserving solo play; validate compatibility before relying on it. The user selected a separate `coturn/coturn` container. |
 | Invitation | The host gives the second player a code through an outside communication channel. |
 | Authority | The first browser drives the game and chooses the landscape. |
 | Terrains | Green Valley, Desert, and River Canyon are all required for the first public multiplayer release. |
@@ -110,9 +112,9 @@ Do not silently treat these as agreed requirements:
   The proxy and single-public-IP constraint are known; a second IP is not assumed.
 - Confirm expected concurrent sessions and available bandwidth before sizing.
   No cloud price or capacity estimate is assumed here.
-- Validate rootless/read-only Nginx and Node supervision in the existing image,
-  and decide whether coturn is a separate container or bundled at the deployment
-  checkpoint. Do not assume that choice has been made.
+- Validate rootless/read-only Nginx and Node supervision in the existing image
+  on the deployed host. Coturn's separate-container layout is now selected;
+  actual relay networking and operating limits still require validation.
 
 ## 3. Findings in the current code
 
@@ -185,7 +187,7 @@ not a lack of interest in Edge support, is why it is not the P2P recommendation.
 | HTTP server | Initially Node `node:http` behind the existing TLS proxy | Health/readiness and a small room API. Avoid introducing a framework solely for a few endpoints. |
 | Protocol validation | Zod | Runtime validation and inferred TypeScript types for signaling, gameplay messages, and persistent multiplayer records. Compile-time interfaces alone do not validate peer input. |
 | Traversal/relay | coturn | STUN and authenticated TURN, with short-lived credentials issued by the signaling service. |
-| Deployment | Existing Ansible deployment, Docker, and Traefik | Evolve the existing application image with Nginx and Node; hand off configuration to the other repository. Decide coturn packaging at the deployment checkpoint. |
+| Deployment | Existing Ansible deployment, Docker, and Traefik | Evolve the existing application image with Nginx and Node; run `coturn/coturn` separately. Hand off configuration to the other repository. |
 | Unit/integration tests | Existing Vitest | State machines, planner fairness, serialization, fake transports, service room tests, and resource limits. |
 | Browser tests | Existing Playwright, Chromium and Windows Edge | Two isolated browsers/contexts, real ICE paths, visible formation, reconnect and lifecycle tests. |
 
@@ -797,8 +799,10 @@ machine hostname or a new application origin. Add:
    read-only/dropped-capability posture, resource limits, and static health.
    Keep service readiness distinct so a signaling failure does not prevent solo.
 2. A pinned coturn distribution/configuration with authenticated allocations,
-   constrained relay ports, quotas, and correct advertised addresses. Decide
-   separate-container versus bundled packaging at the deployment checkpoint.
+   constrained relay ports, quotas, and correct advertised addresses in its
+   own `coturn/coturn` container, as selected by the user. The concrete starting
+   configuration and remaining acceptance checks are in the
+   [Compose hardening guide](coturn-compose.md).
 3. Same-origin `/api/` and `/signal` proxying inside Nginx to the private Node
    listener. Keep the existing Traefik HTTP route to the application on 8080.
    Configure WebSocket upgrades and idle timeouts consistent with heartbeat;

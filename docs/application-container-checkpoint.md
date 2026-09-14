@@ -164,7 +164,8 @@ The user deploys the intermediate image through Ansible and supplies:
 4. **Restart:** user-controlled container replacement/restart returns both
    health endpoints while keeping the same browser origin and completed records.
    Test intentional Node downtime only in an appropriate non-live environment.
-5. **Coturn decision:** separate or bundled packaging, using the comparison below.
+5. **Coturn layout:** the user selected a separate `coturn/coturn` container.
+   Provisioning and real relay connectivity remain the later G2 handoff.
 
 The full browser suite can target the user-provisioned deployment. On an approved
 Windows Edge test host, in PowerShell:
@@ -184,9 +185,13 @@ G0 makes no score schema changes. A rollback can interrupt asset requests, but
 completed browser records remain origin/profile-local and are not in a Docker
 volume. Stop implementation at this gate until the required evidence is approved.
 
-## Coturn packaging decision still required
+## Selected coturn packaging: separate container
 
-Neither option is installed at G0. Both can use the same host/public IP. Both
+The user selected a separate container using `coturn/coturn`. See the
+[Compose and abuse-prevention guide](coturn-compose.md) and its example files
+for the Ansible-owned deployment. No relay has been deployed by this work.
+The comparison below records the tradeoffs; it is no longer an open decision.
+Both options can use the same host/public IP. Both
 require authenticated temporary credentials, quotas, relay-side UDP reachability,
 advertised address configuration, secret/certificate handling and later real
 Edge allocation/data testing. Neither makes TURN an ordinary HTTP reverse proxy.
@@ -199,11 +204,9 @@ Edge allocation/data testing. Neither makes TURN an ordinary HTTP reverse proxy.
 | Resource/failure limits | Independent memory/CPU limits, health and logging; clearer relay failure isolation. | Shared limits and failure/update fate; per-service health and least privilege must be re-proven. |
 | Maintenance | An additional Ansible-managed service, but a standard relay image can track coturn separately. | One application artifact to distribute, but a larger image and more supervision, licensing and networking responsibility here. |
 
-**Recommendation:** keep Nginx and Node together as requested, but use a separate
-coturn container for independent relay lifecycle and resource limits. This is a
-recommendation, not a recorded user decision. Bundling remains possible if the
-user prefers it; its rootless/read-only operation and networking must then be
-proven before the later connectivity handoff.
+**Selected:** keep Nginx and Node together, with coturn in a separate container
+for independent relay lifecycle and resource limits. This decision does not
+waive the outstanding AMD64 deployment and Windows Edge evidence at G0.
 
 Actual direct/relay connectivity, TURN/TLS 443 SNI routing, allocations and
 bidirectional data remain **G2**, not G0 acceptance.
