@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -20,12 +21,12 @@ const logs = async id => {
 const startingConnection = error => ['ECONNREFUSED', 'ECONNRESET', 'UND_ERR_SOCKET'].includes(error.cause?.code);
 
 async function until(check, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
+  const deadline = performance.now() + timeout;
   do {
     const value = await check();
     if (value) return value;
     await delay(100);
-  } while (Date.now() < deadline);
+  } while (performance.now() < deadline);
   throw new Error('Container condition did not become true before its deadline.');
 }
 
@@ -168,10 +169,19 @@ test('process exit is recovered by Docker restart policy, but manual stop stays 
   const container = await start(t, ['--restart', 'unless-stopped', '--entrypoint', 'node',
     '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/crash.mjs,readonly`],
   ['/opt/low-pass/dist-server/crash.mjs']);
-  await until(async () => {
+  await delay(10_100);
+  await docker('exec', container.id, 'node', '-e',
+    'require("node:fs").writeFileSync("/tmp/low-pass-crash-request", "")');
+  try {
+    await until(async () => {
+      const state = await container.inspect();
+      return state.RestartCount >= 1 && state.State.Running && !state.State.Restarting;
+    });
+  } catch (error) {
     const state = await container.inspect();
-    return state.RestartCount >= 1 && state.State.Running && !state.State.Restarting;
-  });
+    throw new Error(`Restart failed: ${JSON.stringify({ state: state.State, restarts: state.RestartCount })}\n${await logs(container.id)}`,
+      { cause: error });
+  }
   await container.refreshPort();
   await until(container.healthy);
   assert.equal((await container.response('/')).status, 200);
@@ -191,6 +201,7 @@ test('invalid multiplayer configuration leaves static and application health ava
   await delay(2200);
   const output = await logs(container.id);
   assert.equal(output.split('Multiplayer unavailable:').length - 1, 1);
+  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/healthcheck.js');
   await assertNodePid1(container.id);
   await docker('restart', '--timeout', '45', container.id);
   await container.refreshPort();

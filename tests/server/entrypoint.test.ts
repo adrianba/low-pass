@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,12 +15,16 @@ interface ProcessUnderTest {
 }
 
 let outputDirectory: string;
+let workspace: string;
 let staticRoot: string;
 const processes: ProcessUnderTest[] = [];
 
 beforeAll(async () => {
-  outputDirectory = await mkdtemp(join(tmpdir(), 'low-pass-service-'));
-  staticRoot = await assetFixture();
+  workspace = await mkdtemp(join(tmpdir(), 'low-pass-service-'));
+  outputDirectory = join(workspace, 'dist-server');
+  await mkdir(outputDirectory);
+  staticRoot = join(workspace, 'dist');
+  await rename(await assetFixture(), staticRoot);
   await promisify(execFile)(process.execPath, [
     'node_modules/typescript/bin/tsc', '-p', 'tsconfig.server.json', '--outDir', outputDirectory,
   ]);
@@ -35,8 +39,7 @@ afterEach(async () => {
   }
 });
 afterAll(async () => {
-  if (outputDirectory) await rm(outputDirectory, { recursive: true, force: true });
-  if (staticRoot) await rm(staticRoot, { recursive: true, force: true });
+  if (workspace) await rm(workspace, { recursive: true, force: true });
 });
 
 function launch(env: NodeJS.ProcessEnv): ProcessUnderTest {
@@ -93,6 +96,13 @@ function ready(running: ProcessUnderTest): Promise<void> {
 }
 
 describe('compiled Node entrypoint', () => {
+  it('resolves the default build root from compiled output, not the working directory', async () => {
+    const port = await unusedPort();
+    const running = launch({ LOW_PASS_SERVICE_PORT: String(port), LOW_PASS_STATIC_ROOT: undefined });
+    await ready(running);
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toContain('Low Pass fixture');
+  });
+
   it.skipIf(process.platform === 'win32').each(['SIGTERM', 'SIGINT'] as const)('serves HTTP and exits cleanly on %s', async signal => {
     const port = await unusedPort();
     const running = launch({ LOW_PASS_SERVICE_PORT: String(port) });

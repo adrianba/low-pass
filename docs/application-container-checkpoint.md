@@ -162,6 +162,62 @@ checksum and image ID with the source revision. No image push, branch push,
 workflow dispatch or deployment is included in this checkpoint. The existing
 publication workflow remains main-only and has not been changed.
 
+## Local Windows Edge handoff before merge
+
+Use the exact checkpoint SHA supplied with the handoff, Node 24 LTS with current
+npm, and the already-installed Windows Microsoft Edge. A local tracked-source
+archive can transfer the branch without pushing it:
+
+```sh
+git archive --format=zip --output=low-pass-node-checkpoint.zip HEAD
+git rev-parse HEAD
+```
+
+Keep the archive out of Git and record its source SHA separately. Extract it to
+a new folder on Windows; do not overwrite another worktree. From that folder,
+in PowerShell:
+
+```powershell
+node --version
+npm --version
+npm ci --min-release-age=7
+npm run build
+npm run build:server
+$env:LOW_PASS_MULTIPLAYER_ENABLED="false"
+$env:LOW_PASS_SERVICE_HOST="127.0.0.1"
+$env:LOW_PASS_SERVICE_PORT="8080"
+Remove-Item Env:LOW_PASS_STATIC_ROOT -ErrorAction SilentlyContinue
+npm run start:server
+```
+
+Leave the server running. In a second PowerShell window in the same folder:
+
+```powershell
+$env:TEST_URL="http://127.0.0.1:8080"
+Invoke-RestMethod "$env:TEST_URL/healthz"
+Invoke-RestMethod "$env:TEST_URL/api/multiplayer/readyz"
+Invoke-RestMethod "$env:TEST_URL/api/multiplayer/capabilities"
+npm run test:e2e -- --project=edge
+```
+
+Do not install or overwrite Edge via Playwright. This uses the real Node server,
+not Vite preview. If 8080 is occupied, choose a free local port and use the same
+port in both windows. Build/start failures must be resolved before browser
+acceptance. Stop the server with Ctrl+C after the checks.
+
+Record the source SHA, Windows version, Edge version (`edge://version`), Node/npm
+versions, effective URL, complete test summary and any failures/traces. In a normal
+Edge window, also check all terrains, assets/reticle/drop, pause/finale/restart,
+and settings/completed records across reload and server restart. Keep the same
+local origin and browser profile. Localhost does not share production records:
+use representative local records rather than interpreting their absence as loss.
+Automated contexts also do not share the normal browser profile.
+
+This is the **pre-merge** browser gate. Actual production-origin old-record
+preservation is checked separately during G0 below. No merge recommendation is
+made without the Windows Edge evidence; no merge, push, publication or deployment
+is authorized by these testing instructions.
+
 ## G0 acceptance and rollback
 
 Before a merge recommendation, the user must supply actual local Windows Edge

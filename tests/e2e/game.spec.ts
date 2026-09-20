@@ -122,6 +122,35 @@ test('settings persist', async ({ page }) => {
   await expect(page.locator('#mute')).toBeChecked();
 });
 
+test('fully loaded solo flight, scoring and pause do not require a reachable server', async ({ page, context }) => {
+  test.setTimeout(90_000);
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#app')).toHaveAttribute('data-screen', 'menu', { timeout: 30_000 });
+  await context.setOffline(true);
+  try {
+    const reachable = await page.evaluate(async () => {
+      try { await fetch('/healthz', { cache: 'no-store' }); return true; }
+      catch { return false; }
+    });
+    expect(reachable).toBe(false);
+    await page.getByRole('button', { name: 'BEGIN FLIGHT' }).click();
+    await expect(page.locator('#app')).toHaveAttribute('data-ready', 'true');
+    await page.waitForFunction(() => Number(document.querySelector('#aim-readout')?.getAttribute('data-accuracy')) >= 40,
+      undefined, { timeout: 25_000, polling: 'raf' });
+    await page.keyboard.press('Space');
+    await expect(page.locator('#result')).toContainText(/ON TARGET|PRECISION HIT/, { timeout: 15_000 });
+    expect(Number(await page.locator('#score').textContent())).toBeGreaterThan(0);
+    await expect(page.locator('#misses')).toHaveText('0 / 3');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#app')).toHaveAttribute('data-screen', 'paused');
+    await page.getByRole('button', { name: 'RESUME FLIGHT' }).click();
+    await expect(page.locator('#app')).toHaveAttribute('data-screen', 'playing');
+    expect(errors).toEqual([]);
+  } finally { await context.setOffline(false); }
+});
+
 test('essential asset failures show a recoverable error instead of an empty game', async ({ page }) => {
   await page.route('**/assets/kestrel.glb', route => route.abort());
   await page.goto('/');
