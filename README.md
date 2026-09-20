@@ -402,6 +402,12 @@ The versioned format owns deeply frozen copies, caps tracks at 2,048 knots and
 one hour, and rejects nonfinite/degenerate motion data. Consumers must still
 check required coverage, whole-curve speed and terrain/camera safety for the
 specific encounter; structural validation alone does not establish a fair path.
+The opt-in `ChaseTimeline` precomputes world-space camera motion at the physics
+step and interpolates it without render-frame history. Its acquisition checks
+require an explicit viewport envelope and visibility margin; actual-view checks
+report resize, camera mismatch or hidden-ring failures for later multiplayer
+pause/revalidation wiring. Solo keeps its existing camera behavior. A test-only
+WebGL fixture checks authored views against Babylon projection after rebasing.
 The 350 ceiling applies to the actual 3D vector, not just forward velocity.
 Release remains at planned time zero; acquisition, dive, cutoff and recovery have
 explicit per-encounter times. HUD and audio use the same speed definition.

@@ -37,6 +37,7 @@ import { projectRoute, routeBounds } from '../terrain/canyon-route';
 import { contactAccuracy } from '../simulation/ballistics';
 import { River } from './river';
 import { CHASE_FOV, chaseView, targetInChaseView } from '../simulation/chase-camera';
+import type { ChaseView } from '../simulation/chase-camera';
 import { createTerrainMaterial, createCanyonMaterial } from './terrain-material';
 import { createDesertMaterial } from './desert-material';
 import type { DesertSurface } from './desert-material';
@@ -413,11 +414,15 @@ export class World {
 
   private local(p: Vec3): Vector3 { return new Vector3(p.x, p.y, p.z - this.origin); }
 
-  private missileView(): MissileView {
+  chaseSnapshot(): ChaseView {
     this.camera.getViewMatrix(true);
     const look = this.camera.getTarget(), p = this.camera.position;
     return { position: { x: p.x, y: p.y, z: p.z + this.origin },
-      target: { x: look.x, y: look.y, z: look.z + this.origin },
+      target: { x: look.x, y: look.y, z: look.z + this.origin } };
+  }
+
+  private missileView(): MissileView {
+    return { ...this.chaseSnapshot(),
       aspect: this.engine.getRenderWidth() / this.engine.getRenderHeight(), range: this.scene.fogEnd };
   }
 
@@ -433,7 +438,7 @@ export class World {
     this.bursts = [];
   }
 
-  update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number): void {
+  update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number, authoredView?: ChaseView): void {
     this.scene.fogEnd = Math.max(QUALITY[this.quality].distance,
       (run.encounter.canyon?.sightDistance ?? targetSightDistance(run.encounter.id - 1)) + 400);
     if (run.status === 'over') this.combat.startFinale(pose, run, this.missileView());
@@ -464,7 +469,7 @@ export class World {
         ? Math.hypot(run.bomb.velocity.x, run.bomb.velocity.z) : run.bomb.velocity.z),
         Math.atan2(run.bomb.velocity.x, run.bomb.velocity.z), 0);
     }
-    const view = chaseView(pose, this.surface, this.cameraInitialized
+    const view = authoredView ?? chaseView(pose, this.surface, this.cameraInitialized
       ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
     this.camera.position.copyFrom(this.local(view.position));
     this.camera.setTarget(this.local(view.target));
