@@ -419,6 +419,11 @@ WebGL fixture checks authored views against Babylon projection after rebasing.
 The 350 ceiling applies to the actual 3D vector, not just forward velocity.
 Release remains at planned time zero; acquisition, dive, cutoff and recovery have
 explicit per-encounter times. HUD and audio use the same speed definition.
+The bounded `canyonShelves` / `canyonCandidate` boundary separates shelf selection
+from solving a specific approach. A phase offset can request distinct real
+release motion to the same canonical shelf; rejected candidates carry explicit
+reasons. Solo retains its original candidate order and zero-offset trajectory.
+This primitive alone does not establish a synchronized or fair two-player course.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness
