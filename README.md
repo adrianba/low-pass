@@ -196,9 +196,11 @@ not indicate that multiplayer is playable.
 See the [G0 container handoff](docs/application-container-checkpoint.md) for
 the exact configuration contract, local checks, Ansible-owned deployment
 validation, architecture limitation and rollback.
-The selected separate `coturn/coturn` deployment is covered by the
-[Compose and relay-hardening guide](docs/coturn-compose.md), including example
-files for the Ansible handoff. The current game does not issue TURN credentials.
+The user reports coturn deployed at `turn.low-pass.biggsea.us`, using independently
+developed code in the separate Ansible repository. That repository owns relay
+deployment; this repository retains only the
+[game-side TURN integration requirements](docs/two-player-multiplayer-research.md#122-turn-connection-contract).
+The current game does not issue TURN credentials.
 No branch image has been published or deployed by this implementation.
 
 ### Published container

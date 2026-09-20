@@ -12,23 +12,24 @@ regression fixtures and an optional, explicitly disabled Node HTTP runtime.
 The first Nginx-plus-Node container handoff is documented in
 [G0: application container checkpoint](application-container-checkpoint.md).
 This is not playable multiplayer. Deployment compatibility, formation approval
-and real Edge networking still require their stated gates. The user subsequently
-selected a separate `coturn/coturn` container; see the
-[Compose and abuse-prevention guide](coturn-compose.md).
+and real Edge networking still require their stated gates. On 2026-09-20 the user
+reported coturn deployed at `turn.low-pass.biggsea.us` using independently developed
+Ansible code. Relay deployment instructions/examples have been removed here;
+the remaining TURN material describes application integration and acceptance only.
 
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,
 not authorization to deploy, change Traefik/DNS/firewalls, or edit that Ansible
-repository. Infrastructure work below describes requirements for that separate
-deployment process.
+repository. That repository also exclusively owns coturn deployment and operation;
+this repository must not infer the live relay's settings from retired examples.
 
 **Implementation decisions confirmed after the research:** hosting requires a
 separately shared access code, without accounts. Prefer evolving the existing
 application image/container to run both Nginx and Node, keeping single-player
 available while multiplayer is disabled or unavailable. Prove that packaging in
 an early deployment checkpoint; stop for alternatives if it cannot preserve the
-current deployment constraints. Coturn will run in its own `coturn/coturn`
-container. The user handles intermediate Ansible deployments and approves
+current deployment constraints. Coturn is independently deployed and managed.
+The user handles intermediate application deployments and approves
 deployment compatibility, formation fairness, real Edge connectivity, and the
 complete game at explicit milestones. Implementation uses small tested local
 commits, including separate commits for individual UI screens.
@@ -37,11 +38,11 @@ commits, including separate commits for individual UI screens.
 
 Use a **host-authoritative browser simulation**, connected to the other browser
 through **native WebRTC data channels**. Add a small **Node.js/TypeScript
-HTTPS/WebSocket signaling service** and a self-hosted **coturn STUN/TURN service**
-on the existing Docker host, **`docker.circlone.net`**. Preserve the game's
+HTTPS/WebSocket signaling service** and integrate the existing **coturn service**
+at **`turn.low-pass.biggsea.us`**. Preserve the game's
 existing public hostname, **`low-pass.biggsea.us`**, and use its **Traefik** proxy
-for HTTPS/WSS. The host has **one public IP**; TURN port sharing therefore needs
-an explicit TCP-routing design rather than an assumed second address.
+for HTTPS/WSS. Use only the TURN endpoints confirmed by the operator; do not
+assume TURN/TLS on 443 is available because game HTTPS uses that port.
 
 WebRTC should try a direct browser-to-browser connection first and use TURN when
 direct connectivity fails. TURN relays encrypted game traffic; it does not become
@@ -78,7 +79,7 @@ These decisions were explicitly confirmed during the research.
 | Infrastructure | Self-hosted services on `docker.circlone.net`, with one public IP and full administrative control. |
 | Public deployment | Existing game hostname `low-pass.biggsea.us`; HTTPS is handled by Traefik. Preserve the current browser origin. |
 | Deployment workflow | Ansible in a separate repository owns production deployment. No deployment or changes to that repository are part of this research. |
-| Application packaging | One evolving existing image/container with Nginx and Node, preserving solo play; validate compatibility before relying on it. The user selected a separate `coturn/coturn` container. |
+| Application packaging | One evolving existing image/container with Nginx and Node, preserving solo play; validate compatibility before relying on it. Coturn is independently deployed at `turn.low-pass.biggsea.us` and managed by the separate Ansible repository. |
 | Invitation | The host gives the second player a code through an outside communication channel. |
 | Authority | The first browser drives the game and chooses the landscape. |
 | Terrains | Green Valley, Desert, and River Canyon are all required for the first public multiplayer release. |
@@ -107,14 +108,14 @@ Do not silently treat these as agreed requirements:
 - The supported latency/jitter envelope, late-input allowance, heartbeat periods,
   room lifetime, resume-countdown length, and queue/packet limits need testing.
   The reconnection grace itself is fixed at the agreed 15 seconds.
-- Confirm the VPS operating system, Traefik version/entrypoints, public IPv4/IPv6
-  setup, DNS configuration, provider UDP/firewall policy, and certificate handling.
-  The proxy and single-public-IP constraint are known; a second IP is not assumed.
+- Confirm the deployed application's compatibility and the actual TURN endpoint,
+  authentication and supported-network contract. Relay infrastructure details
+  remain in Ansible; the game must not assume ports or transports are enabled.
 - Confirm expected concurrent sessions and available bandwidth before sizing.
   No cloud price or capacity estimate is assumed here.
 - Validate rootless/read-only Nginx and Node supervision in the existing image
-  on the deployed host. Coturn's separate-container layout is now selected;
-  actual relay networking and operating limits still require validation.
+  on the deployed host. Actual game-side relay connectivity and operating limits
+  still require validation against the independently managed service.
 
 ## 3. Findings in the current code
 
@@ -187,7 +188,7 @@ not a lack of interest in Edge support, is why it is not the P2P recommendation.
 | HTTP server | Initially Node `node:http` behind the existing TLS proxy | Health/readiness and a small room API. Avoid introducing a framework solely for a few endpoints. |
 | Protocol validation | Zod | Runtime validation and inferred TypeScript types for signaling, gameplay messages, and persistent multiplayer records. Compile-time interfaces alone do not validate peer input. |
 | Traversal/relay | coturn | STUN and authenticated TURN, with short-lived credentials issued by the signaling service. |
-| Deployment | Existing Ansible deployment, Docker, and Traefik | Evolve the existing application image with Nginx and Node; run `coturn/coturn` separately. Hand off configuration to the other repository. |
+| Deployment | Existing Ansible deployment, Docker, and Traefik | Evolve the existing application image with Nginx and Node and integrate the independently managed TURN service. Relay deployment configuration stays in Ansible. |
 | Unit/integration tests | Existing Vitest | State machines, planner fairness, serialization, fake transports, service room tests, and resource limits. |
 | Browser tests | Existing Playwright, Chromium and Windows Edge | Two isolated browsers/contexts, real ICE paths, visible formation, reconnect and lifecycle tests. |
 
@@ -780,7 +781,7 @@ globally trusted leaderboard. Keep all-time/top-10 views bounded as in the
 existing storage design. Storage errors warn and retain session data instead of
 blocking play.
 
-## 12. Docker/VPS deployment plan
+## 12. Application deployment and TURN integration
 
 This section specifies an **Ansible handoff**, not actions to execute in this
 repository or during this research. The existing Ansible repository remains the
@@ -788,7 +789,7 @@ source of truth for production containers, networks, secrets, proxy configuratio
 DNS/firewall integration, and rollout. Do not introduce a competing production
 Compose workflow here.
 
-### 12.1 Services
+### 12.1 Application services
 
 On `docker.circlone.net`, keep the existing game image static and unprivileged,
 and keep `low-pass.biggsea.us` as its public hostname. Do not switch users to the
@@ -798,11 +799,10 @@ machine hostname or a new application origin. Add:
    Use tested process supervision alongside Nginx; preserve the unprivileged,
    read-only/dropped-capability posture, resource limits, and static health.
    Keep service readiness distinct so a signaling failure does not prevent solo.
-2. A pinned coturn distribution/configuration with authenticated allocations,
-   constrained relay ports, quotas, and correct advertised addresses in its
-   own `coturn/coturn` container, as selected by the user. The concrete starting
-   configuration and remaining acceptance checks are in the
-   [Compose hardening guide](coturn-compose.md).
+2. Integration with the independently managed coturn service. Its deployment,
+   networking, certificates and operating policy are outside this repository.
+   The game requires an explicit connection/authentication contract, not a copy
+   of the relay's deployment configuration.
 3. Same-origin `/api/` and `/signal` proxying inside Nginx to the private Node
    listener. Keep the existing Traefik HTTP route to the application on 8080.
    Configure WebSocket upgrades and idle timeouts consistent with heartbeat;
@@ -817,98 +817,36 @@ Drain or schedule service updates rather than pretending this is highly availabl
 If future scale needs multiple instances, shared room state and routing become a
 separate project. Do not add Redis preemptively.
 
-### 12.2 TURN networking
+### 12.2 TURN connection contract
 
-Proposed public listeners to verify against the current VPS:
+The user reports the server deployed at `turn.low-pass.biggsea.us`. Its actual
+configuration was developed independently in Ansible; the removed examples do
+not establish its ports, authentication mode or supported transports.
 
-| Listener | Purpose |
+Before the networking implementation, obtain this non-secret integration contract:
+
+| Information | Why the game needs it |
 | --- | --- |
-| HTTPS TCP 443 | Static site, API, and WSS via the existing TLS proxy. |
-| TURN/STUN UDP/TCP 3478 | Standard traversal and initial relay connectivity options. |
-| TURN TLS TCP 5349 | Standard TLS TURN listener with a valid certificate. |
-| TURN TLS TCP 443, if feasible | Better reachability on some UDP-restricted networks; requires deliberate handling of the existing HTTPS listener. |
-| Explicit bounded UDP relay-port range | Actual relay allocations; size from concurrent sessions and verify end-to-end reachability. |
+| Exact `turn:`/`turns:` URLs, including ports and UDP/TCP transport | Populate the browser's ICE server list without guessing enabled listeners. Confirm 443 separately if offered. |
+| Whether standalone STUN is supported | Do not advertise a `stun:` URL if Binding requests are disabled or require authentication unsupported by that client flow. |
+| Authentication mode, realm, username format and credential lifetime | Match the future protected credential issuer to the deployed service. |
+| Secure application-side secret-file reference or credential-service interface | Integrate authorization without putting a shared secret or permanent password in the frontend, chat or Git. The secret value is not needed for design discussion. |
+| Supported IPv4/IPv6/client-network scope and relevant quotas | Bound connection attempts, simultaneous allocations, refresh/restart behavior and diagnostics. |
 
-**Traefik supports the required generic TCP/TLS routing mechanism.** Its official
-documentation states that TCP routers are evaluated before HTTP routers on the
-same entrypoint; unmatched traffic falls through to HTTP [S15]. `HostSNI` can
-select a TLS connection by the name in its ClientHello [S16], and
-`tls.passthrough: true` forwards it without terminating TLS [S17].
+The planned default is coturn REST-style temporary credentials; confirm that the
+deployed service supports it before implementing issuance. Do not assume a
+permanent username/password is the intended production integration.
 
-Ordinary HTTP reverse proxying cannot forward TURN as if it were another URL.
-With the confirmed single public IP, the recommended experiment is a dedicated
-TURN DNS name (proposed: `turn.low-pass.biggsea.us`, not an existing deployment
-claim) and an exact-SNI TCP router on the existing TCP 443 entrypoint:
+At G2, validate authenticated allocations and bidirectional data between two
+Windows Edge clients on different networks. Force relay and test each advertised
+transport separately; a successful connection with several URLs configured
+does not prove every fallback works. If 443 is offered, test with only that URL.
+Include both peers using this same relay and a client-UDP-blocked scenario.
+Successful DNS, TLS or game `/healthz` responses do not prove TURN data flow.
 
-```yaml
-# Illustrative Traefik dynamic configuration for the Ansible handoff.
-# Adapt the entrypoint/backend to the actual deployment; not applied here.
-tcp:
-  routers:
-    low-pass-turn:
-      entryPoints:
-        - websecure
-      rule: "HostSNI(`turn.low-pass.biggsea.us`)"
-      service: low-pass-turn
-      tls:
-        passthrough: true
-  services:
-    low-pass-turn:
-      loadBalancer:
-        servers:
-          - address: "<reachable-coturn-address>:5349"
-```
-
-Coturn terminates the TURN/TLS connection and needs its own certificate/key for
-the TURN hostname; Traefik's HTTP certificate resolver does not automatically
-provision coturn. The TCP route must match only that TURN name. **Do not use a
-TURN `HostSNI("*")` catch-all**, which could capture the existing game HTTPS
-traffic.
-
-This verifies a proxy capability, **not actual Edge TURN/TLS interoperability**.
-Whether the deployed Edge client sends matching SNI and completes allocation/data
-traffic through this route remains an explicit acceptance gate. Use a TURN
-hostname, not an IP literal, but do not assume that alone proves SNI behavior.
-
-The later Edge test must force relay and offer **only**
-`turns:turn.low-pass.biggsea.us:443?transport=tcp`, then verify Traefik backend
-selection, authenticated coturn allocation, sustained bidirectional data, and
-ICE recovery while game HTTPS/WSS stays available. Offering all TURN URLs during
-this test could silently succeed through 5349 and fail to prove the 443 path.
-
-Retain these independent baseline options, with temporary credentials:
-
-```text
-stun:turn.low-pass.biggsea.us:3478
-turn:turn.low-pass.biggsea.us:3478?transport=udp
-turn:turn.low-pass.biggsea.us:3478?transport=tcp
-turns:turn.low-pass.biggsea.us:5349?transport=tcp
-```
-
-If the shared-443 path fails, disable that TURN TCP router and use direct
-3478/5349 plus the relay range. Document the limitation on networks that permit
-only 443; do not broaden the TCP rule, replace Traefik, or assume another public
-IP is available.
-
-Docker host networking for coturn may simplify Linux port mapping, but increases
-network exposure; alternatively map the listeners and the entire configured relay
-range explicitly. Choose after checking the VPS. Set external/public and internal
-address mapping correctly when containers or NAT are involved. Coturn documents
-host-networking considerations and relay-port configuration [S14].
-
-**TURN over TCP/TLS describes the browser-to-TURN connection.** It does not remove
-the UDP relay-port requirements for ordinary WebRTC UDP relaying [S12].
-Disabling RFC 6062 TCP relay endpoints is a different setting from disabling TCP
-client connections. A blocked-UDP client test must not also disable coturn's
-required server-side relay traffic.
-
-Allow only required firewall traffic, inspect IPv6 as well as IPv4, monitor
-certificate expiry, and test from outside the VPS. A successful `/healthz` or
-WebSocket connection does not prove TURN allocations or relay ports work.
-
-TURN/TLS 443 improves options but is not a guarantee through every corporate
-proxy, VPN, or firewall. An application WebSocket relay would be an additional
-compatibility path, not something TURN automatically provides.
+Report unsupported network cases explicitly. Neither TURN/TCP nor TURN/TLS
+guarantees access through every corporate proxy or firewall. Relay-side
+infrastructure troubleshooting belongs to its Ansible owner.
 
 ### 12.3 Credentials and abuse controls
 
@@ -917,9 +855,8 @@ compatibility path, not something TURN automatically provides.
   credential scheme. Associate issuance with a valid admitted room participant.
 - Choose credential lifetime and refresh behavior for long matches and network
   restarts; expired credentials must not strand a reconnecting player.
-- Configure per-user/global allocation and bandwidth quotas. Restrict loopback,
-  link-local, multicast, private/infrastructure destinations as appropriate for
-  this internet-only use, including IPv6; test the precise coturn configuration.
+- Respect the relay owner's allocation/bandwidth limits and peer restrictions;
+  surface quota and permission errors rather than bypassing those controls.
 - Close allocations and room resources on exit where possible; also enforce
   server-side expiry because browser cleanup is not reliable.
 - Avoid logging credentials, SDP, or full ICE candidates. Use opaque room IDs and
@@ -964,64 +901,49 @@ For illustration only, two 1 KiB state messages per 20 Hz interval would be
 40 KiB/s of combined application traffic. That is not a measurement of this game,
 does not include plans or overhead, and is not a capacity guarantee.
 
-### 12.5 Step-by-step deployment handoff for Ansible
+### 12.5 Application-only handoff for Ansible
 
 The eventual implementation should supply this contract to the separate Ansible
 repository. These are instructions to document, not deployment actions performed
 by this research.
 
-1. **Inventory the existing deployment.** Identify the current game container
-   definition, Docker networks, Traefik version and HTTPS entrypoint, certificate
-   management, public address, and host/provider firewall rules. Keep
+1. **Preserve the existing application deployment.** Keep its approved container,
+   network, routing and certificate integration. Preserve
    `low-pass.biggsea.us` and existing single-player service behavior unchanged.
 2. **Prepare compatible artifacts.** Produce the evolving application image with
    both browser assets and signaling, immutable version/digest references and
    matching protocol/build IDs. Publish only through an authorized workflow.
    Document ports, health/readiness endpoints, required
    configuration, resource limits, and supported upgrade behavior.
-3. **Provision TURN DNS and certificates.** Create the selected TURN hostname
-   pointing to the existing public IP, without an ordinary HTTP-only CDN/proxy
-   in front of the TURN traffic. Establish certificate renewal and delivery for
-   coturn if it terminates TLS. Do not assume Traefik's existing certificate
-   storage can simply be mounted as usable coturn PEM files.
-4. **Provision secrets through Ansible's existing secret mechanism.** Generate a
-   strong shared TURN credential-signing secret, mount it into the two services
-   that need it, and document rotation. Never put the shared secret in an image,
-   a `VITE_*` variable, public configuration, or logs.
-5. **Start/configure coturn through the deployment role.** Set its realm,
-   advertised public/internal addresses, listeners, TLS material, authentication,
-   relay-port range, peer restrictions, quotas, and bandwidth limits. Expose only
-   the required listeners/relay ports. Make the selected Docker network mode
-   explicit.
-6. **Start/configure signaling inside the application container.** Bind it to
+3. **Agree the TURN integration contract.** Consume the operator's confirmed
+   endpoint/authentication settings from section 12.2. Use the existing secret
+   management workflow for any application-side signing-secret reference.
+   Never put a shared secret in an image, `VITE_*` variable, public configuration
+   or logs. Do not copy relay deployment configuration into this repository.
+4. **Start/configure signaling inside the application container.** Bind it to
    the private loopback listener proxied by Nginx,
    configure the game origin, room/connection limits, TURN URLs/secret reference,
    credential expiry, and 15-second reconnect grace. Do not make the service
    port public.
-7. **Preserve application routing and add TURN routing if selected.** Keep the
+5. **Preserve application routing.** Keep the
    existing Traefik game HTTP router. Route the game-origin `/api/` and `/signal`
-   endpoints inside Nginx before the static catch-all. Configure/test TURN TLS TCP routing
-   separately; an HTTP path rule is not a TURN route.
-8. **Apply narrowly scoped firewall rules.** Permit the chosen STUN/TURN
-   listeners and relay range at both provider and host layers. Check IPv6 rules
-   whenever DNS publishes IPv6. A Traefik listener alone does not expose
-   coturn's allocation ports.
-9. **Configure the browser's public connection settings.** Supply only public
+   endpoints inside Nginx before the static catch-all. Relay routing remains
+   independently managed.
+6. **Configure the browser's public connection settings.** Supply only public
    endpoint/version information, with temporary TURN credentials fetched from
    authenticated room membership at runtime. Review CSP and explicitly allow
    `wss://low-pass.biggsea.us` if required; do not broaden it to arbitrary
    origins or confuse CSP configuration with TURN firewall configuration.
-10. **Run acceptance against the deployed images.** Check HTTP readiness,
-    invitation/join, actual Edge direct and forced-relay sessions, TURN/TLS port
-    sharing if configured, both-player pause/death/reconnect behavior, and
-    unchanged single-player records. Use valid temporary test credentials;
-    never leave a public unauthenticated TURN test endpoint.
-11. **Enable multiplayer only after acceptance.** Keep a feature flag or
+7. **Run acceptance against the deployed application and existing relay.** Check
+   HTTP readiness, invitation/join, actual Edge direct and forced-relay sessions,
+   TURN/TLS port sharing if configured, both-player pause/death/reconnect behavior,
+   and unchanged single-player records. Use valid temporary test credentials.
+8. **Enable multiplayer only after acceptance.** Keep a feature flag or
     deployment configuration that can hide hosting/joining if signaling or relay
     service is not ready. Keep single-player available independently.
-12. **Operate and roll back through Ansible.** Monitor room counts, connection
-    failures, relay allocation/bandwidth, certificate expiry, CPU/memory, and
-    queue limits. Drain active rooms before incompatible updates where possible.
+9. **Operate and roll back the application through Ansible.** Monitor room counts,
+    connection failures, CPU/memory and queue limits. Drain active rooms before
+    incompatible updates where possible.
     Roll back compatible game/signaling versions together, revoke/rotate secrets
     if needed, and never clear browser storage as part of rollback.
 
@@ -1031,9 +953,8 @@ Proposed configuration contract to finalize with the implementation:
 | --- | --- |
 | Game origin and public WSS/API paths | Public; preserve `low-pass.biggsea.us`. |
 | Game/protocol/generator version IDs | Public; used to reject incompatible peers. |
-| TURN URL list, realm, public address, listener/relay ranges | Public/network configuration; deployment-owned. |
-| TURN shared-secret file reference | Secret; signaling and coturn only. |
-| Coturn TLS certificate/key references and renewal hook | Private key is secret; deployment-owned. |
+| Confirmed TURN URLs, authentication mode, realm and credential lifetime | Operator-provided integration settings; do not infer them from removed deployment examples. |
+| Application-side TURN signing-secret file reference, if required | Secret value remains outside chat, Git and the frontend. |
 | Invitation expiry, room capacity, rate/queue limits | Server configuration; numeric budgets established in the spike. |
 | Reconnect grace | Server/client protocol setting fixed at 15 seconds. |
 | Readiness/liveness, logging retention and redaction | Operational contract; no room codes, tokens, SDP, or raw ICE addresses in normal logs. |
@@ -1206,10 +1127,6 @@ did not modify gameplay, inspect private server configuration, or deploy service
 | [S11: WebTransport, MDN][S11] | Browser-to-server streams/datagrams, not browser-to-browser listening. |
 | [S12: coturn example configuration][S12] | Listeners, relay transports/ports, NAT mapping, quotas, and peer restrictions. Treat options as version-sensitive. |
 | [S13: coturn server manual][S13] | TURN REST temporary-credential formula and authentication configuration. |
-| [S14: coturn Docker documentation][S14] | Container networking, public exposure, and relay-port ranges. |
-| [S15: Traefik TCP router documentation][S15] | TCP-before-HTTP routing and fallthrough on shared entrypoints. |
-| [S16: Traefik TCP rules and priority][S16] | `HostSNI` matching and its TLS context. |
-| [S17: Traefik TCP TLS documentation][S17] | TLS passthrough and which service terminates TLS. |
 | [S18: Page Lifecycle API, Chrome for Developers][S18] | Frozen/discarded page limitations in Chromium; not a promise about every Edge lifecycle event. |
 | [S19: RFC 8827, WebRTC Security Architecture][S19] | DTLS, signaling/application trust, and peer address-privacy boundaries. |
 | [S20: MDN WebRTC browser-compatibility data][S20] | Edge API support evidence; actual Edge networking tests still required. |
@@ -1229,10 +1146,6 @@ did not modify gameplay, inspect private server configuration, or deploy service
 [S11]: https://developer.mozilla.org/en-US/docs/Web/API/WebTransport
 [S12]: https://github.com/coturn/coturn/blob/master/examples/etc/turnserver.conf
 [S13]: https://github.com/coturn/coturn/blob/master/man/man1/turnserver.1
-[S14]: https://github.com/coturn/coturn/blob/master/docker/coturn/README.md
-[S15]: https://doc.traefik.io/traefik/reference/routing-configuration/tcp/routing/router/
-[S16]: https://doc.traefik.io/traefik/reference/routing-configuration/tcp/routing/rules-and-priority/
-[S17]: https://doc.traefik.io/traefik/reference/routing-configuration/tcp/tls/
 [S18]: https://developer.chrome.com/docs/web-platform/page-lifecycle-api#states
 [S19]: https://www.rfc-editor.org/rfc/rfc8827.html
 [S20]: https://github.com/mdn/browser-compat-data/blob/main/api/RTCPeerConnection.json

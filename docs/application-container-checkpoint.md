@@ -3,11 +3,20 @@
 This is the first deployable **single-player-compatible preparation** for
 multiplayer, not a multiplayer release. It adds an optional Node HTTP service
 beside Nginx in the existing application image. There are no rooms, host access
-codes, invitations, WebRTC sessions, TURN credentials or relay listeners yet.
+codes, invitations, WebRTC sessions or TURN credential issuance in the application
+yet. The separately managed coturn server is described under integration status below.
 
 The implementation branch is `feat/two-player-multiplayer`. Deployment remains
 owned by Ansible in the separate repository. These are handoff instructions,
 not instructions for the implementation agent to deploy or publish anything.
+
+**Reported deployment status (2026-09-20):** the user set
+`LOW_PASS_MULTIPLAYER_ENABLED=false` but did not update the application image.
+That environment change alone does not install this checkpoint's Nginx/Node
+runtime. The next deployment must use a new image built from
+`feat/two-player-multiplayer`, through the approved artifact/publication workflow.
+Keep the flag false. The existing published image is not updated merely because
+this branch has local commits.
 
 ## Container contract
 
@@ -164,8 +173,9 @@ The user deploys the intermediate image through Ansible and supplies:
 4. **Restart:** user-controlled container replacement/restart returns both
    health endpoints while keeping the same browser origin and completed records.
    Test intentional Node downtime only in an appropriate non-live environment.
-5. **Coturn layout:** the user selected a separate `coturn/coturn` container.
-   Provisioning and real relay connectivity remain the later G2 handoff.
+5. **TURN integration:** the user reports the separate coturn server deployed at
+   `turn.low-pass.biggsea.us`. Game-side authenticated relay connectivity remains
+   the later G2 acceptance check.
 
 The full browser suite can target the user-provisioned deployment. On an approved
 Windows Edge test host, in PowerShell:
@@ -185,28 +195,26 @@ G0 makes no score schema changes. A rollback can interrupt asset requests, but
 completed browser records remain origin/profile-local and are not in a Docker
 volume. Stop implementation at this gate until the required evidence is approved.
 
-## Selected coturn packaging: separate container
+## Independently managed TURN integration
 
-The user selected a separate container using `coturn/coturn`. See the
-[Compose and abuse-prevention guide](coturn-compose.md) and its example files
-for the Ansible-owned deployment. No relay has been deployed by this work.
-The comparison below records the tradeoffs; it is no longer an open decision.
-Both options can use the same host/public IP. Both
-require authenticated temporary credentials, quotas, relay-side UDP reachability,
-advertised address configuration, secret/certificate handling and later real
-Edge allocation/data testing. Neither makes TURN an ordinary HTTP reverse proxy.
+On 2026-09-20 the user reported coturn deployed at `turn.low-pass.biggsea.us`,
+using independently developed code in the Ansible repository. Relay deployment
+instructions and examples have been removed here; the old examples do not
+describe or establish the live server's settings.
 
-| Concern | Separate coturn container | Coturn bundled with Nginx and Node |
-| --- | --- | --- |
-| Updates/restarts | Relay can update independently; game deployments need not restart active relay allocations. | App replacement restarts relay too; plan for active connections/allocations to be interrupted. |
-| Ports/routing | Additional container/service, explicit listeners and relay UDP range on the same host. | The existing application container gains all those listeners/UDP mappings; they are not avoided. |
-| Secrets/certificates | Relay secrets and TURN TLS certificate mounts isolated to coturn. Node still needs authorized credential-issuing configuration. | More sensitive mounts and configuration share the application container and its process namespace. |
-| Resource/failure limits | Independent memory/CPU limits, health and logging; clearer relay failure isolation. | Shared limits and failure/update fate; per-service health and least privilege must be re-proven. |
-| Maintenance | An additional Ansible-managed service, but a standard relay image can track coturn separately. | One application artifact to distribute, but a larger image and more supervision, licensing and networking responsibility here. |
+The game still needs the actual TURN URLs/transports, authentication contract
+and a secure server-side credential integration. See the
+[TURN connection contract](two-player-multiplayer-research.md#122-turn-connection-contract).
+No shared secret, permanent password or certificate private key should be sent
+in chat or committed to this repository.
 
-**Selected:** keep Nginx and Node together, with coturn in a separate container
-for independent relay lifecycle and resource limits. This decision does not
-waive the outstanding AMD64 deployment and Windows Edge evidence at G0.
+**G0 still concerns the application container:** confirm the Nginx/Node image is
+deployed on the intended architecture, both health endpoints work, and actual
+Windows Edge solo play, existing records/settings and restart behavior remain
+intact. Coturn deployment alone does not establish those results.
 
-Actual direct/relay connectivity, TURN/TLS 443 SNI routing, allocations and
-bidirectional data remain **G2**, not G0 acceptance.
+Once G0 is approved, the next work is the local paired-flight prototype.
+TURN connection details are needed before the later networking work, not to
+begin that local prototype. Authenticated relay allocations and bidirectional
+data between real Windows Edge clients remain **G2**, not an inferred result
+of the server's deployment.
