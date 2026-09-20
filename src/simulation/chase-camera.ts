@@ -1,4 +1,4 @@
-import type { Pose } from '../game/run';
+import type { Pose } from './pose';
 import type { Surface } from '../terrain/surface';
 import { mix } from './math';
 import type { Vec3 } from './math';

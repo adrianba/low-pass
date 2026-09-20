@@ -1,7 +1,7 @@
 import { ATTACK_HEIGHT, CRUISE_HEIGHT, FLOOR, GRAVITY, MAX_MISSES, STEP, difficulty } from '../config/game';
 import { contactAccuracy, advanceBomb, predictImpact } from '../simulation/ballistics';
 import type { Bomb } from '../simulation/ballistics';
-import { clamp, hash, mix } from '../simulation/math';
+import { clamp, hash } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { valleyCenter, valleySlope, valleyCurvature } from '../terrain/heightfield';
 import { joinMotion } from '../simulation/curves';
@@ -13,13 +13,16 @@ import { surfaceFor, valleySurface } from '../terrain/surface';
 import type { Contact, Surface } from '../terrain/surface';
 import { canyonPose, planCanyon } from './canyon-flight';
 import type { CanyonFlight } from './canyon-flight';
+import { initialPose, launchFrom } from '../simulation/pose';
+import type { Pose } from '../simulation/pose';
+export { aircraftPoint, initialPose, interpolatePose, launchFrom } from '../simulation/pose';
+export type { Pose } from '../simulation/pose';
 
 export const APPROACH_DURATION = 3;
 const ENCOUNTER_START = -8;
 
 export type RunStatus = 'running' | 'paused' | 'over';
 export interface Result { points: number; impact: Contact | null; id: number }
-export interface Pose { position: Vec3; velocity: Vec3; acceleration: Vec3; bank: number; pitch: number }
 export interface Encounter {
   id: number;
   readonly targetKind: TargetKind;
@@ -75,35 +78,6 @@ export function poseAt(encounter: Encounter, time: number, count: number): Pose 
   const acceleration = { x: motion.x.acceleration, y: motion.y.acceleration, z: motion.z.acceleration };
   return { position, velocity, acceleration, bank: clamp(-acceleration.x / 32, -0.65, 0.65),
     pitch: -Math.atan2(velocity.y, velocity.z) };
-}
-
-export function aircraftPoint(pose: Pose, local: Vec3): Vec3 {
-  const yaw = Math.atan2(pose.velocity.x, pose.velocity.z);
-  const x = local.x * Math.cos(pose.bank) - local.y * Math.sin(pose.bank);
-  const rolledY = local.x * Math.sin(pose.bank) + local.y * Math.cos(pose.bank);
-  const y = rolledY * Math.cos(pose.pitch) - local.z * Math.sin(pose.pitch);
-  const z = rolledY * Math.sin(pose.pitch) + local.z * Math.cos(pose.pitch);
-  return {
-    x: pose.position.x + x * Math.cos(yaw) + z * Math.sin(yaw),
-    y: pose.position.y + y,
-    z: pose.position.z - x * Math.sin(yaw) + z * Math.cos(yaw),
-  };
-}
-
-export function launchFrom(pose: Pose): Bomb {
-  return { position: aircraftPoint(pose, { x: 0, y: -2.2, z: 0 }), velocity: { ...pose.velocity }, age: 0 };
-}
-
-export function initialPose(position: Vec3 = { x: 0, y: FLOOR + CRUISE_HEIGHT, z: 0 }): Pose {
-  return { position: { ...position }, velocity: { x: 0, y: 0, z: difficulty(0).speed },
-    acceleration: { x: 0, y: 0, z: 0 }, bank: 0, pitch: 0 };
-}
-
-export function interpolatePose(previous: Pose, current: Pose, alpha: number): Pose {
-  const vector = (a: Vec3, b: Vec3): Vec3 => ({ x: mix(a.x, b.x, alpha), y: mix(a.y, b.y, alpha), z: mix(a.z, b.z, alpha) });
-  return { position: vector(previous.position, current.position), velocity: vector(previous.velocity, current.velocity),
-    acceleration: vector(previous.acceleration, current.acceleration),
-    bank: mix(previous.bank, current.bank, alpha), pitch: mix(previous.pitch, current.pitch, alpha) };
 }
 
 export function planEncounter(count: number, seed: number, previous: Pose, surface = valleySurface): Encounter {

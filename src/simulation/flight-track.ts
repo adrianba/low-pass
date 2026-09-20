@@ -1,7 +1,7 @@
 import { joinMotion } from './curves';
 import { clamp, distance } from './math';
 import type { Vec3 } from './math';
-import type { Pose } from '../game/run';
+import type { Pose } from './pose';
 
 interface Knot { phase: number; time: number; pose: Pose }
 export const TRACK_SPEED_FRACTION = 0.985;

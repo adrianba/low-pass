@@ -1,4 +1,4 @@
-import type { Pose } from './run';
+import type { Pose } from '../simulation/pose';
 import { clamp, distance, hash } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { valleySurface } from '../terrain/surface';

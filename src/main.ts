@@ -1,5 +1,6 @@
 import './ui/style.css';
-import { Run, interpolatePose } from './game/run';
+import { Run } from './game/run';
+import { interpolatePose } from './simulation/pose';
 import { STEP } from './config/game';
 import type { Vec3 } from './simulation/math';
 import { World } from './rendering/world';

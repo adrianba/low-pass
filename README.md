@@ -262,10 +262,10 @@ npx playwright install chromium
 npm run test:e2e -- --project=chromium
 ```
 
-For the isolated container lifecycle/proxy checks (Docker required):
+For the isolated container lifecycle/HTTP checks (Docker required):
 
 ```sh
-docker build -t low-pass:multiplayer-g0 .
+docker build -t low-pass:node-g0 .
 npm run test:container
 ```
 
@@ -391,6 +391,9 @@ Banks and shelves retain their perpendicular width around corners. The tuned
 route reaches approximately +/-29 degrees of heading, with turn radii down to
 580 units; no hairpins or doubling back. Broader attack stretches alternate with
 transit turns, and lower tiers can also use gentle bend exits.
+`src/simulation/pose.ts` owns the shared pose, aircraft-local transforms, bomb
+launch and render interpolation helpers; `game/run.ts` retains compatibility
+exports while callers migrate. The helpers do not depend on the solo controller.
 `src/simulation/flight-track.ts` separates path geometry from real traversal time.
 It anticipates bends, limits acceleration, joins full motion with quintic curves,
 and bounds the entire interpolated velocity curve using Bezier control hulls.

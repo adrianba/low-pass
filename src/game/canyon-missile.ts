@@ -6,7 +6,7 @@ import type { ChaseView } from '../simulation/chase-camera';
 import { advanceRoute, projectRoute, routeMotion, routePoint } from '../terrain/canyon-route';
 import { CANYON } from '../terrain/river-canyon';
 import type { Surface } from '../terrain/surface';
-import type { Pose } from './run';
+import type { Pose } from '../simulation/pose';
 import type { MissileKind } from './missile';
 
 export interface MissileView extends ChaseView { aspect: number; range: number }

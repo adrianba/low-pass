@@ -13,8 +13,10 @@ import { hash, noise } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { MissileFlight, finaleFlight, MISSILE_INTERCEPT_TIME } from '../game/missile';
 import type { CombatCue, FinalePhase } from '../game/missile';
-import { poseAt, aircraftPoint } from '../game/run';
-import type { Pose, Run } from '../game/run';
+import { poseAt } from '../game/run';
+import type { Run } from '../game/run';
+import { aircraftPoint } from '../simulation/pose';
+import type { Pose } from '../simulation/pose';
 import { joinMotion } from '../simulation/curves';
 import type { MissileView } from '../game/canyon-missile';
 
