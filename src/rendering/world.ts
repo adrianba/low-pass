@@ -10,7 +10,6 @@ import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { CreateDisc } from '@babylonjs/core/Meshes/Builders/discBuilder';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
-import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { RawCubeTexture } from '@babylonjs/core/Materials/Textures/rawCubeTexture';
@@ -46,6 +45,7 @@ import { TargetModels } from './target-model';
 import { CombatEffects } from './combat-effects';
 import { shouldFlyby } from '../game/missile';
 import type { MissileView } from '../game/canyon-missile';
+import { AircraftView } from './aircraft-view';
 
 interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; water: Mesh | null; z: number }
 interface Burst { mesh: Mesh; velocity: Vector3; age: number }
@@ -54,9 +54,7 @@ export class World {
   readonly engine: Engine;
   readonly scene: Scene;
   readonly camera: FreeCamera;
-  private aircraft: TransformNode;
-  private bombRoot: TransformNode;
-  private carriedBomb: TransformNode | null = null;
+  private aircraft: AircraftView;
   private chunks = new Map<string, Chunk>();
   private terrainMaterial!: PBRMaterial;
   private terrainMaterials: Record<TerrainTheme, PBRMaterial> | null = null;
@@ -128,8 +126,7 @@ export class World {
     this.shadows.usePercentageCloserFiltering = true;
     this.shadows.bias = 0.0005;
     this.shadows.normalBias = 0.03;
-    this.aircraft = new TransformNode('Aircraft pose', this.scene);
-    this.bombRoot = new TransformNode('Bomb pose', this.scene);
+    this.aircraft = new AircraftView(this.scene, this.shadows);
     const foliage = new StandardMaterial('Pine foliage', this.scene);
     foliage.diffuseColor = new Color3(0.10, 0.19, 0.09);
     foliage.specularColor = Color3.Black();
@@ -266,26 +263,7 @@ export class World {
       createTerrainMaterial(this.scene),
     ]);
     this.containers = [aircraft, bomb];
-    aircraft.addAllToScene();
-    for (const mesh of aircraft.rootNodes) {
-      mesh.parent = this.aircraft;
-      if (mesh instanceof TransformNode) mesh.rotate(Vector3.Up(), Math.PI);
-    }
-    for (const mesh of this.aircraft.getChildMeshes()) {
-      this.shadows.addShadowCaster(mesh);
-      mesh.isPickable = false;
-    }
-    bomb.addAllToScene();
-    for (const mesh of bomb.rootNodes) {
-      mesh.parent = this.bombRoot;
-      if (mesh instanceof TransformNode) mesh.rotate(Vector3.Up(), Math.PI);
-    }
-    const carried = bomb.instantiateModelsToScene(name => `Carried ${name}`, true);
-    this.carriedBomb = new TransformNode('Carried bomb', this.scene);
-    this.carriedBomb.parent = this.aircraft;
-    this.carriedBomb.position.y = -2.2;
-    for (const node of carried.rootNodes) node.parent = this.carriedBomb;
-    this.bombRoot.setEnabled(false);
+    this.aircraft.loadModels(aircraft, bomb);
     this.desertSurface = createDesertMaterial(this.scene);
     this.terrainMaterials = { 'green-valley': terrain, desert: this.desertSurface.material,
       'river-canyon': createCanyonMaterial(this.scene, terrain) };
@@ -430,7 +408,7 @@ export class World {
     this.resultId = this.lastEncounter = 0;
     this.cameraInitialized = false;
     this.impactMark.setEnabled(false);
-    this.aircraft.setEnabled(true);
+    this.aircraft.reset();
     this.targetModels.reset();
     this.combat.reset();
     this.river.reset();
@@ -458,23 +436,14 @@ export class World {
     }
     if (this.desertSurface) this.desertSurface.origin = this.origin;
     this.stream(pose.position.z);
-    this.aircraft.position.copyFrom(this.local(pose.position));
-    this.aircraft.setEnabled(!this.combat.aircraftDestroyed);
-    this.aircraft.rotation.set(pose.pitch, Math.atan2(pose.velocity.x, pose.velocity.z), pose.bank);
-    this.carriedBomb?.setEnabled(!run.encounter.released);
-    this.bombRoot.setEnabled(run.bomb !== null);
-    if (run.bomb) {
-      this.bombRoot.position.copyFrom(this.local(run.bomb.position));
-      this.bombRoot.rotation.set(-Math.atan2(run.bomb.velocity.y, run.surface.canyon
-        ? Math.hypot(run.bomb.velocity.x, run.bomb.velocity.z) : run.bomb.velocity.z),
-        Math.atan2(run.bomb.velocity.x, run.bomb.velocity.z), 0);
-    }
+    this.aircraft.update({ pose, bomb: run.bomb, released: run.encounter.released,
+      destroyed: this.combat.aircraftDestroyed, canyon: run.surface.canyon }, this.origin);
     const view = authoredView ?? chaseView(pose, this.surface, this.cameraInitialized
       ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
     this.camera.position.copyFrom(this.local(view.position));
     this.camera.setTarget(this.local(view.target));
     this.cameraInitialized = true;
-    this.sun.position.copyFrom(this.aircraft.position).addInPlace(new Vector3(160, 290, -150));
+    this.sun.position.copyFrom(this.aircraft.root.position).addInPlace(new Vector3(160, 290, -150));
     this.target.position.copyFrom(this.local(run.encounter.target));
     this.target.position.y += 0.08;
     this.targetModels.root.position.copyFrom(this.local(run.encounter.target));
@@ -571,6 +540,7 @@ export class World {
 
   render(): void { this.scene.render(); }
   dispose(): void {
+    this.aircraft.dispose();
     for (const container of this.containers) container.dispose();
     this.scene.dispose();
     this.engine.dispose();

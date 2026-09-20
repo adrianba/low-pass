@@ -394,6 +394,10 @@ transit turns, and lower tiers can also use gentle bend exits.
 `src/simulation/pose.ts` owns the shared pose, aircraft-local transforms, bomb
 launch and render interpolation helpers; `game/run.ts` retains compatibility
 exports while callers migrate. The helpers do not depend on the solo controller.
+`src/rendering/aircraft-view.ts` instances the cached aircraft/bomb assets with
+independent transforms and visibility. Views own their cloned nodes and shadow
+registrations, while the scene owns the shared immutable geometry/materials.
+Solo uses the same view; additional players do not require duplicate downloads.
 `src/simulation/flight-track.ts` separates path geometry from real traversal time.
 It anticipates bends, limits acceleration, joins full motion with quintic curves,
 and bounds the entire interpolated velocity curve using Bezier control hulls.
