@@ -1,5 +1,11 @@
 # G0: application container checkpoint
 
+The intermediate Node service also serves the built game with Express 5 and
+compression at its private listener. It uses `LOW_PASS_STATIC_ROOT` set to
+`/usr/share/nginx/html`; production middleware dependencies live outside that
+HTTP root. Nginx remains the public listener until the next container cutover.
+Middleware dependency license texts are included under `/licenses/runtime-*`.
+
 This is the first deployable **single-player-compatible preparation** for
 multiplayer, not a multiplayer release. It adds an optional Node HTTP service
 beside Nginx in the existing application image. There are no rooms, host access

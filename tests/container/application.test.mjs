@@ -124,10 +124,11 @@ test('hardened image preserves static responses, private readiness, notices and 
     assert.equal(license.status, 200, name);
     assert.ok((await license.text()).length > 100, name);
   }
-  const files = await docker('exec', container.id, 'find', '/opt/low-pass', '/usr/share/nginx/html',
+  const files = await docker('exec', container.id, 'find', '/opt/low-pass/server', '/usr/share/nginx/html',
     '/etc/low-pass', '-type', 'f');
   assert.doesNotMatch(files, /\/(?:\.env[^/]*|\.npmrc|node_modules|\.git|tests)(?:\/|\n|$)|\.(?:pem|key|p12|pfx|map)\n/);
   assert.equal((await container.response('/server/index.js')).status, 404);
+  assert.equal((await container.response('/node_modules/express/package.json')).status, 404);
 });
 
 test('Node failure leaves solo online and restarts at a bounded rate', async t => {

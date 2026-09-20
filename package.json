@@ -25,11 +25,15 @@
   },
   "dependencies": {
     "@babylonjs/core": "9.25.0",
-    "@babylonjs/loaders": "9.25.0"
+    "@babylonjs/loaders": "9.25.0",
+    "compression": "1.8.2",
+    "express": "5.2.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.63.0",
+    "@types/compression": "1.8.1",
+    "@types/express": "5.0.6",
     "@types/node": "22.20.1",
     "eslint": "10.10.0",
     "typescript": "6.0.3",

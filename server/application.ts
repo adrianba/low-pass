@@ -1,50 +1,60 @@
 import { createServer } from 'node:http';
-import type { ServerResponse } from 'node:http';
+import type { Socket } from 'node:net';
+import express from 'express';
 import type { ServiceConfig } from './config.js';
-
-function json(response: ServerResponse, status: number, value: object, head = false): void {
-  const body = JSON.stringify(value);
-  response.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  });
-  response.end(head ? undefined : body);
-}
+import { compress, httpErrors, securityHeaders, staticFiles, validateStaticRoot } from './static.js';
 
 export class ApplicationService {
   private closing: Promise<void> | null = null;
+  private readonly sockets = new Set<Socket>();
   readonly server = createServer({
     maxHeaderSize: 8192,
     headersTimeout: 5000,
     requestTimeout: 10_000,
     keepAliveTimeout: 5000,
     connectionsCheckingInterval: 1000,
-  }, (request, response) => {
-    const path = request.url?.split('?', 1)[0];
-    const head = request.method === 'HEAD';
-    const known = path === '/livez' || path === '/readyz' ||
-      path === '/api/multiplayer/readyz' || path === '/api/multiplayer/capabilities';
-    if (!known) {
-      json(response, 404, { error: 'not_found' }, head);
-    } else if (request.method !== 'GET' && !head) {
-      response.setHeader('Allow', 'GET, HEAD');
-      json(response, 405, { error: 'method_not_allowed' });
-    } else if (this.closing) {
-      json(response, 503, { error: 'shutting_down' }, head);
-    } else if (path === '/livez') {
-      json(response, 200, { status: 'ok' }, head);
-    } else if (path === '/api/multiplayer/readyz' && this.config.multiplayer.status === 'unavailable') {
-      json(response, 503, { error: 'multiplayer_unavailable', reason: this.config.multiplayer.reason }, head);
-    } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
-      json(response, 200, { status: 'ready', multiplayer: false }, head);
-    } else {
-      json(response, 200, { multiplayer: false, reason: this.config.multiplayer.reason }, head);
-    }
   });
 
   constructor(private readonly config: ServiceConfig, private readonly warn: (message: string) => void) {
+    const root = validateStaticRoot(config.staticRoot);
+    const app = express();
+    app.disable('x-powered-by');
+    app.set('case sensitive routing', true);
+    app.set('strict routing', true);
+    app.use(securityHeaders, compress);
+    app.use((_request, response, next) => {
+      if (this.closing) { response.status(503).json({ error: 'shutting_down' }); return; }
+      next();
+    });
+    app.use(['/api', '/signal'], express.raw({ type: () => true, limit: 16 * 1024, inflate: false }));
+    app.use((request, response, next) => {
+      const path = request.path;
+      const known = ['/healthz', '/livez', '/readyz', '/api/multiplayer/readyz', '/api/multiplayer/capabilities'].includes(path);
+      if (!known) {
+        if (path === '/api' || path.startsWith('/api/') || path === '/signal' || path.startsWith('/signal/')) {
+          response.status(404).json({ error: 'not_found' });
+        } else next();
+        return;
+      }
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        response.set('Allow', 'GET, HEAD').status(405).json({ error: 'method_not_allowed' });
+      } else if (path === '/healthz') {
+        response.type('text/plain').send('ok\n');
+      } else if (path === '/livez') {
+        response.json({ status: 'ok' });
+      } else if (path === '/api/multiplayer/readyz' && config.multiplayer.status === 'unavailable') {
+        response.status(503).json({ error: 'multiplayer_unavailable', reason: config.multiplayer.reason });
+      } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
+        response.json({ status: 'ready', multiplayer: false });
+      } else response.json({ multiplayer: false, reason: config.multiplayer.reason });
+    });
+    app.use(...staticFiles(root));
+    app.use(httpErrors(warn));
+    this.server.on('request', app);
+    this.server.on('connection', socket => {
+      this.sockets.add(socket);
+      socket.once('close', () => this.sockets.delete(socket));
+    });
     this.server.maxRequestsPerSocket = 100;
     this.server.maxConnections = 128;
   }
@@ -54,7 +64,7 @@ export class ApplicationService {
     await new Promise<void>((resolve, reject) => {
       const failed = (error: Error) => { reject(error); };
       this.server.once('error', failed);
-      this.server.listen(this.config.port, '127.0.0.1', () => {
+      this.server.listen(this.config.port, this.config.host, () => {
         this.server.removeListener('error', failed);
         resolve();
       });
@@ -71,6 +81,7 @@ export class ApplicationService {
       const deadline = setTimeout(() => {
         this.warn('Application shutdown deadline reached; closing remaining HTTP connections.');
         this.server.closeAllConnections();
+        for (const socket of this.sockets) socket.destroy();
       }, this.config.shutdownTimeoutMs);
       this.server.close(error => {
         clearTimeout(deadline);

@@ -1,16 +1,21 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { rm } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { once } from 'node:events';
 import { ApplicationService } from '../../server/application.js';
 import { readServiceConfig } from '../../server/config.js';
+import { assetFixture } from './fixtures.js';
 
 const services: ApplicationService[] = [];
+let staticRoot: string;
+beforeAll(async () => { staticRoot = await assetFixture(); });
+afterAll(async () => { await rm(staticRoot, { recursive: true, force: true }); });
 afterEach(async () => { await Promise.all(services.splice(0).map(service => service.close())); });
 
 async function start(warn: (message: string) => void = message => { throw new Error(message); },
   env: NodeJS.ProcessEnv = {}) {
   const service = new ApplicationService({
-    ...readServiceConfig(env), port: 0, shutdownTimeoutMs: 50,
+    ...readServiceConfig(env), staticRoot, port: 0, shutdownTimeoutMs: 50,
   }, warn);
   services.push(service);
   const port = await service.listen();
@@ -34,7 +39,7 @@ describe('optional application service', () => {
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(await response.json()).toEqual(body);
     }
-    for (const path of ['/api/multiplayer/rooms', '/signal', '/']) {
+    for (const path of ['/api/multiplayer/rooms', '/signal']) {
       const response = await fetch(origin + path);
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: 'not_found' });
@@ -67,7 +72,7 @@ describe('optional application service', () => {
 
   it('surfaces binding failures and closes idempotently', async () => {
     const { service, port } = await start();
-    const conflicting = new ApplicationService({ ...readServiceConfig({}), port }, () => {});
+    const conflicting = new ApplicationService({ ...readServiceConfig({}), staticRoot, port }, () => {});
     await expect(conflicting.listen()).rejects.toMatchObject({ code: 'EADDRINUSE' });
     await conflicting.close();
     expect(service.close()).toBe(service.close());
@@ -98,12 +103,19 @@ describe('optional application service', () => {
 
 describe('service configuration', () => {
   it('defaults to private disabled operation and accepts bounded overrides', () => {
-    expect(readServiceConfig({})).toEqual({ port: 8081, shutdownTimeoutMs: 5000,
+    expect(readServiceConfig({})).toMatchObject({ port: 8081, host: '127.0.0.1', shutdownTimeoutMs: 5000,
       multiplayer: { status: 'disabled', reason: 'not_implemented' } });
     expect(readServiceConfig({ LOW_PASS_SERVICE_PORT: '9081', LOW_PASS_SHUTDOWN_TIMEOUT_MS: '150',
       LOW_PASS_MULTIPLAYER_ENABLED: 'false' }))
-      .toEqual({ port: 9081, shutdownTimeoutMs: 150,
+      .toMatchObject({ port: 9081, shutdownTimeoutMs: 150,
         multiplayer: { status: 'disabled', reason: 'not_implemented' } });
+  });
+
+  it('rejects invalid serving settings without echoing supplied values', () => {
+    expect(() => readServiceConfig({ LOW_PASS_SERVICE_HOST: 'private-host-value' })).toThrow(
+      'LOW_PASS_SERVICE_HOST must be an IP address.');
+    expect(() => readServiceConfig({ LOW_PASS_STATIC_ROOT: 'private-relative-path' })).toThrow(
+      'LOW_PASS_STATIC_ROOT must be an absolute build-directory path.');
   });
 
   it.each(['', '0', '-1', '65536', '1.5', 'Infinity', ' 8081', '8e3'])('rejects invalid port %j', port => {

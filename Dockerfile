@@ -8,12 +8,15 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build && npm run build:server
 RUN wget -q -O /node-LICENSE "https://raw.githubusercontent.com/nodejs/node/$(node --version)/LICENSE"
+RUN npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM ${NGINX_IMAGE}
 USER root
 RUN apk add --no-cache 's6>=2.15.0.0' s6-doc skalibs-doc execline-doc libstdc++
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /app/dist-server /opt/low-pass/server
+COPY --from=build /app/node_modules /opt/low-pass/node_modules
+ENV LOW_PASS_STATIC_ROOT=/usr/share/nginx/html
 COPY package.json /opt/low-pass/package.json
 COPY container/ /etc/low-pass/
 RUN chmod 755 /etc/low-pass/entrypoint /etc/low-pass/services/nginx/run \

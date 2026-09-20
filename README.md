@@ -14,7 +14,8 @@ Third-party materials retain their own licenses: ambientCG terrain textures are
 CC0-1.0, and Babylon.js is Apache-2.0. See
 [asset notices](public/assets/credits.txt) and the
 [asset manifest](public/assets/manifest.json) for attribution and provenance.
-Production builds include the MIT and Babylon.js license texts under `/licenses/`.
+Production builds include the MIT, Babylon.js and Node middleware dependency
+license texts under `/licenses/`.
 The application container also includes notices for Node.js, Nginx, s6,
 skalibs and execline at that path.
 
@@ -44,24 +45,32 @@ runtime is preparation only: it does not create rooms, signal peers, issue relay
 credentials, or enable multiplayer.
 
 ```sh
+npm run build
 npm run build:server
 npm run start:server
 ```
 
-It binds only to `127.0.0.1:8081`. `GET /livez` reports process health;
+It serves the built `dist` directory at `127.0.0.1:8081` using Express 5 and
+compression middleware. The default build root is relative to the compiled
+server, independent of the launch directory. `/healthz` returns `ok`.
+`GET /livez` reports process health;
 `GET /readyz` reports HTTP-service readiness, **not multiplayer availability**.
 `GET /api/multiplayer/readyz` separately reports multiplayer configuration failures
 with 503 while the HTTP service remains available. Intentionally disabled
 multiplayer returns 200 with `multiplayer: false`.
 `GET /api/multiplayer/capabilities` returns
 `{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
-unknown routes (including `/signal` and room endpoints) return 404. SIGTERM and
+unknown routes (including `/signal` and room endpoints) return 404 with no HTML
+fallback. Static delivery supports HEAD, validators, ranges and compression;
+only hashed JS/CSS is immutable, while other assets revalidate. SIGTERM and
 SIGINT stop accepting connections, drain requests, then close remaining HTTP
 connections at the shutdown deadline with a warning.
 
 | Environment variable | Default | Accepted values |
 | --- | --- | --- |
 | `LOW_PASS_SERVICE_PORT` | `8081` | Integer 1-65535; loopback only |
+| `LOW_PASS_SERVICE_HOST` | `127.0.0.1` | IP address; keep loopback in the intermediate Nginx image |
+| `LOW_PASS_STATIC_ROOT` | sibling `dist` | Absolute built-asset directory; symlinks are rejected |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
 | `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
 

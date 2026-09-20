@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { assetFixture } from './fixtures.js';
 
 interface ProcessUnderTest {
   child: ChildProcessWithoutNullStreams;
@@ -14,14 +15,17 @@ interface ProcessUnderTest {
 }
 
 let outputDirectory: string;
+let staticRoot: string;
 const processes: ProcessUnderTest[] = [];
 
 beforeAll(async () => {
   outputDirectory = await mkdtemp(join(tmpdir(), 'low-pass-service-'));
+  staticRoot = await assetFixture();
   await promisify(execFile)(process.execPath, [
     'node_modules/typescript/bin/tsc', '-p', 'tsconfig.server.json', '--outDir', outputDirectory,
   ]);
   await writeFile(join(outputDirectory, 'package.json'), '{"type":"module"}');
+  await symlink(resolve('node_modules'), join(outputDirectory, 'node_modules'), 'junction');
 }, 20_000);
 
 afterEach(async () => {
@@ -30,11 +34,15 @@ afterEach(async () => {
     await process.exited;
   }
 });
-afterAll(async () => { if (outputDirectory) await rm(outputDirectory, { recursive: true, force: true }); });
+afterAll(async () => {
+  if (outputDirectory) await rm(outputDirectory, { recursive: true, force: true });
+  if (staticRoot) await rm(staticRoot, { recursive: true, force: true });
+});
 
 function launch(env: NodeJS.ProcessEnv): ProcessUnderTest {
   const child = spawn(process.execPath, [join(outputDirectory, 'index.js')], {
-    env, stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, LOW_PASS_STATIC_ROOT: staticRoot, ...env },
+    cwd: outputDirectory, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', chunk => { output += String(chunk); });
@@ -85,12 +93,13 @@ function ready(running: ProcessUnderTest): Promise<void> {
 }
 
 describe('compiled Node entrypoint', () => {
-  it.each(['SIGTERM', 'SIGINT'] as const)('serves HTTP and exits cleanly on %s', async signal => {
+  it.skipIf(process.platform === 'win32').each(['SIGTERM', 'SIGINT'] as const)('serves HTTP and exits cleanly on %s', async signal => {
     const port = await unusedPort();
     const running = launch({ LOW_PASS_SERVICE_PORT: String(port) });
     await ready(running);
     const response = await fetch(`http://127.0.0.1:${port}/api/multiplayer/capabilities`);
     expect(await response.json()).toEqual({ multiplayer: false, reason: 'not_implemented' });
+    expect(await (await fetch(`http://127.0.0.1:${port}/`)).text()).toContain('Low Pass fixture');
     running.child.kill(signal);
     expect(await running.exited).toEqual({ code: 0, signal: null });
     expect(running.output()).toContain('Application service stopped.');
@@ -104,8 +113,13 @@ describe('compiled Node entrypoint', () => {
     expect((await fetch(`http://127.0.0.1:${port}/api/multiplayer/readyz`)).status).toBe(503);
     expect(running.output()).toContain('Multiplayer unavailable:');
     expect(running.output()).not.toContain('private-invalid-value');
-    running.child.kill('SIGTERM');
-    expect(await running.exited).toEqual({ code: 0, signal: null });
+  });
+
+  it('fails explicitly when the build root is missing', async () => {
+    const running = launch({ LOW_PASS_STATIC_ROOT: join(staticRoot, 'missing') });
+    expect(await running.exited).toEqual({ code: 78, signal: null });
+    expect(running.output()).toContain('Static build output is missing or unreadable');
+    expect(running.output()).not.toContain(staticRoot);
   });
 
   it('exits unsuccessfully on invalid core configuration without exposing its value', async () => {

@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   });
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  console.info(`Application service ready on 127.0.0.1:${port}; multiplayer ${config.multiplayer.status}.`);
+  console.info(`Application service ready on ${config.host}:${port}; multiplayer ${config.multiplayer.status}.`);
 }
 
 void main().catch(error => {
