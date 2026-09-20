@@ -11,11 +11,17 @@ budgets and prototype gates are not measured performance results.
 regression fixtures and an optional, explicitly disabled Node HTTP runtime.
 The Node-only serving checkpoint, replacing the unshipped Nginx/s6 approach, is documented in
 [G0: application container checkpoint](application-container-checkpoint.md).
-This is not playable multiplayer. Deployment compatibility, formation approval
-and real Edge networking still require their stated gates. On 2026-09-20 the user
+The user confirmed the Node-only application deployed and working on 2026-09-20,
+satisfying G0. Subsequent local branch work adds shared pose helpers, serialized
+flight tracks, authored chase timelines, independent aircraft/bomb views and a
+frozen render-frame boundary with a solo adapter. These are multiplayer
+foundations, not playable multiplayer. Formation approval and real Edge
+networking still require their stated gates. On 2026-09-20 the user
 reported coturn deployed at `turn.low-pass.biggsea.us` using independently developed
 Ansible code. Relay deployment instructions/examples have been removed here;
 the remaining TURN material describes application integration and acceptance only.
+The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
+allocation and forced-relay connectivity have not yet been verified.
 
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,

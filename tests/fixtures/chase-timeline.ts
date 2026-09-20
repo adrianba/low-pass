@@ -6,6 +6,7 @@ import { ChaseTimeline } from '../../src/simulation/chase-timeline';
 import { projectChase } from '../../src/simulation/chase-camera';
 import { distance } from '../../src/simulation/math';
 import { seededCourse } from '../helpers/flight-probe';
+import { soloWorldFrame } from '../../src/rendering/solo-frame';
 
 declare global {
   interface Window {
@@ -22,6 +23,8 @@ window.authoredChaseProbe = async terrain => {
   const world = new World(canvas, 'low', terrain);
   const result = { checked: 0, verified: true, projectionError: 0, rebased: false,
     paused: true, pauseError: 0, resizeReason: '', cameraClearance: Infinity };
+  const unexpectedEffect = () => { throw new Error('Acquisition fixture must not request combat effects.'); };
+  const effects = { finale: unexpectedEffect, flyby: unexpectedEffect, damage: unexpectedEffect };
   try {
     await world.load(() => {});
     const run = new Run(7, terrain);
@@ -41,9 +44,11 @@ window.authoredChaseProbe = async terrain => {
         for (const [index, dt] of [1 / 60, 0.1, 1 / 30].entries()) {
           const time = acquired + index * 0.035;
           encounter.time = time;
-          world.update(run, poseAt(encounter, time, count), null, dt, timeline.at(time));
+          const frame = soloWorldFrame(run, poseAt(encounter, time, count), null);
+          world.updateFrame(frame, dt, effects, timeline.at(time));
           const actual = world.chaseSnapshot();
           result.verified &&= timeline.verify(time, actual, aspect, window).ok;
+          result.verified &&= world.targetFrameVisible(frame.target);
           const predicted = projectChase(encounter.target, timeline.at(time), aspect);
           const rendered = world.projectPoint(encounter.target);
           if (!predicted || !rendered) throw new Error('Authored target was not projected.');
@@ -54,7 +59,7 @@ window.authoredChaseProbe = async terrain => {
           const target = world.scene.getTransformNodeByName('Encounter target');
           if (!target) throw new Error('Missing shared target root.');
           result.rebased ||= Math.abs(encounter.target.z - target.position.z) > 4096;
-          world.update(run, poseAt(encounter, time, count), null, 0, timeline.at(time));
+          world.updateFrame(frame, 0, effects, timeline.at(time));
           const paused = world.chaseSnapshot();
           result.pauseError = Math.max(result.pauseError, distance(paused.position, actual.position), distance(paused.target, actual.target));
           result.paused &&= JSON.stringify(paused.position) === JSON.stringify(actual.position);

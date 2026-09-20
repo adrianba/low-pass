@@ -398,6 +398,10 @@ exports while callers migrate. The helpers do not depend on the solo controller.
 independent transforms and visibility. Views own their cloned nodes and shadow
 registrations, while the scene owns the shared immutable geometry/materials.
 Solo uses the same view; additional players do not require duplicate downloads.
+`World.updateFrame` consumes an owned, deeply frozen render snapshot rather than
+reading simulation state. The solo adapter preserves target identity, predicted
+contact, result deduplication and acquisition rules. Existing solo combat effects
+remain behind explicit hooks until independent combat timelines are introduced.
 `src/simulation/flight-track.ts` separates path geometry from real traversal time.
 It anticipates bends, limits acceleration, joins full motion with quintic curves,
 and bounds the entire interpolated velocity curve using Bezier control hulls.

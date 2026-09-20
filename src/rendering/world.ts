@@ -23,7 +23,7 @@ import '@babylonjs/loaders/glTF/2.0/glTFLoader';
 import '@babylonjs/core/Meshes/thinInstanceMesh';
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { AssetContainer } from '@babylonjs/core/assetContainer';
-import { CHUNK, QUALITY, TARGET_RADIUS, targetSightDistance } from '../config/game';
+import { CHUNK, QUALITY, TARGET_RADIUS } from '../config/game';
 import type { Quality } from '../config/game';
 import type { TerrainTheme } from '../config/terrain';
 import type { Run } from '../game/run';
@@ -33,7 +33,6 @@ import type { Vec3 } from '../simulation/math';
 import { surfaceFor } from '../terrain/surface';
 import type { Surface } from '../terrain/surface';
 import { projectRoute, routeBounds } from '../terrain/canyon-route';
-import { contactAccuracy } from '../simulation/ballistics';
 import { River } from './river';
 import { CHASE_FOV, chaseView, targetInChaseView } from '../simulation/chase-camera';
 import type { ChaseView } from '../simulation/chase-camera';
@@ -43,9 +42,10 @@ import type { DesertSurface } from './desert-material';
 import { TERRAIN_PALETTES, terrainTint, terrainProp } from './terrain-style';
 import { TargetModels } from './target-model';
 import { CombatEffects } from './combat-effects';
-import { shouldFlyby } from '../game/missile';
 import type { MissileView } from '../game/canyon-missile';
 import { AircraftView } from './aircraft-view';
+import { soloTargetFrame, soloWorldFrame } from './solo-frame';
+import type { TargetFrame, WorldEffectHooks, WorldFrame } from './world-frame';
 
 interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; water: Mesh | null; z: number }
 interface Burst { mesh: Mesh; velocity: Vector3; age: number }
@@ -417,9 +417,17 @@ export class World {
   }
 
   update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number, authoredView?: ChaseView): void {
-    this.scene.fogEnd = Math.max(QUALITY[this.quality].distance,
-      (run.encounter.canyon?.sightDistance ?? targetSightDistance(run.encounter.id - 1)) + 400);
-    if (run.status === 'over') this.combat.startFinale(pose, run, this.missileView());
+    this.updateFrame(soloWorldFrame(run, pose, prediction), dt, {
+      finale: current => this.combat.startFinale(current, run, this.missileView()),
+      flyby: () => this.combat.startFlyby(run, this.missileView()),
+      damage: () => this.combat.startDamage(run, this.missileView()),
+    }, authoredView);
+  }
+
+  updateFrame(frame: WorldFrame, dt: number, effects: WorldEffectHooks, authoredView?: ChaseView): void {
+    let pose = frame.aircraft.pose;
+    this.scene.fogEnd = Math.max(QUALITY[this.quality].distance, frame.target.sightDistance + 400);
+    if (frame.over) effects.finale(pose);
     this.combat.advance(dt);
     pose = this.combat.finalePose ?? pose;
     if (Math.abs(pose.position.z - this.origin) > 4096) {
@@ -436,42 +444,43 @@ export class World {
     }
     if (this.desertSurface) this.desertSurface.origin = this.origin;
     this.stream(pose.position.z);
-    this.aircraft.update({ pose, bomb: run.bomb, released: run.encounter.released,
-      destroyed: this.combat.aircraftDestroyed, canyon: run.surface.canyon }, this.origin);
+    this.aircraft.update({ pose, bomb: frame.aircraft.bomb, released: frame.aircraft.released,
+      destroyed: this.combat.aircraftDestroyed, canyon: frame.target.canyon }, this.origin);
     const view = authoredView ?? chaseView(pose, this.surface, this.cameraInitialized
       ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
     this.camera.position.copyFrom(this.local(view.position));
     this.camera.setTarget(this.local(view.target));
     this.cameraInitialized = true;
     this.sun.position.copyFrom(this.aircraft.root.position).addInPlace(new Vector3(160, 290, -150));
-    this.target.position.copyFrom(this.local(run.encounter.target));
+    this.target.position.copyFrom(this.local(frame.target.position));
     this.target.position.y += 0.08;
-    this.targetModels.root.position.copyFrom(this.local(run.encounter.target));
-    this.marker.setEnabled(prediction !== null && run.ready);
+    this.targetModels.root.position.copyFrom(this.local(frame.target.position));
+    const prediction = frame.prediction;
+    this.marker.setEnabled(frame.prediction !== null && frame.ready);
     if (prediction) {
-      this.marker.position.copyFrom(this.local(prediction));
+      this.marker.position.copyFrom(this.local(prediction.position));
       this.marker.position.y += 0.5;
-      this.alignSurface(this.marker, prediction, false);
-      const hit = contactAccuracy(prediction, run.encounter.target, run.surface) > 0;
+      this.alignSurface(this.marker, prediction.position, false);
+      const hit = prediction.hit;
       const material = this.marker.material as StandardMaterial;
       material.emissiveColor.set(hit ? 0.3 : 1, hit ? 1 : 0.58, 0.5);
     }
-    if (this.lastEncounter !== run.encounter.id) {
-      this.lastEncounter = run.encounter.id;
+    if (this.lastEncounter !== frame.target.id) {
+      this.lastEncounter = frame.target.id;
       this.impactMark.setEnabled(false);
-      this.targetModels.select(run.encounter.targetKind);
-      this.targetModels.root.rotation.y = hash(run.encounter.id, 7, run.seed) * Math.PI * 2;
+      this.targetModels.select(frame.target.kind);
+      this.targetModels.root.rotation.y = frame.target.heading;
     }
-    if (run.result && this.resultId !== run.result.id) {
-      this.resultId = run.result.id;
-      if (run.result.impact?.kind === 'water') {
+    if (frame.result && this.resultId !== frame.result.id) {
+      this.resultId = frame.result.id;
+      if (frame.result.impact?.kind === 'water') {
         this.impactMark.setEnabled(false);
-        this.river.splash(run.result.impact);
-      } else if (run.result.impact) this.explode(run.result.impact);
-      if (run.result.points > 0) {
+        this.river.splash(frame.result.impact);
+      } else if (frame.result.impact) this.explode(frame.result.impact);
+      if (frame.result.points > 0) {
         this.targetModels.setDestroyed(true);
-        if (run.status !== 'over' && shouldFlyby(run.encounter.id, run.seed)) this.combat.startFlyby(run, this.missileView());
-      } else if (run.status !== 'over') this.combat.startDamage(run, this.missileView());
+        if (!frame.over && frame.result.flyby) effects.flyby();
+      } else if (!frame.over) effects.damage();
     }
     for (const burst of this.bursts) {
       burst.age += dt;
@@ -509,23 +518,26 @@ export class World {
   }
 
   targetVisible(run: Run): boolean {
-    const target = this.local(run.encounter.target);
+    return this.targetFrameVisible(soloTargetFrame(run));
+  }
+
+  targetFrameVisible(frame: TargetFrame): boolean {
+    const target = this.local(frame.position);
     const camera = this.camera.position;
-    if (run.surface.canyon) {
-      if (!run.encounter.canyon) throw new Error('Missing canyon acquisition plan.');
+    if (frame.canyon) {
       this.camera.getViewMatrix(true);
       const look = this.camera.getTarget();
-      return targetInChaseView(run.encounter.target, {
+      return targetInChaseView(frame.position, {
         position: { x: camera.x, y: camera.y, z: camera.z + this.origin },
         target: { x: look.x, y: look.y, z: look.z + this.origin },
       }, this.surface, this.engine.getRenderWidth() / this.engine.getRenderHeight(),
-      run.encounter.canyon.sightDistance);
+      frame.sightDistance);
     }
-    if (Vector3.Distance(camera, target) > targetSightDistance(run.encounter.id - 1)) return false;
-    const screen = this.projectPoint(run.encounter.target);
+    if (Vector3.Distance(camera, target) > frame.sightDistance) return false;
+    const screen = this.projectPoint(frame.position);
     if (!screen || screen.x < 0.05 || screen.x > 0.95 || screen.y < 0.1 || screen.y > 0.94) return false;
     const hit = this.surface.ground({ x: camera.x, y: camera.y, z: camera.z + this.origin },
-      { ...run.encounter.target, y: run.encounter.target.y + 0.5 });
+      { ...frame.position, y: frame.position.y + 0.5 });
     return hit === null;
   }
 
