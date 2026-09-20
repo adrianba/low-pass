@@ -397,6 +397,11 @@ exports while callers migrate. The helpers do not depend on the solo controller.
 `src/simulation/flight-track.ts` separates path geometry from real traversal time.
 It anticipates bends, limits acceleration, joins full motion with quintic curves,
 and bounds the entire interpolated velocity curve using Bezier control hulls.
+`toData()` / `fromData()` preserve the authored knots without rerunning planning.
+The versioned format owns deeply frozen copies, caps tracks at 2,048 knots and
+one hour, and rejects nonfinite/degenerate motion data. Consumers must still
+check required coverage, whole-curve speed and terrain/camera safety for the
+specific encounter; structural validation alone does not establish a fair path.
 The 350 ceiling applies to the actual 3D vector, not just forward velocity.
 Release remains at planned time zero; acquisition, dive, cutoff and recovery have
 explicit per-encounter times. HUD and audio use the same speed definition.

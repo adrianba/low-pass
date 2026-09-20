@@ -2,6 +2,8 @@ import { joinMotion } from './curves';
 import { clamp, distance } from './math';
 import type { Vec3 } from './math';
 import type { Pose } from './pose';
+import { MAX_TRACK_DURATION, MAX_TRACK_KNOTS, readFlightTrackData } from './flight-track-data';
+import type { FlightKnot, FlightTrackData } from './flight-track-data';
 
 interface Knot { phase: number; time: number; pose: Pose }
 export const TRACK_SPEED_FRACTION = 0.985;
@@ -68,8 +70,20 @@ export function pathPose(path: (phase: number) => Vec3, phase: number, speed: nu
 }
 
 export class FlightTrack {
-  readonly knots: readonly Knot[];
-  constructor(path: (phase: number) => Vec3, limit: (phase: number) => number, start: number, end: number) {
+  readonly knots: readonly FlightKnot[];
+  constructor(data: FlightTrackData);
+  constructor(path: (phase: number) => Vec3, limit: (phase: number) => number, start: number, end: number);
+  constructor(path: ((phase: number) => Vec3) | FlightTrackData, limit?: (phase: number) => number, start?: number, end?: number) {
+    if (typeof path !== 'function') {
+      this.knots = readFlightTrackData(path).knots;
+      return;
+    }
+    if (!limit || start === undefined || end === undefined ||
+      !Number.isFinite(start) || !Number.isFinite(end) || start >= end || start > 0 || end < 0 ||
+      Math.abs(start) > MAX_TRACK_DURATION || Math.abs(end) > MAX_TRACK_DURATION ||
+      Math.floor(end * 10) - Math.ceil(start * 10) + 2 > MAX_TRACK_KNOTS) {
+      throw new Error('Invalid bounded flight track generation range.');
+    }
     const phases = [start];
     for (let i = Math.ceil(start * 10); i <= Math.floor(end * 10); i++) {
       if (i / 10 > start) phases.push(i / 10);
@@ -96,16 +110,27 @@ export class FlightTrack {
     if (!zero) throw new Error('Flight track is missing its release anchor.');
     const origin = zero.time;
     for (const knot of knots) knot.time -= origin;
-    this.knots = knots;
+    this.knots = readFlightTrackData({ version: 1, knots }).knots;
   }
+  static fromData(value: unknown): FlightTrack { return new FlightTrack(readFlightTrackData(value)); }
+  toData(): FlightTrackData { return readFlightTrackData({ version: 1, knots: this.knots }); }
   get startTime(): number { return this.knots[0]!.time; }
+  get endTime(): number { return this.knots.at(-1)!.time; }
+  assertCoverage(start: number, end: number): void {
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start ||
+      start < this.startTime || end > this.endTime) {
+      throw new Error('Flight track does not cover the requested time interval.');
+    }
+  }
   respectsSpeed(limit: number): boolean {
+    if (!Number.isFinite(limit) || limit <= 0) throw new Error('Invalid flight track speed limit.');
     return this.knots.slice(1).every((b, i) => {
       const a = this.knots[i]!;
       return joinRespectsSpeed(a.pose, b.pose, b.time - a.time, limit);
     });
   }
   timeAt(phase: number): number {
+    if (!Number.isFinite(phase)) throw new Error('Invalid flight track phase.');
     const i = this.knots.findIndex(k => k.phase >= phase);
     if (i < 0) throw new Error('Flight phase exceeds planned coverage.');
     if (i === 0) return this.startTime;
@@ -113,6 +138,7 @@ export class FlightTrack {
     return a.time + (b.time - a.time) * (phase - a.phase) / (b.phase - a.phase);
   }
   at(time: number): Pose {
+    if (!Number.isFinite(time)) throw new Error('Invalid flight track time.');
     if (time <= this.startTime) return structuredClone(this.knots[0]!.pose);
     const last = this.knots[this.knots.length - 1]!;
     if (time > last.time) throw new Error('Flight time exceeds planned coverage.');
