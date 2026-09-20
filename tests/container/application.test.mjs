@@ -178,15 +178,18 @@ test('a crashed Nginx master does not strand workers or block restart', async t 
   assert.ok(!groups.includes(before), 'No surviving or zombie process in the crashed master group.');
 });
 
-test('invalid configuration disables only Node and does not create a restart loop', async t => {
+test('invalid multiplayer configuration leaves static and application health available', async t => {
   const container = await start(t, ['-e', 'LOW_PASS_MULTIPLAYER_ENABLED=true']);
-  await until(async () => (await logs(container.id)).includes('disabled after invalid configuration'));
+  await until(async () => (await logs(container.id)).includes('Multiplayer unavailable:'));
   assert.equal((await container.response('/')).status, 200);
-  assert.equal((await container.response('/api/multiplayer/readyz')).status, 502);
+  assert.equal((await container.response('/healthz')).status, 200);
+  assert.equal((await container.response('/api/multiplayer/readyz')).status, 503);
+  assert.deepEqual(await (await container.response('/api/multiplayer/capabilities')).json(),
+    { multiplayer: false, reason: 'configuration_error' });
   await delay(2200);
   const output = await logs(container.id);
-  assert.equal(output.split('startup failed').length - 1, 1);
-  assert.equal(await pid(container.id, 'node'), -1);
+  assert.equal(output.split('Multiplayer unavailable:').length - 1, 1);
+  assert.ok(await pid(container.id, 'node') > 1);
   await docker('restart', '--timeout', '45', container.id);
   await container.refreshPort();
   await until(container.healthy);

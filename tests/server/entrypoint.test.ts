@@ -96,11 +96,23 @@ describe('compiled Node entrypoint', () => {
     expect(running.output()).toContain('Application service stopped.');
   });
 
-  it('exits unsuccessfully on invalid configuration without exposing its value', async () => {
-    const running = launch({ LOW_PASS_MULTIPLAYER_ENABLED: 'private-invalid-value' });
+  it('keeps HTTP healthy while reporting invalid multiplayer configuration without its value', async () => {
+    const port = await unusedPort();
+    const running = launch({ LOW_PASS_SERVICE_PORT: String(port), LOW_PASS_MULTIPLAYER_ENABLED: 'private-invalid-value' });
+    await ready(running);
+    expect((await fetch(`http://127.0.0.1:${port}/readyz`)).status).toBe(200);
+    expect((await fetch(`http://127.0.0.1:${port}/api/multiplayer/readyz`)).status).toBe(503);
+    expect(running.output()).toContain('Multiplayer unavailable:');
+    expect(running.output()).not.toContain('private-invalid-value');
+    running.child.kill('SIGTERM');
+    expect(await running.exited).toEqual({ code: 0, signal: null });
+  });
+
+  it('exits unsuccessfully on invalid core configuration without exposing its value', async () => {
+    const running = launch({ LOW_PASS_SERVICE_PORT: 'private-invalid-value' });
     expect(await running.exited).toEqual({ code: 78, signal: null });
     expect(running.output()).toContain('startup failed');
-    expect(running.output()).toContain('not implemented');
+    expect(running.output()).toContain('LOW_PASS_SERVICE_PORT');
     expect(running.output()).not.toContain('private-invalid-value');
   });
 });

@@ -52,12 +52,12 @@ loading or refresh during replacement can fail.
 
 | Variable | G0 default | Container constraint |
 | --- | --- | --- |
-| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Leave unset or set exactly `false`; other values permanently stop only the Node service for that container run. |
+| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Leave unset or set exactly `false`; other values log a configuration error and make multiplayer readiness 503 without stopping the application service. |
 | `LOW_PASS_SERVICE_PORT` | `8081` | Leave unset or set exactly `8081`. Other values conflict with the fixed internal Nginx upstream and are rejected. |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000; Node drains HTTP until this deadline, then warns and closes remaining connections. |
 
 Standalone Node development allows a different loopback port, but the container
-does not. Configuration errors use exit code 78. They are logged without echoing
+does not. Core listener/shutdown configuration errors use exit code 78. They are logged without echoing
 the supplied value, then the supervisor leaves Node down rather than repeatedly
 restarting invalid configuration. Correct container configuration and restart it.
 
@@ -71,7 +71,8 @@ restarting invalid configuration. Correct container configuration and restart it
 | `GET /api/multiplayer/readyz` | `200`, `{"status":"ready","multiplayer":false}` when Node is reachable. |
 | `GET /api/multiplayer/capabilities` | `200`, `{"multiplayer":false,"reason":"not_implemented"}`. |
 | Room endpoints or `/signal` | `404` while Node is up; not dummy success responses. |
-| Node down/unconfigured | API and signal proxy requests fail explicitly, normally `502`; `/` and `/healthz` remain available. A hung upstream can produce `504`. |
+| Invalid multiplayer configuration | Application health and static serving remain available; multiplayer readiness is `503`, capabilities report `configuration_error`, and an explicit error is logged. |
+| Node down | API and signal proxy requests fail explicitly, normally `502`; `/` and `/healthz` remain available. A hung upstream can produce `504`. |
 
 API/signal responses use `no-store`. Nginx retains the local-only CSP, disables
 access logs on those routes, limits their request bodies to 16 KiB and uses
@@ -91,7 +92,8 @@ s6 runs one supervisor each for Nginx and Node. It reaps adopted children as PID
 1 and restarts unexpectedly exited services. Without a readiness notification
 protocol, s6 waits at least one second before each crash restart. This is
 rate-bounded restarting, **not exponential backoff or a finite retry budget**.
-Invalid Node configuration instead stops automatic restarts as described above.
+Invalid core Node configuration instead stops automatic restarts as described
+above; optional multiplayer configuration errors do not terminate Node.
 
 On container SIGTERM, s6 stops both services and waits for them. Nginx receives
 SIGQUIT for graceful worker shutdown, with a seven-second forced-stop deadline.

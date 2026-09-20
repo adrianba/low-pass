@@ -50,6 +50,9 @@ npm run start:server
 
 It binds only to `127.0.0.1:8081`. `GET /livez` reports process health;
 `GET /readyz` reports HTTP-service readiness, **not multiplayer availability**.
+`GET /api/multiplayer/readyz` separately reports multiplayer configuration failures
+with 503 while the HTTP service remains available. Intentionally disabled
+multiplayer returns 200 with `multiplayer: false`.
 `GET /api/multiplayer/capabilities` returns
 `{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
 unknown routes (including `/signal` and room endpoints) return 404. SIGTERM and
@@ -62,8 +65,10 @@ connections at the shutdown deadline with a warning.
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
 | `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
 
-Invalid configuration exits with code 78 rather than silently enabling or
-disabling a feature. No secrets are needed at this checkpoint.
+Invalid core listener/shutdown configuration exits with code 78. An unsupported
+multiplayer flag is logged explicitly without echoing its value; capabilities
+report `configuration_error` and multiplayer readiness becomes 503 without
+taking down the application service. No secrets are needed at this checkpoint.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
 

@@ -1,7 +1,11 @@
+export type MultiplayerAvailability =
+  | { status: 'disabled'; reason: 'not_implemented' }
+  | { status: 'unavailable'; reason: 'configuration_error'; message: string };
+
 export interface ServiceConfig {
   port: number;
   shutdownTimeoutMs: number;
-  multiplayerEnabled: false;
+  multiplayer: MultiplayerAvailability;
 }
 
 export class ServiceConfigurationError extends Error {}
@@ -17,12 +21,13 @@ function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, maximum:
 }
 
 export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
-  if (env.LOW_PASS_MULTIPLAYER_ENABLED !== undefined && env.LOW_PASS_MULTIPLAYER_ENABLED !== 'false') {
-    throw new ServiceConfigurationError('LOW_PASS_MULTIPLAYER_ENABLED must be false; multiplayer is not implemented in this build.');
-  }
+  const disabled = env.LOW_PASS_MULTIPLAYER_ENABLED === undefined || env.LOW_PASS_MULTIPLAYER_ENABLED === 'false';
   return {
     port: integer(env, 'LOW_PASS_SERVICE_PORT', 8081, 65535),
     shutdownTimeoutMs: integer(env, 'LOW_PASS_SHUTDOWN_TIMEOUT_MS', 5000, 30_000),
-    multiplayerEnabled: false,
+    multiplayer: disabled ? { status: 'disabled', reason: 'not_implemented' } : {
+      status: 'unavailable', reason: 'configuration_error',
+      message: 'LOW_PASS_MULTIPLAYER_ENABLED must be false; multiplayer is not implemented in this build.',
+    },
   };
 }

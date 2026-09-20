@@ -24,7 +24,8 @@ export class ApplicationService {
   }, (request, response) => {
     const path = request.url?.split('?', 1)[0];
     const head = request.method === 'HEAD';
-    const known = path === '/livez' || path === '/readyz' || path === '/api/multiplayer/capabilities';
+    const known = path === '/livez' || path === '/readyz' ||
+      path === '/api/multiplayer/readyz' || path === '/api/multiplayer/capabilities';
     if (!known) {
       json(response, 404, { error: 'not_found' }, head);
     } else if (request.method !== 'GET' && !head) {
@@ -34,10 +35,12 @@ export class ApplicationService {
       json(response, 503, { error: 'shutting_down' }, head);
     } else if (path === '/livez') {
       json(response, 200, { status: 'ok' }, head);
-    } else if (path === '/readyz') {
+    } else if (path === '/api/multiplayer/readyz' && this.config.multiplayer.status === 'unavailable') {
+      json(response, 503, { error: 'multiplayer_unavailable', reason: this.config.multiplayer.reason }, head);
+    } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
       json(response, 200, { status: 'ready', multiplayer: false }, head);
     } else {
-      json(response, 200, { multiplayer: false, reason: 'not_implemented' }, head);
+      json(response, 200, { multiplayer: false, reason: this.config.multiplayer.reason }, head);
     }
   });
 

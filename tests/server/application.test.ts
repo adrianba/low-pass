@@ -7,9 +7,10 @@ import { readServiceConfig } from '../../server/config.js';
 const services: ApplicationService[] = [];
 afterEach(async () => { await Promise.all(services.splice(0).map(service => service.close())); });
 
-async function start(warn: (message: string) => void = message => { throw new Error(message); }) {
+async function start(warn: (message: string) => void = message => { throw new Error(message); },
+  env: NodeJS.ProcessEnv = {}) {
   const service = new ApplicationService({
-    ...readServiceConfig({}), port: 0, shutdownTimeoutMs: 50,
+    ...readServiceConfig(env), port: 0, shutdownTimeoutMs: 50,
   }, warn);
   services.push(service);
   const port = await service.listen();
@@ -23,6 +24,7 @@ describe('optional application service', () => {
     for (const [path, body] of [
       ['/livez', { status: 'ok' }],
       ['/readyz', { status: 'ready', multiplayer: false }],
+      ['/api/multiplayer/readyz', { status: 'ready', multiplayer: false }],
       ['/api/multiplayer/capabilities', { multiplayer: false, reason: 'not_implemented' }],
     ] as const) {
       const response = await fetch(origin + path);
@@ -37,6 +39,18 @@ describe('optional application service', () => {
       expect(response.status).toBe(404);
       expect(await response.json()).toEqual({ error: 'not_found' });
     }
+  });
+
+  it.each(['true', '', 'invalid-private-value'])('contains optional configuration failure %j', async value => {
+    const { origin } = await start(undefined, { LOW_PASS_MULTIPLAYER_ENABLED: value });
+    expect((await fetch(origin + '/livez')).status).toBe(200);
+    expect((await fetch(origin + '/readyz')).status).toBe(200);
+    const readiness = await fetch(origin + '/api/multiplayer/readyz');
+    expect(readiness.status).toBe(503);
+    expect(await readiness.json()).toEqual({ error: 'multiplayer_unavailable', reason: 'configuration_error' });
+    const capabilities = await fetch(origin + '/api/multiplayer/capabilities');
+    expect(capabilities.status).toBe(200);
+    expect(await capabilities.json()).toEqual({ multiplayer: false, reason: 'configuration_error' });
   });
 
   it('handles HEAD and unsupported methods explicitly', async () => {
@@ -84,18 +98,21 @@ describe('optional application service', () => {
 
 describe('service configuration', () => {
   it('defaults to private disabled operation and accepts bounded overrides', () => {
-    expect(readServiceConfig({})).toEqual({ port: 8081, shutdownTimeoutMs: 5000, multiplayerEnabled: false });
+    expect(readServiceConfig({})).toEqual({ port: 8081, shutdownTimeoutMs: 5000,
+      multiplayer: { status: 'disabled', reason: 'not_implemented' } });
     expect(readServiceConfig({ LOW_PASS_SERVICE_PORT: '9081', LOW_PASS_SHUTDOWN_TIMEOUT_MS: '150',
       LOW_PASS_MULTIPLAYER_ENABLED: 'false' }))
-      .toEqual({ port: 9081, shutdownTimeoutMs: 150, multiplayerEnabled: false });
+      .toEqual({ port: 9081, shutdownTimeoutMs: 150,
+        multiplayer: { status: 'disabled', reason: 'not_implemented' } });
   });
 
   it.each(['', '0', '-1', '65536', '1.5', 'Infinity', ' 8081', '8e3'])('rejects invalid port %j', port => {
     expect(() => readServiceConfig({ LOW_PASS_SERVICE_PORT: port })).toThrow(/LOW_PASS_SERVICE_PORT/);
   });
 
-  it('rejects unsupported multiplayer activation and invalid deadlines without echoing input', () => {
-    expect(() => readServiceConfig({ LOW_PASS_MULTIPLAYER_ENABLED: 'true' })).toThrow(/not implemented/);
+  it('reports unsupported multiplayer activation but rejects invalid core configuration without echoing input', () => {
+    expect(readServiceConfig({ LOW_PASS_MULTIPLAYER_ENABLED: 'true' }).multiplayer)
+      .toMatchObject({ status: 'unavailable', reason: 'configuration_error', message: expect.stringContaining('not implemented') });
     expect(() => readServiceConfig({ LOW_PASS_SHUTDOWN_TIMEOUT_MS: '30001' })).toThrow(/SHUTDOWN_TIMEOUT/);
     expect(() => readServiceConfig({ LOW_PASS_SERVICE_PORT: 'secret-value' })).toThrow(
       'LOW_PASS_SERVICE_PORT must be an integer from 1 to 65535.');

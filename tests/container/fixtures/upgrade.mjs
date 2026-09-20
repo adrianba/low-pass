@@ -2,7 +2,9 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 
-const server = createServer((request, response) => { response.writeHead(request.url === '/readyz' ? 200 : 404).end(); });
+const server = createServer((request, response) => {
+  response.writeHead(request.url === '/api/multiplayer/readyz' ? 200 : 404).end();
+});
 server.on('upgrade', (request, socket) => {
   const key = request.headers['sec-websocket-key'];
   if (request.url !== '/signal' || request.httpVersion !== '1.1' ||
