@@ -33,7 +33,7 @@ export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   return {
     host,
     staticRoot,
-    port: integer(env, 'LOW_PASS_SERVICE_PORT', 8081, 65535),
+    port: integer(env, 'LOW_PASS_SERVICE_PORT', 8080, 65535),
     shutdownTimeoutMs: integer(env, 'LOW_PASS_SHUTDOWN_TIMEOUT_MS', 5000, 30_000),
     multiplayer: disabled ? { status: 'disabled', reason: 'not_implemented' } : {
       status: 'unavailable', reason: 'configuration_error',

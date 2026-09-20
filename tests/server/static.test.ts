@@ -107,7 +107,7 @@ describe('built-asset HTTP contract', () => {
   });
 
   it.each(['/missing', '/index', '/assets/', '/.private', '/%2eprivate', '/node_modules/express/package.json',
-    '/server/index.js', '/dist-server/index.js', '/src/main.ts', '/api/multiplayer/rooms', '/signal'])(
+    '/server/index.js', '/dist-server/index.js', '/src/main.ts', '/api/multiplayer/rooms', '/api%2fmultiplayer/rooms', '/signal'])(
     'does not expose or fall back for %s', async path => {
       const res = await get(path);
       expect(res.status).toBe(404);
@@ -121,7 +121,7 @@ describe('built-asset HTTP contract', () => {
       expect(res.body.toString()).not.toContain(root);
     });
 
-  it.each(['/api/multiplayer/rooms', '/signal'])('bounds every content type and chunked body at %s', async path => {
+  it.each(['/api/multiplayer/rooms', '/api%2fmultiplayer/rooms', '/signal'])('bounds every content type and chunked body at %s', async path => {
     for (const type of ['application/json', 'text/plain', 'application/octet-stream', '']) {
       const headers = type ? { 'Content-Type': type } : {};
       const res = await get(path, headers, 'POST', ['x'.repeat(8192), 'x'.repeat(8193)]);

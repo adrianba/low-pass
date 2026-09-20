@@ -9,7 +9,7 @@ budgets and prototype gates are not measured performance results.
 
 **Implementation checkpoint:** the implementation branch now contains solo
 regression fixtures and an optional, explicitly disabled Node HTTP runtime.
-The first Nginx-plus-Node container handoff is documented in
+The Node-only serving checkpoint, replacing the unshipped Nginx/s6 approach, is documented in
 [G0: application container checkpoint](application-container-checkpoint.md).
 This is not playable multiplayer. Deployment compatibility, formation approval
 and real Edge networking still require their stated gates. On 2026-09-20 the user
@@ -25,7 +25,7 @@ this repository must not infer the live relay's settings from retired examples.
 
 **Implementation decisions confirmed after the research:** hosting requires a
 separately shared access code, without accounts. Prefer evolving the existing
-application image/container to run both Nginx and Node, keeping single-player
+application image/container to run one Node server, keeping single-player
 available while multiplayer is disabled or unavailable. Prove that packaging in
 an early deployment checkpoint; stop for alternatives if it cannot preserve the
 current deployment constraints. Coturn is independently deployed and managed.
@@ -79,7 +79,7 @@ These decisions were explicitly confirmed during the research.
 | Infrastructure | Self-hosted services on `docker.circlone.net`, with one public IP and full administrative control. |
 | Public deployment | Existing game hostname `low-pass.biggsea.us`; HTTPS is handled by Traefik. Preserve the current browser origin. |
 | Deployment workflow | Ansible in a separate repository owns production deployment. No deployment or changes to that repository are part of this research. |
-| Application packaging | One evolving existing image/container with Nginx and Node, preserving solo play; validate compatibility before relying on it. Coturn is independently deployed at `turn.low-pass.biggsea.us` and managed by the separate Ansible repository. |
+| Application packaging | One Node 24 process with Express 5 and compression, serving assets and future signaling on 8080 behind Traefik. Contain optional-feature errors; process crashes affect all new HTTP requests. Coturn is independently deployed at `turn.low-pass.biggsea.us` and managed by the separate Ansible repository. |
 | Invitation | The host gives the second player a code through an outside communication channel. |
 | Authority | The first browser drives the game and chooses the landscape. |
 | Terrains | Green Valley, Desert, and River Canyon are all required for the first public multiplayer release. |
@@ -113,7 +113,7 @@ Do not silently treat these as agreed requirements:
   remain in Ansible; the game must not assume ports or transports are enabled.
 - Confirm expected concurrent sessions and available bandwidth before sizing.
   No cloud price or capacity estimate is assumed here.
-- Validate rootless/read-only Nginx and Node supervision in the existing image
+- Validate non-root/read-only Node serving and Docker restart behavior in the image
   on the deployed host. Actual game-side relay connectivity and operating limits
   still require validation against the independently managed service.
 
@@ -132,7 +132,7 @@ Do not silently treat these as agreed requirements:
 | `src/rendering/world.ts` | Has one aircraft, carried bomb, falling bomb, target, impact mark, encounter/result ID, and `CombatEffects`. Its update method also starts gameplay-related missile choreography. Replace singleton entity presentation with explicitly identified player/encounter views. |
 | `src/rendering/combat-effects.ts` | Selects missile/finale plans using a `Run` and a camera snapshot and advances their timing locally. Two renderers must not independently choose different missile paths for the same event. |
 | `src/storage/records.ts` | Validates and deduplicates completed local records under `low-pass.records.v1`. Keep that key and its single-player data unchanged. |
-| `nginx.conf`, `compose.yaml` | Deployment is currently static Nginx on port 8080 with no application server. CSP currently allows `connect-src 'self'`; new WebSocket endpoints need explicit deployment review. |
+| `server/`, `Dockerfile`, `compose.yaml` | Node-only serving now replaces the original static Nginx image on port 8080. CSP allows `connect-src 'self'`; new WebSocket endpoints need explicit deployment review. |
 | `tests/unit/`, `tests/e2e/` | Existing physics, flight, canyon, lifecycle, and Playwright coverage can be extended rather than replaced. Current e2e assertions expect no external HTTP requests. |
 
 Important implications:
@@ -188,7 +188,7 @@ not a lack of interest in Edge support, is why it is not the P2P recommendation.
 | HTTP server | Initially Node `node:http` behind the existing TLS proxy | Health/readiness and a small room API. Avoid introducing a framework solely for a few endpoints. |
 | Protocol validation | Zod | Runtime validation and inferred TypeScript types for signaling, gameplay messages, and persistent multiplayer records. Compile-time interfaces alone do not validate peer input. |
 | Traversal/relay | coturn | STUN and authenticated TURN, with short-lived credentials issued by the signaling service. |
-| Deployment | Existing Ansible deployment, Docker, and Traefik | Evolve the existing application image with Nginx and Node and integrate the independently managed TURN service. Relay deployment configuration stays in Ansible. |
+| Deployment | Existing Ansible deployment, Docker, and Traefik | Use the Node-only application image and integrate the independently managed TURN service. Relay deployment configuration stays in Ansible. |
 | Unit/integration tests | Existing Vitest | State machines, planner fairness, serialization, fake transports, service room tests, and resource limits. |
 | Browser tests | Existing Playwright, Chromium and Windows Edge | Two isolated browsers/contexts, real ICE paths, visible formation, reconnect and lifecycle tests. |
 
@@ -214,8 +214,8 @@ JSON control messages and full small snapshots; use chunked plan transfer.
                  on docker.circlone.net
                +---------------------------+
                | Traefik TLS proxy         |
-               | / -> application Nginx    |
-               | Nginx serves local assets |
+               | / -> Node assets          |
+               | Express + compression     |
                | /api/*, /signal -> Node   |
                +-------------+-------------+
                              |
@@ -796,15 +796,15 @@ and keep `low-pass.biggsea.us` as its public hostname. Do not switch users to th
 machine hostname or a new application origin. Add:
 
 1. Node.js 24 LTS and the signaling build in the existing application image.
-   Use tested process supervision alongside Nginx; preserve the unprivileged,
-   read-only/dropped-capability posture, resource limits, and static health.
+   Run Node directly as PID 1; preserve the unprivileged,
+   read-only/dropped-capability posture, resource limits, and application health.
    Keep service readiness distinct so a signaling failure does not prevent solo.
 2. Integration with the independently managed coturn service. Its deployment,
    networking, certificates and operating policy are outside this repository.
    The game requires an explicit connection/authentication contract, not a copy
    of the relay's deployment configuration.
-3. Same-origin `/api/` and `/signal` proxying inside Nginx to the private Node
-   listener. Keep the existing Traefik HTTP route to the application on 8080.
+3. Same-origin `/api/` and `/signal` on the single Node listener.
+   Keep the existing Traefik HTTP route to the application on 8080.
    Configure WebSocket upgrades and idle timeouts consistent with heartbeat;
    TURN routing remains a separate protocol concern.
 
@@ -921,13 +921,13 @@ by this research.
    Never put a shared secret in an image, `VITE_*` variable, public configuration
    or logs. Do not copy relay deployment configuration into this repository.
 4. **Start/configure signaling inside the application container.** Bind it to
-   the private loopback listener proxied by Nginx,
+   the existing application listener (0.0.0.0:8080 in the container),
    configure the game origin, room/connection limits, TURN URLs/secret reference,
    credential expiry, and 15-second reconnect grace. Do not make the service
    port public.
 5. **Preserve application routing.** Keep the
    existing Traefik game HTTP router. Route the game-origin `/api/` and `/signal`
-   endpoints inside Nginx before the static catch-all. Relay routing remains
+   endpoints in Node before static-file delivery, with no HTML catch-all. Relay routing remains
    independently managed.
 6. **Configure the browser's public connection settings.** Supply only public
    endpoint/version information, with temporary TURN credentials fetched from
@@ -996,7 +996,7 @@ discover that the follower cannot make a fair canyon attack.
 | `src/ui/`, `src/input/`, `src/audio/` | Lobby, two-score HUD, spectator/pause UX, key gating, per-view sound. |
 | `src/storage/multiplayer-records.ts` | Separate validated and idempotent records, preserving original storage. |
 | `tests/unit/`, `tests/e2e/`, proposed server tests | Planner, protocol, lifecycle, real transport, deployment acceptance. |
-| Existing Dockerfile and local-only test orchestration if needed | Evolving Nginx/Node application image, tested supervision, and isolated development tests; do not replace the Ansible production workflow. |
+| Existing Dockerfile and local-only test orchestration if needed | Node-only application image, tested lifecycle, and isolated development tests; do not replace the Ansible production workflow. |
 | Separate Ansible repository (handoff only) | Required image tags/digests, service configuration, secret names, listeners, proxy routes, health, limits, rollout, and rollback. No edits or deployment during this research. |
 | `package.json`, lockfile, TypeScript/ESLint configuration | Separate client/server/shared builds, new scoped dependencies, server lint/test coverage. |
 | `.github/workflows/container.yml` or a scoped additional workflow | Validate both code outputs in the evolving application image; publish only when authorized, with verified action pins and minimal permissions. |

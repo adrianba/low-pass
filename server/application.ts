@@ -26,9 +26,17 @@ export class ApplicationService {
       if (this.closing) { response.status(503).json({ error: 'shutting_down' }); return; }
       next();
     });
-    app.use(['/api', '/signal'], express.raw({ type: () => true, limit: 16 * 1024, inflate: false }));
+    const bodyLimit = express.raw({ type: () => true, limit: 16 * 1024, inflate: false });
     app.use((request, response, next) => {
-      const path = request.path;
+      let path: string;
+      try { path = decodeURIComponent(request.path); }
+      catch { response.status(400).json({ error: 'invalid_path' }); return; }
+      if (path === '/api' || path.startsWith('/api/') || path === '/signal' || path.startsWith('/signal/')) {
+        bodyLimit(request, response, next);
+      } else next();
+    });
+    app.use((request, response, next) => {
+      const path = decodeURIComponent(request.path);
       const known = ['/healthz', '/livez', '/readyz', '/api/multiplayer/readyz', '/api/multiplayer/capabilities'].includes(path);
       if (!known) {
         if (path === '/api' || path.startsWith('/api/') || path === '/signal' || path.startsWith('/signal/')) {

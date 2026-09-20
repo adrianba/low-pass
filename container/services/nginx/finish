@@ -1,6 +1,0 @@
-#!/bin/sh
-if [ "$1" -gt 255 ]; then
-    # s6 supplies the crashed master's process group, including orphaned workers.
-    kill -KILL -- "-$4" || echo 'Could not stop the old Nginx worker group; it may already be gone.' >&2
-fi
-exit 0

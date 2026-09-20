@@ -1,10 +1,12 @@
 import { Buffer } from 'node:buffer';
+import console from 'node:console';
+import process from 'node:process';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
+import { ApplicationService } from './application.js';
+import { readServiceConfig } from './config.js';
 
-const server = createServer((request, response) => {
-  response.writeHead(request.url === '/api/multiplayer/readyz' ? 200 : 404).end();
-});
+const service = new ApplicationService(readServiceConfig(process.env), console.warn);
+const server = service.server;
 server.on('upgrade', (request, socket) => {
   const key = request.headers['sec-websocket-key'];
   if (request.url !== '/signal' || request.httpVersion !== '1.1' ||
@@ -32,4 +34,7 @@ server.on('upgrade', (request, socket) => {
     buffered = buffered.subarray(6 + length);
   });
 });
-server.listen(8081, '127.0.0.1');
+await service.listen();
+process.on('SIGTERM', () => {
+  void service.close().then(() => console.info('Application service stopped.'));
+});

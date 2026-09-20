@@ -1,6 +1,0 @@
-#!/bin/sh
-if [ "${LOW_PASS_SERVICE_PORT-8081}" != 8081 ]; then
-    echo 'LOW_PASS_SERVICE_PORT must be 8081 inside the application container.' >&2
-    exit 78
-fi
-exec node /opt/low-pass/server/index.js

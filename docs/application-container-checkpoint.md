@@ -1,14 +1,9 @@
 # G0: application container checkpoint
 
-The intermediate Node service also serves the built game with Express 5 and
-compression at its private listener. It uses `LOW_PASS_STATIC_ROOT` set to
-`/usr/share/nginx/html`; production middleware dependencies live outside that
-HTTP root. Nginx remains the public listener until the next container cutover.
-Middleware dependency license texts are included under `/licenses/runtime-*`.
-
 This is the first deployable **single-player-compatible preparation** for
-multiplayer, not a multiplayer release. It adds an optional Node HTTP service
-beside Nginx in the existing application image. There are no rooms, host access
+multiplayer, not a multiplayer release. One Node 24 process now serves the built
+game through Express 5 and compression; Nginx and s6 have been removed.
+There are no rooms, host access
 codes, invitations, WebRTC sessions or TURN credential issuance in the application
 yet. The separately managed coturn server is described under integration status below.
 
@@ -18,7 +13,7 @@ not instructions for the implementation agent to deploy or publish anything.
 
 **Reported deployment status (2026-09-20):** the user set
 `LOW_PASS_MULTIPLAYER_ENABLED=false` but did not update the application image.
-That environment change alone does not install this checkpoint's Nginx/Node
+That environment change alone does not install this checkpoint's Node-only
 runtime. The next deployment must use a new image built from
 `feat/two-player-multiplayer`, through the approved artifact/publication workflow.
 Keep the flag false. The existing published image is not updated merely because
@@ -29,28 +24,27 @@ this branch has local commits.
 | Surface | G0 behavior |
 | --- | --- |
 | Image identity | Keep `ghcr.io/adrianba/low-pass`; use a separately identified checkpoint tag/digest, not an implicit overwrite of `latest`. |
-| Public application port | Still `8080`, served by Nginx. |
-| Service listener | Node 24, `127.0.0.1:8081` inside the same container. Do not publish 8081. |
+| Public application port | Still `8080`, served by Node 24 on `0.0.0.0`. |
+| Service listener | One listener for static files and API. The former private 8081 listener is removed. |
 | User | `101:101`, as with the previous unprivileged Nginx image. |
 | Hardening | Read-only root, `cap_drop: [ALL]`, `no-new-privileges:true`, writable `/tmp` tmpfs. No new capabilities or writable mounts. |
-| Tmpfs | `noexec,nosuid,nodev` is supported. Executable service scripts remain under immutable `/etc/low-pass`; only supervision state and Nginx temporary files live in `/tmp`. |
-| PID 1 | Alpine-packaged s6; no privileged init system or s6-overlay. |
+| Tmpfs | `noexec,nosuid,nodev` is supported; there are no writable supervision files or executable scripts. |
+| PID 1 | Node directly; no npm, shell supervisor, Nginx or s6. |
+| Runtime layout | `/opt/low-pass/dist` is the HTTP root; sibling `dist-server` and `node_modules` are not served. |
 | Stop signal and grace | `SIGTERM` to PID 1; allow 45 seconds, also set in `compose.yaml`. |
 | Secrets and volumes | None required at G0. No database, persistent server data or TURN certificate mounts. |
-| Game origin | Preserve `https://low-pass.biggsea.us` and the existing Traefik HTTP route to Nginx. No DNS, firewall or TLS routing changes for G0. |
+| Game origin | Preserve `https://low-pass.biggsea.us` and the existing Traefik HTTP route to port 8080. No DNS, firewall or TLS routing changes for G0. |
 | Activation | Multiplayer is unavailable in this build; only absent or literal `false` is accepted for `LOW_PASS_MULTIPLAYER_ENABLED`. |
 
-**Entrypoint compatibility matters:** the image now starts `/etc/low-pass/entrypoint`
-and s6 instead of the vendor `/docker-entrypoint.sh`. Do not override its
-entrypoint or command to launch only Nginx. Additional command arguments fail
-explicitly. Vendor `/docker-entrypoint.d` hooks and automatic Nginx environment
-template expansion are not run. The repository's existing configuration does
-not need them; if the Ansible deployment adds hooks, template mounts, a custom
-command or a different user, review that difference before replacement.
+**Entrypoint compatibility matters:** the exec-form entrypoint is
+`node /opt/low-pass/dist-server/index.js`. Additional arguments fail with exit
+code 64. Old Nginx hooks, templates and `/usr/share/nginx/html` mounts no longer
+apply. If Ansible adds hooks, mounts, a custom command or a different user,
+review those differences before replacement.
 
 The only deployment change required by the checked-in Compose configuration is
 the longer stop grace. Existing `/tmp` is sufficient, including when mounted
-`noexec`. Both services run without root. Container replacement is not promised
+`noexec`. Node runs without root. Container replacement is not promised
 to be zero-downtime; an already-loaded solo page runs in its browser, but asset
 loading or refresh during replacement can fail.
 
@@ -59,17 +53,21 @@ loading or refresh during replacement can fail.
 | Variable | G0 default | Container constraint |
 | --- | --- | --- |
 | `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Leave unset or set exactly `false`; other values log a configuration error and make multiplayer readiness 503 without stopping the application service. |
-| `LOW_PASS_SERVICE_PORT` | `8081` | Leave unset or set exactly `8081`. Other values conflict with the fixed internal Nginx upstream and are rejected. |
+| `LOW_PASS_SERVICE_PORT` | `8080` | Integer 1-65535. Keep 8080 for the existing publishing/Traefik contract. |
+| `LOW_PASS_SERVICE_HOST` | `0.0.0.0` | IP address. Standalone default is loopback; the image explicitly binds all IPv4 interfaces. |
+| `LOW_PASS_STATIC_ROOT` | `/opt/low-pass/dist` | Absolute built-asset root, validated at startup. Keep immutable; symlinks/special files are rejected. |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000; Node drains HTTP until this deadline, then warns and closes remaining connections. |
 
-Standalone Node development allows a different loopback port, but the container
-does not. Core listener/shutdown configuration errors use exit code 78. They are logged without echoing
-the supplied value, then the supervisor leaves Node down rather than repeatedly
-restarting invalid configuration. Correct container configuration and restart it.
+Invalid listener/shutdown configuration or missing/unreadable build output
+exits with code 78 without echoing supplied settings. Bind failures are fatal.
+An incorrect core setting prevents the whole application from starting; correct
+it rather than relying on a restart loop. Optional multiplayer errors are
+different: they are logged once and leave solo serving healthy.
 
 | Request on application port 8080 | Expected response |
 | --- | --- |
-| `GET /healthz` | `200`, `ok` followed by newline. Static availability; the Docker health check uses this. |
+| `GET /healthz` | `200`, `ok` followed by newline. Application availability; the Node-based Docker probe uses this. |
+| `GET /livez`, `GET /readyz` | `200` JSON application liveness/readiness; not playable-multiplayer checks. |
 | `GET /` | Existing single-player HTML, `Cache-Control: no-cache`. |
 | Hashed JS/CSS | Existing immutable cache policy. |
 | Unversioned assets | Existing revalidation policy; GLB keeps its binary glTF MIME type. |
@@ -78,48 +76,46 @@ restarting invalid configuration. Correct container configuration and restart it
 | `GET /api/multiplayer/capabilities` | `200`, `{"multiplayer":false,"reason":"not_implemented"}`. |
 | Room endpoints or `/signal` | `404` while Node is up; not dummy success responses. |
 | Invalid multiplayer configuration | Application health and static serving remain available; multiplayer readiness is `503`, capabilities report `configuration_error`, and an explicit error is logged. |
-| Node down | API and signal proxy requests fail explicitly, normally `502`; `/` and `/healthz` remain available. A hung upstream can produce `504`. |
+| Node down | All new HTTP requests fail until the process/container recovers. Fully loaded solo gameplay remains browser-side. |
 
-API/signal responses use `no-store`. Nginx retains the local-only CSP, disables
-access logs on those routes, limits their request bodies to 16 KiB and uses
-bounded upstream timeouts. No credentials should be put in URL queries. The
-`/signal` proxy supports HTTP/1.1 WebSocket upgrades, but the real service does
-not accept upgrades yet. The isolated test fixture verifies actual upgrade and
-bidirectional frames; it is not shipped in the application runtime.
+API/signal responses use `no-store`. Node retains the local-only CSP, nosniff and
+same-origin Referrer-Policy, with no framework identification header or access
+logging. API/signal bodies are bounded at 16 KiB for every content type, including
+chunked requests. No credentials should be put in URL queries. The native HTTP
+server supports later WebSocket integration, but production `/signal` is still
+404. A test-only fixture verifies real upgrades, bidirectional frames and
+shutdown on the actual application server; it is not shipped in the image.
 
-Do not interpret static Docker health as Node readiness, and do not interpret
-Node readiness as multiplayer availability. Monitor these separately when the
-service becomes operational in later checkpoints. There is no health-triggered
-automatic restart of an unresponsive but still-running Node process at G0.
+Static delivery supports HEAD, ETag/Last-Modified, 304, byte ranges and negotiated
+gzip/deflate/Brotli. Partial responses are not compressed. Only the existing
+eight-character hashed JS/CSS pattern is immutable. HTML and other assets
+revalidate. There is no SPA fallback, directory listing or extension lookup.
+Error bytes, ETag formatting and compressed bytes need not match the old Nginx
+implementation; status codes, MIME, caching and security boundaries do.
 
-## Supervision and failure behavior
+Application health is not multiplayer availability. Monitor feature readiness
+separately once signaling is implemented. Docker does not automatically restart
+an unhealthy/hung process merely because the HTTP health probe fails.
 
-s6 runs one supervisor each for Nginx and Node. It reaps adopted children as PID
-1 and restarts unexpectedly exited services. Without a readiness notification
-protocol, s6 waits at least one second before each crash restart. This is
-rate-bounded restarting, **not exponential backoff or a finite retry budget**.
-Invalid core Node configuration instead stops automatic restarts as described
-above; optional multiplayer configuration errors do not terminate Node.
+## Process lifecycle and failure behavior
 
-On container SIGTERM, s6 stops both services and waits for them. Nginx receives
-SIGQUIT for graceful worker shutdown, with a seven-second forced-stop deadline.
-Node receives SIGTERM and uses its configured drain deadline; s6 provides a
-35-second final safeguard. A crashed Nginx master's process group is cleaned up
-using the group ID supplied by s6 to its finish hook. This prevents orphaned
-workers from retaining the listening socket and blocking a replacement master.
-The image requires s6 2.15 or later for the tested service-directory contract.
+Node is PID 1 and does not spawn application child processes. SIGTERM/SIGINT stop
+accepting work and drain active requests. At the configured deadline the server
+logs a warning and destroys remaining sockets, including upgraded sockets.
+Repeated shutdown is idempotent. Keep the 45-second container grace, longer
+than the maximum configured 30-second application deadline.
 
-The retained rootless Nginx base and Node 24 base are pinned by multi-platform
-image digest in `Dockerfile`. Updating either pin or the Alpine packages requires
-rerunning the container checks. Package repositories can change, so a source
-revision alone is not a byte-for-byte image digest: preserve the exact image
-artifact/digest that is accepted. Runtime notices for Node, Nginx, s6, skalibs and
-execline are served under `/licenses/`, alongside the existing game/Babylon notices.
+The Compose `unless-stopped` policy recovers process exits; manual Docker stops
+remain stopped. There is no separate process to keep static serving alive during
+a Node crash. A loaded solo page needs no backend, but refresh and new asset
+requests require a healthy application. No zero-downtime replacement is promised.
 
-Official supervision references:
-[s6 service directories](https://skarnet.org/software/s6/servicedir.html),
-[s6-supervise](https://skarnet.org/software/s6/s6-supervise.html) and
-[s6-svscan](https://skarnet.org/software/s6/s6-svscan.html).
+The Node 24 base is pinned by multi-platform digest. Both build and production
+dependency installs use the lockfile with `min-release-age=7`; personal `.npmrc`
+files are excluded. Recheck the image when updating the base or dependencies.
+Preserve the exact tested image ID/digest as well as its source SHA.
+Game, asset, Babylon, Node and middleware license texts ship under `/licenses/`.
+Nginx/s6/skalibs/execline notices are removed because those runtimes are absent.
 
 ## Build and local verification
 
@@ -141,8 +137,8 @@ docker image inspect "$IMAGE" --format '{{.Id}} {{.Os}}/{{.Architecture}}'
 
 The container checks use uniquely named disposable containers and ephemeral
 loopback host ports. They exercise hardening, cache/asset behavior, notices,
-invalid configuration, Node isolation/restarts, Nginx master crashes and worker
-cleanup, container restart, orderly shutdown and WebSocket proxy frames. They
+invalid configuration, Node PID 1, Docker process-exit recovery, manual-stop
+semantics, container restart, orderly shutdown and actual WebSocket frames. They
 do not contact production or change host firewall rules. Unit/server tests remain
 independent of Docker.
 
@@ -168,13 +164,19 @@ publication workflow remains main-only and has not been changed.
 
 ## G0 acceptance and rollback
 
-The user deploys the intermediate image through Ansible and supplies:
+Before a merge recommendation, the user must supply actual local Windows Edge
+evidence for the exact checkpoint. Merge/push/publication require separate
+explicit approval. A successful AMD64 build **and smoke checks on that exact
+image** are mandatory before live deployment; publication success alone is not
+acceptance. Local ARM64/Chromium results cannot substitute for either gate.
+
+After those gates, the user deploys the Node-only image through Ansible and supplies:
 
 1. **Artifact and configuration:** source SHA, image ID/digest and `linux/amd64`
    architecture, effective user/mount/security settings, 45-second stop grace,
    and confirmation that no old entrypoint/template customization was lost.
 2. **HTTP behavior:** unchanged HTTPS origin and assets/cache/404/CSP behavior;
-   static `/healthz` and separate Node readiness; disabled capabilities response.
+   application `/healthz` and separate multiplayer readiness; disabled capabilities response.
 3. **Windows Edge:** actual browser version and successful solo play on all three
    terrains, bomb release, pause/resume, third-miss finale and restart; existing
    local records/settings still present without clearing site data.
@@ -216,7 +218,7 @@ and a secure server-side credential integration. See the
 No shared secret, permanent password or certificate private key should be sent
 in chat or committed to this repository.
 
-**G0 still concerns the application container:** confirm the Nginx/Node image is
+**G0 still concerns the application container:** confirm the Node-only image is
 deployed on the intended architecture, both health endpoints work, and actual
 Windows Edge solo play, existing records/settings and restart behavior remain
 intact. Coturn deployment alone does not establish those results.

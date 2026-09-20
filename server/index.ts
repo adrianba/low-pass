@@ -2,6 +2,11 @@ import { ApplicationService } from './application.js';
 import { readServiceConfig, ServiceConfigurationError } from './config.js';
 
 async function main(): Promise<void> {
+  if (process.argv.length !== 2) {
+    console.error('The application owns its entrypoint; do not override its command.');
+    process.exitCode = 64;
+    return;
+  }
   const config = readServiceConfig(process.env);
   if (config.multiplayer.status === 'unavailable') {
     console.error('Multiplayer unavailable:', config.multiplayer.message);

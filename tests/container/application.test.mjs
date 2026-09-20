@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -10,7 +11,7 @@ import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
-const image = process.env.LOW_PASS_TEST_IMAGE ?? 'low-pass:multiplayer-g0';
+const image = process.env.LOW_PASS_TEST_IMAGE ?? 'low-pass:node-g0';
 const docker = async (...args) => (await execute('docker', args, { timeout: 60_000 })).stdout.trim();
 const logs = async id => {
   const result = await execute('docker', ['logs', id], { timeout: 5000 });
@@ -28,11 +29,11 @@ async function until(check, timeout = 15_000) {
   throw new Error('Container condition did not become true before its deadline.');
 }
 
-async function start(t, extra = []) {
+async function start(t, extra = [], command = []) {
   const id = await docker('create', '--name', `low-pass-test-${randomUUID()}`, '--read-only',
     '--tmpfs', '/tmp:rw,noexec,nosuid,nodev', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges:true', '--stop-timeout', '45',
-    '-p', '127.0.0.1::8080', ...extra, image);
+    '-p', '127.0.0.1::8080', ...extra, image, ...command);
   const child = spawn('docker', ['start', '--attach', id], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   const append = chunk => { output = (output + String(chunk)).slice(-32_768); };
@@ -72,12 +73,6 @@ async function start(t, extra = []) {
   return { id, inspect, get origin() { return origin; }, refreshPort, response, healthy, exited };
 }
 
-async function pid(id, name) {
-  const value = await docker('exec', id, 's6-svstat', '-o', 'pid', `/tmp/low-pass-services/${name}`);
-  assert.match(value, /^-?\d+$/);
-  return Number(value);
-}
-
 async function serviceReady(container) {
   try { return (await container.response('/api/multiplayer/readyz')).status === 200; }
   catch (error) {
@@ -86,7 +81,16 @@ async function serviceReady(container) {
   }
 }
 
-test('hardened image preserves static responses, private readiness, notices and source exclusion', async t => {
+async function assertNodePid1(id) {
+  const executable = await docker('exec', id, 'node', '-e',
+    'console.log(require("node:fs").readlinkSync("/proc/1/exe"))');
+  assert.equal(executable, '/usr/local/bin/node');
+  const command = await docker('exec', id, 'node', '-e',
+    'console.log(JSON.stringify(require("node:fs").readFileSync("/proc/1/cmdline").toString().split("\\0").filter(Boolean)))');
+  assert.deepEqual(JSON.parse(command), ['node', '/opt/low-pass/dist-server/index.js']);
+}
+
+test('hardened Node PID 1 image preserves static HTTP, readiness, notices and source exclusion', async t => {
   const container = await start(t);
   await until(() => serviceReady(container));
   const state = await container.inspect();
@@ -98,7 +102,16 @@ test('hardened image preserves static responses, private readiness, notices and 
   assert.match(await docker('exec', container.id, 'node', '--version'), /^v24\./);
   const mounts = await docker('exec', container.id, 'cat', '/proc/mounts');
   assert.match(mounts, /tmpfs \/tmp tmpfs [^\n]*noexec/);
-  assert.equal(await docker('exec', container.id, 'cat', '/proc/1/comm'), 's6-svscan');
+  await assertNodePid1(container.id);
+  assert.equal(state.Config.Env.includes('NODE_ENV=production'), true);
+  assert.equal(await docker('exec', container.id, 'node', '-e', `
+    const fs = require('node:fs');
+    for (const path of ['/usr/sbin/nginx', '/bin/s6-svscan', '/opt/low-pass/node_modules/typescript',
+      '/opt/low-pass/node_modules/vitest', '/opt/low-pass/node_modules/@playwright/test']) {
+      if (fs.existsSync(path)) throw new Error('Unexpected runtime tooling: ' + path);
+    }
+  `), '');
+  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/healthcheck.js');
   const html = await container.response('/');
   assert.equal(html.status, 200);
   assert.equal(html.headers.get('cache-control'), 'no-cache');
@@ -111,6 +124,21 @@ test('hardened image preserves static responses, private readiness, notices and 
   assert.match(script.headers.get('cache-control'), /immutable/);
   assert.equal((await container.response('/assets/absent.js')).status, 404);
   assert.equal((await container.response('/assets/kestrel.glb')).headers.get('content-type'), 'model/gltf-binary');
+  const model = await container.response('/assets/kestrel.glb');
+  const modelBytes = Buffer.from(await model.arrayBuffer());
+  const ranged = await container.response('/assets/kestrel.glb', { headers: { Range: 'bytes=0-15' } });
+  assert.equal(ranged.status, 206);
+  assert.deepEqual(Buffer.from(await ranged.arrayBuffer()), modelBytes.subarray(0, 16));
+  const unchanged = await container.response('/assets/kestrel.glb', {
+    cache: 'no-cache', headers: { 'If-None-Match': model.headers.get('etag') },
+  });
+  assert.equal(unchanged.status, 304);
+  const head = await container.response('/', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), '');
+  const compressed = await container.response(asset, { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.equal(compressed.headers.get('content-encoding'), 'gzip');
+  assert.equal(await compressed.text(), await (await container.response(asset, { headers: { 'Accept-Encoding': 'identity' } })).text());
   const capabilities = await container.response('/api/multiplayer/capabilities');
   assert.equal(capabilities.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await capabilities.json(), { multiplayer: false, reason: 'not_implemented' });
@@ -119,64 +147,37 @@ test('hardened image preserves static responses, private readiness, notices and 
   assert.equal((await container.response('/api/multiplayer/capabilities', {
     method: 'POST', body: 'x'.repeat(17 * 1024),
   })).status, 413);
-  for (const name of ['low-pass', 'babylonjs-core', 'babylonjs-loaders', 'node', 'nginx', 's6', 'skalibs', 'execline']) {
+  for (const name of ['low-pass', 'babylonjs-core', 'babylonjs-loaders', 'node',
+    'runtime-express-5.2.1', 'runtime-compression-1.8.2']) {
     const license = await container.response(`/licenses/${name}.txt`);
     assert.equal(license.status, 200, name);
     assert.ok((await license.text()).length > 100, name);
   }
-  const files = await docker('exec', container.id, 'find', '/opt/low-pass/server', '/usr/share/nginx/html',
-    '/etc/low-pass', '-type', 'f');
+  const files = await docker('exec', container.id, 'find', '/opt/low-pass/dist-server', '/opt/low-pass/dist', '-type', 'f');
   assert.doesNotMatch(files, /\/(?:\.env[^/]*|\.npmrc|node_modules|\.git|tests)(?:\/|\n|$)|\.(?:pem|key|p12|pfx|map)\n/);
   assert.equal((await container.response('/server/index.js')).status, 404);
   assert.equal((await container.response('/node_modules/express/package.json')).status, 404);
-});
-
-test('Node failure leaves solo online and restarts at a bounded rate', async t => {
-  const container = await start(t);
-  await until(() => serviceReady(container));
-  await docker('exec', container.id, 's6-svc', '-wD', '-T', '10000', '-d', '/tmp/low-pass-services/node');
-  assert.equal((await container.response('/')).status, 200);
-  assert.equal((await container.response('/healthz')).status, 200);
-  assert.equal((await container.response('/api/multiplayer/readyz')).status, 502);
-  assert.equal((await container.response('/api/multiplayer/capabilities')).status, 502);
-  await docker('exec', container.id, 's6-svc', '-u', '/tmp/low-pass-services/node');
-  await until(() => serviceReady(container));
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const before = await pid(container.id, 'node');
-    assert.ok(before > 1);
-    const began = Date.now();
-    await docker('exec', container.id, 'kill', '-KILL', String(before));
-    await until(async () => {
-      const after = await pid(container.id, 'node');
-      return after > 1 && after !== before && await serviceReady(container);
-    });
-    assert.ok(Date.now() - began >= 900, 'The supervisor must not busy-loop on crashes.');
-    assert.equal((await container.response('/')).status, 200);
+  assert.equal((await container.response('/dist-server/index.js')).status, 404);
+  for (const name of ['nginx', 's6', 'skalibs', 'execline']) {
+    assert.equal((await container.response(`/licenses/${name}.txt`)).status, 404);
   }
 });
 
-test('a crashed Nginx master does not strand workers or block restart', async t => {
-  const container = await start(t);
-  const before = await pid(container.id, 'nginx');
-  assert.ok(before > 1);
-  await docker('exec', container.id, 'kill', '-KILL', String(before));
+test('process exit is recovered by Docker restart policy, but manual stop stays stopped', async t => {
+  const fixture = fileURLToPath(new globalThis.URL('./fixtures/crash.mjs', import.meta.url));
+  const container = await start(t, ['--restart', 'unless-stopped', '--entrypoint', 'node',
+    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/crash.mjs,readonly`],
+  ['/opt/low-pass/dist-server/crash.mjs']);
   await until(async () => {
-    const after = await pid(container.id, 'nginx');
-    return after > 1 && after !== before && await container.healthy();
+    const state = await container.inspect();
+    return state.RestartCount >= 1 && state.State.Running && !state.State.Restarting;
   });
-  const groups = JSON.parse(await docker('exec', container.id, 'node', '--input-type=module', '-e', `
-    import { readdirSync, readFileSync } from 'node:fs';
-    const groups = [];
-    for (const entry of readdirSync('/proc').filter(name => /^\\d+$/.test(name))) {
-      try {
-        const stat = readFileSync('/proc/' + entry + '/stat', 'utf8');
-        const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-        groups.push(Number(fields[2]));
-      } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    }
-    console.log(JSON.stringify(groups));
-  `));
-  assert.ok(!groups.includes(before), 'No surviving or zombie process in the crashed master group.');
+  await container.refreshPort();
+  await until(container.healthy);
+  assert.equal((await container.response('/')).status, 200);
+  await docker('stop', '--timeout', '45', container.id);
+  await delay(1200);
+  assert.equal((await container.inspect()).State.Running, false);
 });
 
 test('invalid multiplayer configuration leaves static and application health available', async t => {
@@ -190,22 +191,24 @@ test('invalid multiplayer configuration leaves static and application health ava
   await delay(2200);
   const output = await logs(container.id);
   assert.equal(output.split('Multiplayer unavailable:').length - 1, 1);
-  assert.ok(await pid(container.id, 'node') > 1);
+  await assertNodePid1(container.id);
   await docker('restart', '--timeout', '45', container.id);
   await container.refreshPort();
   await until(container.healthy);
   assert.equal((await container.response('/')).status, 200);
 });
 
-test('the container rejects a mismatched private port without taking down static assets', async t => {
-  const container = await start(t, ['-e', 'LOW_PASS_SERVICE_PORT=8082']);
-  await until(async () => (await logs(container.id)).includes('disabled after invalid configuration'));
-  assert.equal((await container.response('/')).status, 200);
-  assert.equal((await container.response('/api/multiplayer/readyz')).status, 502);
-  assert.equal(await pid(container.id, 'node'), -1);
+test('invalid core settings fail startup explicitly without disclosing supplied values', async () => {
+  for (const setting of ['LOW_PASS_SERVICE_PORT=private-value', 'LOW_PASS_SERVICE_HOST=private-value',
+    'LOW_PASS_STATIC_ROOT=/missing-private-root']) {
+    await assert.rejects(docker('run', '--rm', '--read-only', '--cap-drop', 'ALL',
+      '--security-opt', 'no-new-privileges:true', '-e', setting, image),
+    error => error.code === 78 && error.stderr.includes('startup failed') &&
+      !error.stderr.includes('private-value') && !error.stderr.includes('/missing-private-root'));
+  }
 });
 
-test('PID 1 drains both services and stops without a forced container kill', async t => {
+test('Node PID 1 drains and stops without a forced container kill', async t => {
   const container = await start(t);
   await until(() => serviceReady(container));
   await docker('stop', '--timeout', '45', container.id);
@@ -217,9 +220,10 @@ test('PID 1 drains both services and stops without a forced container kill', asy
   assert.match(await logs(container.id), /Application service stopped/);
 });
 
-test('the internal signal proxy supports actual WebSocket upgrade and bidirectional frames', async t => {
+test('the actual application supports test-only WebSocket frames and bounds upgraded shutdown', async t => {
   const fixture = fileURLToPath(new globalThis.URL('./fixtures/upgrade.mjs', import.meta.url));
-  const container = await start(t, ['--mount', `type=bind,src=${fixture},dst=/opt/low-pass/server/index.js,readonly`]);
+  const container = await start(t, ['-e', 'LOW_PASS_SHUTDOWN_TIMEOUT_MS=100',
+    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/index.js,readonly`]);
   await until(() => serviceReady(container));
   const socket = new globalThis.WebSocket(container.origin.replace('http:', 'ws:') + '/signal');
   t.after(() => socket.close());
@@ -229,7 +233,11 @@ test('the internal signal proxy supports actual WebSocket upgrade and bidirectio
     socket.addEventListener('message', event => resolve(event.data), { once: true });
   });
   assert.equal(await message, 'echo:probe');
-  socket.close();
+  const closed = new Promise(resolve => socket.addEventListener('close', resolve, { once: true }));
+  await docker('stop', '--timeout', '45', container.id);
+  await closed;
+  assert.equal((await container.inspect()).State.ExitCode, 0);
+  assert.match(await logs(container.id), /shutdown deadline reached/);
 });
 
 test('build context excludes common local secret and artifact paths', async () => {

@@ -103,7 +103,7 @@ describe('optional application service', () => {
 
 describe('service configuration', () => {
   it('defaults to private disabled operation and accepts bounded overrides', () => {
-    expect(readServiceConfig({})).toMatchObject({ port: 8081, host: '127.0.0.1', shutdownTimeoutMs: 5000,
+    expect(readServiceConfig({})).toMatchObject({ port: 8080, host: '127.0.0.1', shutdownTimeoutMs: 5000,
       multiplayer: { status: 'disabled', reason: 'not_implemented' } });
     expect(readServiceConfig({ LOW_PASS_SERVICE_PORT: '9081', LOW_PASS_SHUTDOWN_TIMEOUT_MS: '150',
       LOW_PASS_MULTIPLAYER_ENABLED: 'false' }))

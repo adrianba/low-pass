@@ -16,8 +16,8 @@ CC0-1.0, and Babylon.js is Apache-2.0. See
 [asset manifest](public/assets/manifest.json) for attribution and provenance.
 Production builds include the MIT, Babylon.js and Node middleware dependency
 license texts under `/licenses/`.
-The application container also includes notices for Node.js, Nginx, s6,
-skalibs and execline at that path.
+The application container also includes the Node.js license and bundled notices
+at that path.
 
 ## Run locally
 
@@ -38,11 +38,11 @@ npm run preview
 The browser needs WebGL2 and graphics acceleration. Start the flight to unlock
 audio. Failed essential assets or a lost graphics context display a reload screen.
 
-### Optional application service (multiplayer preparation)
+### Node application server
 
-Single-player builds and play remain independent of this service. The Node 24
-runtime is preparation only: it does not create rooms, signal peers, issue relay
-credentials, or enable multiplayer.
+The Node 24 server serves the production build. Fully loaded single-player play
+remains client-side, and the build also works with other static hosts. Multiplayer
+endpoints are preparation only: no rooms, signaling or relay credentials yet.
 
 ```sh
 npm run build
@@ -50,7 +50,7 @@ npm run build:server
 npm run start:server
 ```
 
-It serves the built `dist` directory at `127.0.0.1:8081` using Express 5 and
+It serves the built `dist` directory at `127.0.0.1:8080` using Express 5 and
 compression middleware. The default build root is relative to the compiled
 server, independent of the launch directory. `/healthz` returns `ok`.
 `GET /livez` reports process health;
@@ -68,8 +68,8 @@ connections at the shutdown deadline with a warning.
 
 | Environment variable | Default | Accepted values |
 | --- | --- | --- |
-| `LOW_PASS_SERVICE_PORT` | `8081` | Integer 1-65535; loopback only |
-| `LOW_PASS_SERVICE_HOST` | `127.0.0.1` | IP address; keep loopback in the intermediate Nginx image |
+| `LOW_PASS_SERVICE_PORT` | `8080` | Integer 1-65535; keep 8080 in the container |
+| `LOW_PASS_SERVICE_HOST` | `127.0.0.1` | IP address; container explicitly uses `0.0.0.0` |
 | `LOW_PASS_STATIC_ROOT` | sibling `dist` | Absolute built-asset directory; symlinks are rejected |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
 | `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
@@ -78,6 +78,9 @@ Invalid core listener/shutdown configuration exits with code 78. An unsupported
 multiplayer flag is logged explicitly without echoing its value; capabilities
 report `configuration_error` and multiplayer readiness becomes 503 without
 taking down the application service. No secrets are needed at this checkpoint.
+The former private 8081 listener has been removed; this is a single listener.
+Missing/unreadable build output is fatal. Keep the build directory immutable
+while serving it; replace the container for releases rather than editing files.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
 
@@ -188,11 +191,14 @@ docker compose up --build
 ```
 
 Open <http://localhost:8080>. `docker compose down` stops this deployment.
-The multi-stage image serves static files with unprivileged Nginx and runs the
-optional Node 24 service on private loopback, supervised by s6. Multiplayer is
-still disabled. It needs no GPU, database, secrets, or persistent server volume.
-The client performs all rendering, simulation, and audio. Single-player remains
-available if Node fails or its configuration is invalid.
+The multi-stage image runs one unprivileged Node 24 process as PID 1, serving
+assets with Express 5 and compression. There is no Nginx, s6 or internal proxy.
+Multiplayer is still disabled. It needs no GPU, database, secrets, or persistent
+server volume. The client performs all rendering, simulation, and audio.
+Invalid multiplayer configuration does not stop asset serving. A Node crash does:
+new requests fail until Docker restarts the process, but fully loaded solo play
+continues in the browser. A merely unhealthy process is not automatically
+restarted by Docker's restart policy.
 
 The runtime listens on port 8080 and exposes `/healthz`. A hosting reverse proxy
 should terminate HTTPS. Keep a stable public origin to retain users' local scores.
@@ -202,10 +208,13 @@ dependency notices ship in the image; no external asset CDN is used.
 
 Keep the read-only root, writable `/tmp` tmpfs (which may remain `noexec`),
 dropped capabilities and no-new-privileges setting. Allow **45 seconds** for
-container shutdown. The image still runs as UID/GID `101:101`. Its entrypoint now
-starts s6, not the vendor Nginx entrypoint; do not override its command.
-`/api/multiplayer/readyz` checks Node separately from static `/healthz`; it does
-not indicate that multiplayer is playable.
+container shutdown. The image still runs as UID/GID `101:101`. Its entrypoint
+executes Node directly; do not override its command. Static assets live under
+`/opt/low-pass/dist`, separate from server code and production dependencies.
+`/api/multiplayer/readyz` checks optional-feature configuration separately from
+application `/healthz`; it does not indicate that multiplayer is playable.
+Both image dependency installs enforce `min-release-age=7`; user `.npmrc` files
+are not copied into the image.
 
 See the [G0 container handoff](docs/application-container-checkpoint.md) for
 the exact configuration contract, local checks, Ansible-owned deployment

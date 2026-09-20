@@ -1,6 +1,0 @@
-#!/bin/sh
-if [ "$1" -eq 78 ]; then
-    echo 'Application service disabled after invalid configuration; correct it and restart the container.' >&2
-    exit 125
-fi
-exit 0
