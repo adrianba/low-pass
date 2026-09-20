@@ -9,6 +9,7 @@ import type { Pose } from './pose';
 
 export const MAX_CHASE_SAMPLES = 32_768;
 export const CHASE_VIEW_TOLERANCE = 0.001;
+export class ChaseAcquisitionError extends Error {}
 interface Sample {
   readonly time: number;
   readonly position: Readonly<Vec3>;
@@ -101,7 +102,7 @@ export class ChaseTimeline {
       else if (visibleSince === null) visibleSince = time;
       if (visibleSince !== null && time - visibleSince >= window.margin) return visibleSince;
     }
-    throw new Error('Authored camera cannot acquire the complete target before the dive deadline.');
+    throw new ChaseAcquisitionError('Authored camera cannot acquire the complete target before the dive deadline.');
   }
 
   verify(time: number, actual: ChaseView, aspect: number, window: AcquisitionWindow): ViewCheck {

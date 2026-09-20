@@ -424,6 +424,12 @@ from solving a specific approach. A phase offset can request distinct real
 release motion to the same canonical shelf; rejected candidates carry explicit
 reasons. Solo retains its original candidate order and zero-offset trajectory.
 This primitive alone does not establish a synchronized or fair two-player course.
+The opt-in Valley/Desert formation planner selects one target, solves a distinct
+follower intercept, and authors both continuous tracks on a shared clock.
+`FormationTrack` retains authored Valley attitude alongside the existing quintic
+motion format; both host and imported plans must use this evaluator. Lag, path
+candidates, viewport bounds and timing-adjustment allowance are explicit prototype
+inputs, not accepted multiplayer defaults. Solo does not use the paired planner.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness
