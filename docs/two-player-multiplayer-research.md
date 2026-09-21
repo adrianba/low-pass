@@ -70,6 +70,16 @@ settlement before the next dive deadline. Old bombs may overlap the next pass's
 early approach; they keep their original target/result identity until settled.
 No extra release lockout or scoring-window change is introduced.
 
+Combat aircraft continuations now also have an owned, versioned numeric format
+(`AircraftMotion`). It preserves the solo Canyon entry join and the original
+full-motion/attitude correction, and can freeze either approved formation track
+without borrowing a live `Run`. Imported tracks retain the Valley attitude
+adapter rather than accidentally switching to Canyon-derived banking. Queries
+cover the complete 2.8-second missile flight; destroyed-aircraft presentation
+still freezes at the 1.7-second interception and finishes at 5.5 seconds.
+The solo renderer uses this frozen continuation now. This prerequisite does not
+yet serialize the complete missile/event envelope or enable network combat.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user

@@ -5,14 +5,10 @@ import { valleySurface } from '../terrain/surface';
 import type { Surface } from '../terrain/surface';
 import { planCanyonMissile } from './canyon-missile';
 import type { CanyonMissilePlan, MissileView } from './canyon-missile';
-
-export const MISSILE_INTERCEPT_TIME = 1.7;
-export const FLYBY_DURATION = 2.8;
-export const FINALE_DURATION = 5.5;
-export const FLYBY_CLEARANCE = 18;
-export type MissileKind = 'flyby' | 'damage' | 'finale';
-export type CombatCue = 'missile' | 'flyby' | 'damaged' | 'destroyed';
-export type FinalePhase = 'incoming' | 'destroyed' | 'complete';
+import { MISSILE_INTERCEPT_TIME, FLYBY_DURATION, FINALE_DURATION, FLYBY_CLEARANCE } from './combat-timing';
+import type { MissileKind, CombatCue, FinalePhase } from './combat-timing';
+export { MISSILE_INTERCEPT_TIME, FLYBY_DURATION, FINALE_DURATION, FLYBY_CLEARANCE } from './combat-timing';
+export type { MissileKind, CombatCue, FinalePhase } from './combat-timing';
 
 export const shouldFlyby = (encounter: number, seed: number): boolean => encounter === 1 || hash(encounter, 113, seed) < 0.5;
 

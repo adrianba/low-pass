@@ -40,7 +40,7 @@ function vector(value: unknown, field: string): Readonly<Vec3> {
   });
 }
 
-function pose(value: unknown): FlightKnot['pose'] {
+export function readFlightPose(value: unknown): FlightKnot['pose'] {
   const object = record(value, 'pose');
   return Object.freeze({
     position: vector(object.position, 'position'),
@@ -61,7 +61,7 @@ export function readFlightTrackData(value: unknown): FlightTrackData {
     const knot = record(value, 'knot');
     return Object.freeze({
       phase: number(knot.phase, 'phase', MAX_TRACK_DURATION),
-      time: number(knot.time, 'time', MAX_TRACK_DURATION), pose: pose(knot.pose),
+      time: number(knot.time, 'time', MAX_TRACK_DURATION), pose: readFlightPose(knot.pose),
     });
   });
   for (let index = 1; index < knots.length; index++) {

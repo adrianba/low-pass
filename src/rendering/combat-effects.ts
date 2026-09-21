@@ -17,7 +17,7 @@ import { poseAt } from '../game/run';
 import type { Run } from '../game/run';
 import { aircraftPoint } from '../simulation/pose';
 import type { Pose } from '../simulation/pose';
-import { joinMotion } from '../simulation/curves';
+import { AircraftMotion } from '../game/aircraft-motion';
 import type { MissileView } from '../game/canyon-missile';
 
 interface Fragment {
@@ -26,23 +26,8 @@ interface Fragment {
 interface DamagePuff { mesh: Mesh; position: Vec3; velocity: Vec3; age: number; size: number; spin: number }
 
 function flightContinuation(pose: Pose, run: Run): (time: number) => Pose {
-  const encounter = { ...run.encounter, start: structuredClone(run.encounter.start) };
-  const initial = poseAt(encounter, encounter.time, encounter.id - 1);
-  return (time: number): Pose => {
-    const next = poseAt(encounter, encounter.time + time, encounter.id - 1);
-    for (const axis of ['x', 'y', 'z'] as const) {
-      const correction = joinMotion({
-        position: pose.position[axis] - initial.position[axis],
-        velocity: pose.velocity[axis] - initial.velocity[axis],
-        acceleration: pose.acceleration[axis] - initial.acceleration[axis],
-      }, { position: 0, velocity: 0, acceleration: 0 }, MISSILE_INTERCEPT_TIME, time);
-      next.position[axis] += correction.position;
-      next.velocity[axis] += correction.velocity;
-      next.acceleration[axis] += correction.acceleration;
-    }
-    return { ...next, bank: pose.bank + (next.bank - pose.bank) * Math.min(1, time / 0.1),
-      pitch: pose.pitch + (next.pitch - pose.pitch) * Math.min(1, time / 0.1) };
-  };
+  const motion = AircraftMotion.fromSoloCanyon(pose, run.encounter);
+  return time => motion.at(time);
 }
 
 function cloudTexture(scene: Scene): RawTexture {
