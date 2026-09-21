@@ -77,8 +77,23 @@ without borrowing a live `Run`. Imported tracks retain the Valley attitude
 adapter rather than accidentally switching to Canyon-derived banking. Queries
 cover the complete 2.8-second missile flight; destroyed-aircraft presentation
 still freezes at the 1.7-second interception and finishes at 5.5 seconds.
-The solo renderer uses this frozen continuation now. This prerequisite does not
-yet serialize the complete missile/event envelope or enable network combat.
+The solo renderer uses this frozen continuation now.
+
+Complete `MissilePlanData` and player-attributed `CombatPlanData` envelopes are
+now numeric, versioned and validated as well. Imports replay recorded Valley
+control points or Canyon route curves; they never select another launch site.
+The original durations, harmless-flyby clearance and solo effect priority remain.
+Solo authoring lives in `game/solo-combat.ts`, outside the renderer, with the
+existing renderer entry points retained as compatibility adapters.
+
+Host outcomes include score, cumulative misses and assistance **at settlement**,
+so draining several outcomes cannot accidentally classify an earlier damage hit
+using a player's later final state. The multiplayer combat author freezes the
+currently active flight at the outcome's timestamp while retaining the bomb's
+original encounter/player ID. Thus a late bomb cannot pull its missile or finale
+back onto an obsolete flight path. Canyon authoring still requires an explicit
+world-space camera view. This is data/authoring support, not network combat or the
+multi-player effects renderer.
 
 ### Local formation measurements and G1 approval
 

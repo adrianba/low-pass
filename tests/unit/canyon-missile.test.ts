@@ -6,6 +6,7 @@ import { chaseView, projectChase } from '../../src/simulation/chase-camera';
 import type { ChaseView } from '../../src/simulation/chase-camera';
 import { distance } from '../../src/simulation/math';
 import { projectRoute } from '../../src/terrain/canyon-route';
+import { AircraftMotion } from '../../src/game/aircraft-motion';
 
 describe('canyon-floor missiles', () => {
   it('requires explicit future motion and a camera for canyon planning', () => {
@@ -18,7 +19,7 @@ describe('canyon-floor missiles', () => {
     const motion = (age: number) => poseAt(run.encounter, 2.2 + age, 0);
     const view = { ...chaseView(run.pose, run.surface, null, 0), aspect: 16 / 9, range: 1500 };
     const create = () => new MissileFlight('flyby', run.pose, motion(MISSILE_INTERCEPT_TIME).position,
-      1, run.surface, motion, view);
+      1, run.surface, AircraftMotion.fromSoloCanyon(run.pose, run.encounter), view);
     const first = create(), second = create();
     expect(first.launch).toEqual(second.launch);
     for (const age of [0, 0.25, 1.5, 1.7, 2, 2.8]) expect(first.positionAt(age)).toEqual(second.positionAt(age));
@@ -46,7 +47,8 @@ describe('canyon-floor missiles', () => {
           const view = { ...camera!, aspect: count % 2 ? 0.75 : 16 / 9, range: 2200 };
           for (const kind of ['damage', 'finale', 'flyby'] as const) for (const side of [-1, 1]) {
             const started = performance.now();
-            const flight = new MissileFlight(kind, motion(0), motion(MISSILE_INTERCEPT_TIME).position, side, run.surface, motion, view);
+            const frozen = AircraftMotion.fromSoloCanyon(motion(0), { ...encounter, time });
+            const flight = new MissileFlight(kind, motion(0), motion(MISSILE_INTERCEPT_TIME).position, side, run.surface, frozen, view);
             longest = Math.max(longest, performance.now() - started);
             banks.add(Math.sign(projectRoute(flight.launch.x, flight.launch.z).lateral));
             expect(flight.launch.y).toBeCloseTo(FLOOR + 8, 4);

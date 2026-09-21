@@ -11,24 +11,18 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { Scene } from '@babylonjs/core/scene';
 import { hash, noise } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
-import { MissileFlight, finaleFlight, MISSILE_INTERCEPT_TIME } from '../game/missile';
+import { MissileFlight, MISSILE_INTERCEPT_TIME } from '../game/missile';
 import type { CombatCue, FinalePhase } from '../game/missile';
-import { poseAt } from '../game/run';
 import type { Run } from '../game/run';
 import { aircraftPoint } from '../simulation/pose';
 import type { Pose } from '../simulation/pose';
-import { AircraftMotion } from '../game/aircraft-motion';
+import { soloIncomingPlan, soloFinalePlan } from '../game/solo-combat';
 import type { MissileView } from '../game/canyon-missile';
 
 interface Fragment {
   mesh: Mesh; position: Vec3; velocity: Vec3; age: number; duration: number; smoke: boolean;
 }
 interface DamagePuff { mesh: Mesh; position: Vec3; velocity: Vec3; age: number; size: number; spin: number }
-
-function flightContinuation(pose: Pose, run: Run): (time: number) => Pose {
-  const motion = AircraftMotion.fromSoloCanyon(pose, run.encounter);
-  return time => motion.at(time);
-}
 
 function cloudTexture(scene: Scene): RawTexture {
   const size = 128;
@@ -158,18 +152,13 @@ export class CombatEffects {
 
   private startIncoming(kind: 'flyby' | 'damage', run: Run, view?: MissileView): void {
     if (this.flight) return;
-    const future = poseAt(run.encounter, run.encounter.time + MISSILE_INTERCEPT_TIME, run.encounter.id - 1);
-    this.flight = new MissileFlight(kind, run.pose, future.position, hash(run.encounter.id, 18, run.seed) < 0.5 ? -1 : 1,
-      run.surface, run.surface.canyon ? flightContinuation(run.pose, run) : undefined, view);
+    this.flight = MissileFlight.fromData(soloIncomingPlan(kind, run, view));
     this.events.push('missile');
   }
 
   startFinale(pose: Pose, run?: Run, view?: MissileView): void {
     if (this.flight?.kind === 'finale') return;
-    if (run?.surface.canyon) {
-      const continuation = flightContinuation(pose, run);
-      this.flight = new MissileFlight('finale', pose, continuation(MISSILE_INTERCEPT_TIME).position, 1, run.surface, continuation, view);
-    } else this.flight = finaleFlight(pose);
+    this.flight = MissileFlight.fromData(soloFinalePlan(pose, run, view));
     this.events.push('missile');
   }
 

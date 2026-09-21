@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AircraftMotion } from '../../src/game/aircraft-motion';
 import { FLOOR, STEP, TARGET_RADIUS, difficulty } from '../../src/config/game';
 import { Run, initialPose, launchFrom, planEncounter, poseAt } from '../../src/game/run';
 import { advanceBomb, contactAccuracy, predictImpact } from '../../src/simulation/ballistics';
@@ -132,7 +133,7 @@ describe('River Canyon', () => {
       run.encounter.time = 2.2;
       run.status = 'over';
       const pose = run.pose, future = poseAt(run.encounter, 2.2 + MISSILE_INTERCEPT_TIME, count);
-      const motion = (t: number) => poseAt(run.encounter, 2.2 + t, count);
+      const motion = AircraftMotion.fromSoloCanyon(pose, run.encounter);
       const view = { ...chaseView(pose, canyonSurface, null, 0), aspect: 16 / 9, range: 1500 };
       const missile = new MissileFlight('damage', pose, future.position, 1, canyonSurface, motion, view);
       expect(canyonSurface.wet(missile.launch.x, missile.launch.z)).toBe(false);

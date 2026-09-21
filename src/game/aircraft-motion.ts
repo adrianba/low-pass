@@ -26,7 +26,7 @@ function time(value: unknown): number {
   }
   return value === 0 ? 0 : value;
 }
-function readData(value: unknown): AircraftMotionData {
+export function readAircraftMotionData(value: unknown): AircraftMotionData {
   const data = record(value);
   if (data.version !== 1) throw new Error('Unsupported aircraft motion version.');
   const start = readFlightPose(data.start);
@@ -55,14 +55,14 @@ export class AircraftMotion {
   private readonly entryEnd: Pose | null;
 
   constructor(data: AircraftMotionData) {
-    this.data = readData(data);
+    this.data = readAircraftMotionData(data);
     this.track = this.data.kind === 'track' ? this.data.style === 'canyon'
       ? FlightTrack.fromData(this.data.track) : FormationTrack.fromData(this.data.track) : null;
     this.entryEnd = this.data.kind === 'track' && this.data.entry ? this.track!.at(this.data.entry.endAt) : null;
     this.initial = this.sourceAt(0);
   }
 
-  static fromData(data: unknown): AircraftMotion { return new AircraftMotion(readData(data)); }
+  static fromData(data: unknown): AircraftMotion { return new AircraftMotion(readAircraftMotionData(data)); }
   static tangent(start: Pose): AircraftMotion { return new AircraftMotion({ version: 1, kind: 'tangent', start }); }
   static fromFormation(plan: FormationPlan, slot: 0 | 1, sharedTime: number, start?: Pose): AircraftMotion {
     if ((slot !== 0 && slot !== 1) || !Number.isFinite(sharedTime) || sharedTime < plan.startAt || sharedTime > plan.handoffAt) {
@@ -79,7 +79,7 @@ export class AircraftMotion {
       track: flight.track.toData(), entry: { start: encounter.start, startAt: flight.startTime, endAt: flight.entryEnd } });
   }
 
-  toData(): AircraftMotionData { return readData(this.data); }
+  toData(): AircraftMotionData { return readAircraftMotionData(this.data); }
 
   at(age: number): Pose {
     if (!Number.isFinite(age) || age < 0 || age > FLYBY_DURATION) throw new Error('Invalid aircraft continuation age.');

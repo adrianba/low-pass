@@ -24,6 +24,7 @@ export type CommandRejection = Exclude<SessionStatus, 'running'> | Failure['code
 export type CommandResult = { ok: true } | { ok: false; reason: CommandRejection };
 export interface AttemptResult {
   id: number; sequence: number; slot: PlayerSlot; time: number; points: number; impact: Contact | null;
+  score: number; misses: number; assisted: boolean;
 }
 export interface PlayerCompletion {
   slot: PlayerSlot; sequence: number; time: number; score: number; misses: number; assisted: boolean; pose: Pose;
@@ -231,10 +232,11 @@ export class HostSession {
     const eliminated = !points && p.misses + 1 === MAX_MISSES;
     const ended = eliminated && this.players[slot === 0 ? 1 : 0].completion !== null;
     this.reserveEvents(1 + Number(eliminated) + Number(ended));
-    attempt.result = { id: sequence * 2 + slot + 1, sequence, slot, time: this.clock, points, impact };
     p.bomb = null;
     p.score += points;
     if (!points) p.misses++;
+    attempt.result = { id: sequence * 2 + slot + 1, sequence, slot, time: this.clock, points, impact,
+      score: p.score, misses: p.misses, assisted: p.assisted };
     encounter.destroyed ||= points > 0;
     this.emit({ type: 'resolved', result: attempt.result });
     if (eliminated) {

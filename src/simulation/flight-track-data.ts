@@ -33,7 +33,7 @@ function number(value: unknown, field: string, maximum = MAX_TRACK_COMPONENT): n
   return value === 0 ? 0 : value; // JSON canonicalizes -0; both authored and imported tracks must agree.
 }
 
-function vector(value: unknown, field: string): Readonly<Vec3> {
+export function readFlightVector(value: unknown, field: string): Readonly<Vec3> {
   const object = record(value, field);
   return Object.freeze({
     x: number(object.x, `${field}.x`), y: number(object.y, `${field}.y`), z: number(object.z, `${field}.z`),
@@ -43,9 +43,9 @@ function vector(value: unknown, field: string): Readonly<Vec3> {
 export function readFlightPose(value: unknown): FlightKnot['pose'] {
   const object = record(value, 'pose');
   return Object.freeze({
-    position: vector(object.position, 'position'),
-    velocity: vector(object.velocity, 'velocity'),
-    acceleration: vector(object.acceleration, 'acceleration'),
+    position: readFlightVector(object.position, 'position'),
+    velocity: readFlightVector(object.velocity, 'velocity'),
+    acceleration: readFlightVector(object.acceleration, 'acceleration'),
     bank: number(object.bank, 'bank', Math.PI),
     pitch: number(object.pitch, 'pitch', Math.PI),
   } satisfies Pose);
