@@ -299,6 +299,17 @@ export class World {
     this.engine.resize();
   }
 
+  /** Caller owns the returned view and must dispose it before this World. */
+  createAircraftView(prefix: string): AircraftView {
+    if (!prefix || this.containers.length !== 2 || this.scene.isDisposed ||
+      this.scene.getTransformNodeByName(`${prefix}Aircraft pose`)) {
+      throw new Error('Extra aircraft views require loaded assets and a unique nonempty prefix.');
+    }
+    const view = new AircraftView(this.scene, this.shadows, prefix);
+    view.loadModels(this.containers[0]!, this.containers[1]!);
+    return view;
+  }
+
   private clearChunks(): void {
     this.lastChunk = -Infinity;
     for (const chunk of this.chunks.values()) this.disposeChunk(chunk);

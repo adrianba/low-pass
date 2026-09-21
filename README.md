@@ -84,6 +84,56 @@ while serving it; replace the container for releases rather than editing files.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
 
+### Local formation preview (not networked)
+
+The test-only two-aircraft preview exercises both real flight paths, cameras,
+bombs and independent scores. It does not save records or implement rooms,
+missile damage, elimination or a complete multiplayer match. All formation
+parameters remain provisional pending Windows Edge review.
+
+Build its separate artifacts and the normal application image:
+
+```sh
+npm run build:formation-preview
+docker build -t low-pass:formation-preview .
+```
+
+After stopping your existing local preview if it occupies port 8080, run:
+
+```sh
+docker run --rm --name low-pass-formation-preview -p 8080:8080 \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges:true --stop-timeout 45 \
+  -e LOW_PASS_MULTIPLAYER_ENABLED=false \
+  --mount "type=bind,src=$PWD/test-results/formation-preview/formation-preview.html,dst=/opt/low-pass/dist/formation-preview.html,readonly" \
+  --mount "type=bind,src=$PWD/test-results/formation-preview/formation-preview.js,dst=/opt/low-pass/dist/formation-preview.js,readonly" \
+  low-pass:formation-preview
+```
+
+Open `http://localhost:8080/formation-preview.html`. Choose a course and pass,
+then **Build course**. Earlier passes are planned sequentially, including for
+cap-speed previews. Select **Follower**, **Lead approach**, then **Play** to
+watch the lead release; use **Replay**, either camera, and **Both results** to
+inspect the paths and independent scores. Uncheck scripted drops to use Space
+after clicking the canvas. Try passes 1 and 14 in each course.
+
+The prototype canvas supports aspect ratios 0.75-2.0; unsupported sizes pause
+explicitly. The side panel reduces canvas width. The preview checks geometric
+visibility, but the cap-speed bomb is very small: visual readability is an
+unresolved G1 question, not a passed acceptance criterion. See the
+[research measurements](docs/two-player-multiplayer-research.md#local-formation-measurements-g1-still-pending).
+
+Neither the normal build nor the normal application image contains this fixture.
+Keep these two files as local read-only mounts, not production assets. Playwright
+clears `test-results`; rebuild the artifacts after testing and recreate the local
+preview container when updating them. To test an already mounted preview:
+
+```sh
+TEST_URL=http://127.0.0.1:8080 \
+FORMATION_PREVIEW_URL=http://127.0.0.1:8080/formation-preview.html \
+npx playwright test --project=chromium tests/e2e/formation-preview.spec.ts
+```
+
 ## Controls and rules
 
 | Control | Action |

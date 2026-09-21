@@ -39,7 +39,26 @@ bounds and departing bomb from 0.1 seconds before to 0.2 seconds after release,
 using a 2% screen inset and canonical terrain occlusion. Geometric visibility
 does **not** prove that a small bomb is readable in the actual rendered view.
 
-Node 24 measurements, using the existing refined release-window driver:
+The real, locally mounted Node-container preview was also exercised in Chromium
+at a 1100x800 browser viewport (840x732 CSS-pixel canvas), on sequential pass 14.
+Both scores reached 100, both impact events remained independent (including
+simultaneous contacts), pause and camera switching preserved state, repeated
+rebuilds kept scene resource counts stable, and records remained untouched.
+
+| Follower view, 0.2 s after lead release | Lead aircraft width | Departing bomb width |
+| --- | --- | --- |
+| Green Valley / Desert | 15.8 CSS pixels | 1.22 CSS pixels |
+| River Canyon | 20.8 CSS pixels | 1.59 CSS pixels |
+
+The bomb is therefore **on-screen but not reliably readable** at these cap-speed
+demonstration spacings. G1 must decide whether to bring the follower closer,
+retain the spacing with an explicit cosmetic release cue, or accept the current
+presentation after actual Edge review. No cue or spacing change is silently
+assumed. The [local preview instructions](../README.md#local-formation-preview-not-networked)
+describe the fixture; it is not included in the production image.
+
+Node 24 measurements, using the existing refined release-window driver over
+the complete legal release intervals:
 
 | Course | Successful-release interval | At least 95-point interval | Follower window compared with lead |
 | --- | --- | --- | --- |
