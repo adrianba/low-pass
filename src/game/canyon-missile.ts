@@ -1,5 +1,5 @@
 import { FLOOR } from '../config/game';
-import { distance, mix } from '../simulation/math';
+import { distance } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { chaseView, projectChase } from '../simulation/chase-camera';
 import type { ChaseView } from '../simulation/chase-camera';
@@ -8,13 +8,10 @@ import { CANYON } from '../terrain/river-canyon';
 import type { Surface } from '../terrain/surface';
 import type { Pose } from '../simulation/pose';
 import type { MissileKind } from './missile';
+import { CanyonMissilePlan } from './canyon-missile-data';
+export { CanyonMissilePlan } from './canyon-missile-data';
 
 export interface MissileView extends ChaseView { aspect: number; range: number }
-export interface CanyonMissilePlan {
-  launch: Vec3;
-  intercept: Vec3;
-  positionAt(age: number): Vec3;
-}
 interface Options {
   kind: MissileKind;
   side: number;
@@ -25,7 +22,6 @@ interface Options {
   duration: number;
   clearance: number;
 }
-const ease = (u: number) => u ** 3 * (10 - 15 * u + 6 * u * u);
 const BODY_RADIUS = 3.4;
 
 function visible(point: Vec3, view: ChaseView, options: Options): boolean {
@@ -70,18 +66,14 @@ export function planCanyonMissile(options: Options): CanyonMissilePlan {
     const target = projectRoute(intercept.x, intercept.z);
     const frame = routeMotion(target.along);
     const forward = Math.max(40, (future.velocity.x * frame.tx + future.velocity.z * frame.tz) * frame.tz);
-    for (const power of [2, 3, 4]) {
-      const positionAt = (age: number): Vec3 => {
-        const u = Math.max(0, age) / arrival, progress = ease(Math.min(u, 1));
-        const elapsed = Math.max(0, age - arrival), exit = Math.min(1, elapsed / (duration - arrival));
-        const route = mix(along, target.along, progress) + forward * elapsed ** 3 / (3 * (duration - arrival) ** 2);
-        const lateral = mix(side * bank, target.lateral, progress) * (1 - ease(exit));
-        return { ...routePoint(route, lateral),
-          y: launch.y + (intercept.y - launch.y) * (0.25 * u + 0.75 * u ** power) };
-      };
+    for (const power of [2, 3, 4] as const) {
+      const plan = new CanyonMissilePlan({
+        version: 1, launch, intercept, along, targetAlong: target.along,
+        lateral: side * bank, targetLateral: target.lateral, forward, power, arrival, duration,
+      });
       let previous = launch, valid = true;
       for (const sample of samples) {
-        const p = positionAt(sample.age), u = sample.age / arrival;
+        const p = plan.positionAt(sample.age), u = sample.age / arrival;
         if (sample.age <= arrival * 0.35 && !visible(p, sample.camera, options)) {
           failures.add('visible ascent'); valid = false; break;
         }
@@ -101,7 +93,7 @@ export function planCanyonMissile(options: Options): CanyonMissilePlan {
       }
       const arrivalSpeed = (intercept.y - launch.y) * (0.25 + 0.75 * power) / arrival;
       if (kind !== 'flyby' && arrivalSpeed <= future.velocity.y) valid = false;
-      if (valid) return { launch, intercept, positionAt };
+      if (valid) return plan;
     }
   }
   throw new Error(`Cannot plan a canyon-floor ${kind} missile: ${[...failures].join(', ')}.`);

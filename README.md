@@ -492,6 +492,12 @@ complete-ring acquisition and the follower's geometric view of the lead drop;
 the user approved the current on-screen presentation at G1. Damaged-view smoke
 and simultaneous combat-effect obstruction still require their later effects
 checks; this approval does not bypass them.
+Canyon missile curves expose owned, versioned numeric data through
+`CanyonMissilePlan.toData()` / `fromData()`. Import evaluates the host-selected
+route-normal curve without choosing another launch site or querying terrain.
+Structural validation bounds data but does not replace the author's original
+launch, visibility and full-body clearance checks. This is a prerequisite for
+shared combat plans, not completed effect replication.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness
