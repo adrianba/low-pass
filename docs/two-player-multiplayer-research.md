@@ -50,6 +50,26 @@ The rolling scheduler must establish that approved courses fit these bounds;
 the session itself does not author new encounters, drive presentation, synchronize
 peers or implement the shared readiness handshake.
 
+`FormationScheduler` now authors one shared encounter ahead, using encounter
+sequence (not score or resolution arrival order) for difficulty. Both full motion
+and camera anchors carry through every handoff, including the eliminated slot's
+planning-only path. No dead aircraft is revived and the survivor never changes
+slots. Authoring failure freezes the clock; it does not substitute a different
+course, clamp an aircraft or silently keep flying without a plan.
+
+The four-plan cap allows current + lookahead + two retained tails. A conservative
+minimum encounter duration of `(20 + 5.5) / 2 = 12.75` seconds proves those tails
+can expire before a fifth plan is needed. This is an admission check on authored
+plans, not a change to flight timing: 33 sequential passes measured minima of
+16.5 seconds in Valley/Desert and approximately 16.3906 in Canyon (seed 7);
+at most three plans were simultaneously retained in that test.
+Quintic control hulls bound launch altitude and upward velocity over the entire
+legal release interval. Together with the canonical terrain's minimum height,
+gravity, mount radius and fixed-step margin, they bound every possible bomb's
+settlement before the next dive deadline. Old bombs may overlap the next pass's
+early approach; they keep their original target/result identity until settled.
+No extra release lockout or scoring-window change is introduced.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user

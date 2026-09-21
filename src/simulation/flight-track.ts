@@ -9,6 +9,22 @@ interface Knot { phase: number; time: number; pose: Pose }
 export const TRACK_SPEED_FRACTION = 0.985;
 export const speedOf = (pose: Pose): number => Math.hypot(pose.velocity.x, pose.velocity.y, pose.velocity.z);
 
+export function flightControlHull(a: FlightKnot, b: FlightKnot): Vec3[] {
+  const dt = b.time - a.time;
+  if (!Number.isFinite(dt) || dt <= 0) throw new Error('Invalid flight control interval.');
+  const hull = Array.from({ length: 6 }, () => ({ x: 0, y: 0, z: 0 }));
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const p = a.pose.position[axis], q = b.pose.position[axis], v = a.pose.velocity[axis], w = b.pose.velocity[axis];
+    hull[0]![axis] = p;
+    hull[1]![axis] = p + v * dt / 5;
+    hull[2]![axis] = p + 2 * v * dt / 5 + a.pose.acceleration[axis] * dt * dt / 20;
+    hull[3]![axis] = q - 2 * w * dt / 5 + b.pose.acceleration[axis] * dt * dt / 20;
+    hull[4]![axis] = q - w * dt / 5;
+    hull[5]![axis] = q;
+  }
+  return hull;
+}
+
 export function motionPose(position: Vec3, velocity: Vec3, acceleration: Vec3): Pose {
   const horizontal = Math.hypot(velocity.x, velocity.z);
   const lateral = horizontal > 0 ? (velocity.z * acceleration.x - velocity.x * acceleration.z) / horizontal : 0;

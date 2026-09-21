@@ -4,6 +4,7 @@ import { ChaseAcquisitionError, ChaseTimeline } from '../../simulation/chase-tim
 import type { AcquisitionWindow, ViewportEnvelope } from '../../simulation/chase-timeline';
 import type { ChaseView } from '../../simulation/chase-camera';
 import { joinMotion } from '../../simulation/curves';
+import { flightControlHull } from '../../simulation/flight-track';
 import { MIN_TRACK_INTERVAL } from '../../simulation/flight-track-data';
 import type { FlightTrackData } from '../../simulation/flight-track-data';
 import { clamp, distance } from '../../simulation/math';
@@ -182,17 +183,7 @@ function validateMotion(track: FormationTrack, speed: number): void {
   const knots = track.motion.knots;
   for (let i = 1; i < knots.length; i++) {
     const a = knots[i - 1]!, b = knots[i]!, dt = b.time - a.time;
-    const hull = Array.from({ length: 6 }, () => ({ x: 0, y: 0, z: 0 }));
-    for (const axis of ['x', 'y', 'z'] as const) {
-      const p = a.pose.position[axis], q = b.pose.position[axis];
-      const v = a.pose.velocity[axis], w = b.pose.velocity[axis];
-      hull[0]![axis] = p;
-      hull[1]![axis] = p + v * dt / 5;
-      hull[2]![axis] = p + 2 * v * dt / 5 + a.pose.acceleration[axis] * dt * dt / 20;
-      hull[3]![axis] = q - 2 * w * dt / 5 + b.pose.acceleration[axis] * dt * dt / 20;
-      hull[4]![axis] = q - w * dt / 5;
-      hull[5]![axis] = q;
-    }
+    const hull = flightControlHull(a, b);
     const forward = hull.slice(1).map((p, j) => 5 * (p.z - hull[j]!.z) / dt);
     if (forward.some(v => v <= 0 || v > speed + 0.001)) {
       throw new CandidateError('forward_speed', 'Entry or continuation exceeds the native forward-speed envelope.');

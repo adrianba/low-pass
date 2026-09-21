@@ -4,6 +4,7 @@ import { mix } from './math';
 import type { Vec3 } from './math';
 
 export interface Pose { position: Vec3; velocity: Vec3; acceleration: Vec3; bank: number; pitch: number }
+export const BOMB_MOUNT = Object.freeze({ x: 0, y: -2.2, z: 0 });
 
 export function aircraftPoint(pose: Pose, local: Vec3): Vec3 {
   const yaw = Math.atan2(pose.velocity.x, pose.velocity.z);
@@ -19,7 +20,7 @@ export function aircraftPoint(pose: Pose, local: Vec3): Vec3 {
 }
 
 export function launchFrom(pose: Pose): Bomb {
-  return { position: aircraftPoint(pose, { x: 0, y: -2.2, z: 0 }), velocity: { ...pose.velocity }, age: 0 };
+  return { position: aircraftPoint(pose, BOMB_MOUNT), velocity: { ...pose.velocity }, age: 0 };
 }
 
 export function initialPose(position: Vec3 = { x: 0, y: FLOOR + CRUISE_HEIGHT, z: 0 }): Pose {

@@ -248,10 +248,23 @@ export class HostSession {
   retirePlan(sequence: number): void {
     const encounter = this.encounters.get(sequence);
     if (!encounter) throw new Error('Unknown retained encounter.');
-    const settledAt = Math.max(encounter.handoffAt, ...encounter.attempts.map(a => a.result?.time ?? encounter.handoffAt));
-    if (sequence === this.lastSequence || encounter.attempts.some(a => !a.result && !a.skipped) ||
-      this.clock < settledAt + FINALE_DURATION) throw new Error('Encounter still owns motion, outcomes or effect tails.');
+    if (!this.retirable(encounter)) throw new Error('Encounter still owns motion, outcomes or effect tails.');
     this.encounters.delete(sequence);
+  }
+
+  retireReadyPlans(): number[] {
+    const retired: number[] = [];
+    for (const encounter of this.encounters.values()) if (this.retirable(encounter)) {
+      this.encounters.delete(encounter.sequence);
+      retired.push(encounter.sequence);
+    }
+    return retired;
+  }
+
+  private retirable(encounter: Encounter): boolean {
+    const settledAt = Math.max(encounter.handoffAt, ...encounter.attempts.map(a => a.result?.time ?? encounter.handoffAt));
+    return encounter.sequence !== this.lastSequence && encounter.attempts.every(a => a.result || a.skipped)
+      && this.clock >= settledAt + FINALE_DURATION;
   }
 
   drainEvents(): SessionEvent[] { return structuredClone(this.events.splice(0)); }

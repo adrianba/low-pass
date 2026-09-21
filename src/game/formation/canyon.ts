@@ -4,7 +4,7 @@ import { projectChase } from '../../simulation/chase-camera';
 import type { ChaseView } from '../../simulation/chase-camera';
 import { ChaseAcquisitionError, ChaseTimeline } from '../../simulation/chase-timeline';
 import type { AcquisitionWindow, ViewportEnvelope } from '../../simulation/chase-timeline';
-import { FlightTrack, motionPose } from '../../simulation/flight-track';
+import { FlightTrack, flightControlHull, motionPose } from '../../simulation/flight-track';
 import type { FlightKnot } from '../../simulation/flight-track-data';
 import { MIN_TRACK_INTERVAL } from '../../simulation/flight-track-data';
 import { distance } from '../../simulation/math';
@@ -181,21 +181,6 @@ function joinedTrack(encounter: Encounter, localStart: number, localEnd: number)
   return new FlightTrack({ version: 1, knots });
 }
 
-function controlHull(a: FlightKnot, b: FlightKnot): Vec3[] {
-  const dt = b.time - a.time;
-  const hull = Array.from({ length: 6 }, () => ({ x: 0, y: 0, z: 0 }));
-  for (const axis of ['x', 'y', 'z'] as const) {
-    const p = a.pose.position[axis], q = b.pose.position[axis], v = a.pose.velocity[axis], w = b.pose.velocity[axis];
-    hull[0]![axis] = p;
-    hull[1]![axis] = p + v * dt / 5;
-    hull[2]![axis] = p + 2 * v * dt / 5 + a.pose.acceleration[axis] * dt * dt / 20;
-    hull[3]![axis] = q - 2 * w * dt / 5 + b.pose.acceleration[axis] * dt * dt / 20;
-    hull[4]![axis] = q - w * dt / 5;
-    hull[5]![axis] = q;
-  }
-  return hull;
-}
-
 function advancesThroughGorge(track: FlightTrack): boolean {
   const positive = (points: number[], depth: number): boolean => {
     if (points.every(value => value > 0)) return true;
@@ -209,7 +194,7 @@ function advancesThroughGorge(track: FlightTrack): boolean {
     return positive(left, depth + 1) && positive(right, depth + 1);
   };
   return track.knots.slice(1).every((b, i) => {
-    const a = track.knots[i]!, hull = controlHull(a, b);
+    const a = track.knots[i]!, hull = flightControlHull(a, b);
     return positive(hull.slice(1).map((point, j) => 5 * (point.z - hull[j]!.z) / (b.time - a.time)), 0);
   });
 }
@@ -249,7 +234,7 @@ function proveClearance(track: FlightTrack, work: { clearanceNodes: number }): v
     return safe(left, depth + 1) && safe(right, depth + 1);
   };
   for (let i = 1; i < track.knots.length; i++) {
-    if (!safe(controlHull(track.knots[i - 1]!, track.knots[i]!), 0)) {
+    if (!safe(flightControlHull(track.knots[i - 1]!, track.knots[i]!), 0)) {
       throw new PairError('clearance', `Conservative aircraft sweep is not terrain-safe at ${track.knots[i - 1]!.time}.`);
     }
   }
