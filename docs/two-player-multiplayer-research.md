@@ -24,6 +24,32 @@ the remaining TURN material describes application integration and acceptance onl
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
 allocation and forced-relay connectivity have not yet been verified.
 
+### Host simulation checkpoint (not yet connected to the game UI)
+
+`src/game/multiplayer/session.ts` now owns independent player outcomes over
+supplied, approved formation plans. It does not run two solo `Run` instances.
+Each player has one active bomb, an independent score, cumulative misses and
+assistance history. A shared wreck does not consume the other player's attempt.
+The third miss emits that player's completed result immediately; the surviving
+slot continues unchanged. Both eliminations determine the final winner/draw,
+independently of later visual finales. This layer writes no browser records.
+
+The session copies imported numeric tracks and exposes owned snapshots/events.
+Explicit sequence numbers reject stale/repeated release commands; bomb integration
+uses the canonical fixed step and typed first ground/water contact, regardless of
+render/update frequency. Pause freezes simulation. An ended session cannot resume.
+Old bombs retain their encounter attribution across handoffs. Plans cannot be
+retired before their outcomes and 5.5-second effect tails have settled.
+
+This initial boundary retains at most four plans and 256 undrained events and
+accepts advances of at most 60 seconds. Capacity errors are explicit, never silent
+event loss. Missing lookahead and full event buffers block progress until supplied
+or drained. Unsupported bomb lifetimes (20 seconds) and a later cutoff overlapping
+an unsettled bomb are explicit planning failures, not fabricated misses.
+The rolling scheduler must establish that approved courses fit these bounds;
+the session itself does not author new encounters, drive presentation, synchronize
+peers or implement the shared readiness handshake.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user
