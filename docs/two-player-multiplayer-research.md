@@ -23,6 +23,54 @@ the remaining TURN material describes application integration and acceptance onl
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
 allocation and forced-relay connectivity have not yet been verified.
 
+### Local formation measurements: G1 still pending
+
+Both opt-in paired planners are now implemented on the local branch. These are
+**unapproved demonstration parameters**, not final multiplayer settings:
+
+| Prototype | Demonstration inputs | Measured course coverage |
+| --- | --- | --- |
+| Green Valley / Desert | Requested lag 1.5 s, at most 0.1 s additional lag, follower jink phase +0.35 radians | Three seeds, 15 sequential passes each; every difficulty tier and passes beyond the cap. The two themes use identical physics. |
+| River Canyon | Lag 1.2 s, candidate phases +0.12 / -0.12 radians, entry extension at most 3 s | Two seeds, 28 sequential passes each; both shelf banks, every tier and extended cap-speed flight. |
+
+The measured prototype viewport envelope is aspect 0.75-2.0, with a 0.1-second
+complete-ring acquisition margin. Canyon also checks the projected lead-aircraft
+bounds and departing bomb from 0.1 seconds before to 0.2 seconds after release,
+using a 2% screen inset and canonical terrain occlusion. Geometric visibility
+does **not** prove that a small bomb is readable in the actual rendered view.
+
+Node 24 measurements, using the existing refined release-window driver:
+
+| Course | Successful-release interval | At least 95-point interval | Follower window compared with lead |
+| --- | --- | --- | --- |
+| Valley / Desert | 0.1522-0.7364 s | 0.00845-0.04091 s | Hit width -2.37% to +4.18%; precision width -2.35% to +4.24%. |
+| Canyon | 0.1527-0.7382 s | 0.00848-0.04104 s | Hit width +0.19% to +2.17%; precision width +0.20% to +2.70%. |
+
+These ranges combine easy and cap-speed passes; they are not one timing window
+that applies to every tier. Valley widths differ from the original solo
+approach by approximately -2.33% to +4.23% for hits and -2.35% to +4.25% for
+precision. The observed Valley release lag was 1.5000-1.5078 seconds. Canyon
+retains the native release-region knots; reconciled entries do not retime them.
+Neither planner changes radius, physics, scoring, or solo play.
+
+The Canyon sample used at most 277 knots per track and 676 clearance-proof
+nodes per plan, with 5.5 seconds of authored continuation beyond the shared
+handoff. The search remains explicitly bounded at 12 shelves and eight pair
+candidates per shelf. Observed planning time is machine/load-dependent and is
+not a frame-rate or latency guarantee.
+
+For reproducible per-tier JSON reports, set `FORMATION_EVIDENCE_DIR` to a local
+artifact directory and run:
+
+```sh
+npm test -- tests/unit/formation-valley.test.ts tests/unit/formation-canyon.test.ts
+```
+
+Generated reports are evidence artifacts, not source assets or score records.
+**G1 must still approve visual spacing, actual lead-drop readability, viewport
+bounds and the measured difficulty differences in Windows Edge.** These results
+do not establish WebRTC/TURN connectivity or complete multiplayer gameplay.
+
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,
 not authorization to deploy, change Traefik/DNS/firewalls, or edit that Ansible

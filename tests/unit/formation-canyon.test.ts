@@ -12,6 +12,7 @@ import { distance } from '../../src/simulation/math';
 import { routePoint } from '../../src/terrain/canyon-route';
 import { canyonSurface } from '../../src/terrain/surface';
 import { releaseWindows } from '../helpers/flight-probe';
+import { formationEvidence } from '../helpers/formation-evidence';
 
 function input(seed = 7): CanyonFormationInput {
   return {
@@ -66,7 +67,8 @@ describe('paired Canyon prototype', () => {
   it.each([7, 29])('preserves full shared-time handoffs through 28 sequential passes for seed %i', seed => {
     let request = input(seed);
     const sides = new Set<number>();
-    const widths: Array<{ hit: number; precision: number }> = [];
+    const widths: Array<{ tier: number; slot: number; side: number; hit: number; precision: number;
+      acquireBeforeDive: number; releaseLag: number }> = [];
     let nativeCandidates = 0, pairedCandidates = 0, clearanceNodes = 0, knots = 0, maxMs = 0, duration = 0, extension = 0;
     for (let count = 0; count < 28; count++) {
       request = { ...request, count, encounterId: `paired-canyon-${count}` };
@@ -120,7 +122,8 @@ describe('paired Canyon prototype', () => {
         const precision = windows.precision[0]!.end - windows.precision[0]!.start;
         expect(hit).toBeGreaterThan(0.08);
         expect(precision).toBeGreaterThan(0.005);
-        widths.push({ hit, precision });
+        widths.push({ tier: count + 1, slot: attempt.slot, side: plan.side, hit, precision,
+          acquireBeforeDive: attempt.diveAt - attempt.acquireAt, releaseLag: plan.releaseLag });
         const acquired = attempt.acquireAt - attempt.releaseAt;
         expect(attempt.acquireAt + request.acquisitionMargin).toBeLessThanOrEqual(attempt.diveAt + 1e-8);
         for (const aspect of [0.75, 1, 16 / 9, 2]) {
@@ -171,6 +174,9 @@ describe('paired Canyon prototype', () => {
       precision: [Math.min(...widths.map(w => w.precision)), Math.max(...widths.map(w => w.precision))],
       seed, nativeCandidates, pairedCandidates, clearanceNodes, knots, duration, extension, maxMs,
     }));
+    formationEvidence(`canyon-seed-${seed}`, { seed, candidates: request.candidates, viewport: request.viewport,
+      acquisitionMargin: request.acquisitionMargin, departure: request.departure, measurements: widths,
+      maxima: { nativeCandidates, pairedCandidates, clearanceNodes, knots, duration, extension, maxMs } });
   }, 120_000);
 
   it('retains native knots and exact release anchors instead of fitting across native quintics', () => {

@@ -8,6 +8,8 @@ import { FormationTrack } from '../../src/game/formation/track';
 import { FORMATION_FUTURE, formationPose, planValleyFormation } from '../../src/game/formation/valley';
 import type { ValleyFormation, ValleyFormationInput } from '../../src/game/formation/valley';
 import { releaseWindows } from '../helpers/flight-probe';
+import { formationEvidence } from '../helpers/formation-evidence';
+import { planEncounter, poseAt } from '../../src/game/run';
 
 // Measurement candidates only. G1 must still approve lag, path and viewport.
 function input(seed = 1): ValleyFormationInput {
@@ -50,10 +52,20 @@ describe('bounded paired valley formation prototype', () => {
 
   it.each([1, 19, 827])('measures both release windows, camera envelopes and sequential tiers for seed %i', seed => {
     let request = input(seed);
-    const measurements: Array<{ slot: number; hit: number; precision: number }> = [];
+    const measurements: Array<{ tier: number; slot: number; hit: number; precision: number;
+      hitVsSolo: number; precisionVsSolo: number; acquireBeforeRelease: number; releaseLag: number }> = [];
     for (let count = 0; count < 15; count++) {
       request = { ...request, count, encounterId: `seed-${seed}-${count}` };
       const plan = requirePlan(request);
+      const solo = planEncounter(count, seed, request.previous[0], valleySurface);
+      solo.visibleAt = -6;
+      const baseline = releaseWindows(t => contactAccuracy(
+        predictImpact(launchFrom(poseAt(solo, t, count)), valleySurface), solo.target, valleySurface),
+      solo.visibleAt, (solo.target.z + 90 - solo.origin) / difficulty(count).speed, STEP / 2);
+      expect(baseline.hits).toHaveLength(1);
+      expect(baseline.precision).toHaveLength(1);
+      const soloHit = baseline.hits[0]!.end - baseline.hits[0]!.start;
+      const soloPrecision = baseline.precision[0]!.end - baseline.precision[0]!.start;
       expect(plan.releaseLag).toBeGreaterThanOrEqual(plan.candidate.lag);
       expect(plan.releaseLag).toBeLessThanOrEqual(plan.candidate.lag + plan.candidate.maxLagAdjustment);
       for (const attempt of plan.attempts) {
@@ -71,15 +83,18 @@ describe('bounded paired valley formation prototype', () => {
         expect(Math.hypot(release.velocity.x, release.velocity.z)).toBeGreaterThanOrEqual(difficulty(count).speed);
         const windows = releaseWindows(t =>
           contactAccuracy(predictImpact(launchFrom(attempt.track.at(t)), valleySurface), plan.target, valleySurface),
-        -0.6, 0.6);
+        attempt.acquireAt - attempt.releaseAt, attempt.cutoffAt - attempt.releaseAt, STEP / 2);
         expect(windows.hits).toHaveLength(1);
         expect(windows.precision).toHaveLength(1);
         expect(windows.hits[0]!.start).toBeLessThan(-0.06);
         expect(windows.hits[0]!.end).toBeGreaterThan(0.06);
         expect(windows.precision[0]!.start).toBeLessThan(-0.003);
         expect(windows.precision[0]!.end).toBeGreaterThan(0.003);
-        measurements.push({ slot: attempt.slot, hit: windows.hits[0]!.end - windows.hits[0]!.start,
-          precision: windows.precision[0]!.end - windows.precision[0]!.start });
+        const hit = windows.hits[0]!.end - windows.hits[0]!.start;
+        const precision = windows.precision[0]!.end - windows.precision[0]!.start;
+        measurements.push({ tier: count + 1, slot: attempt.slot, hit, precision,
+          hitVsSolo: hit / soloHit, precisionVsSolo: precision / soloPrecision,
+          acquireBeforeRelease: attempt.releaseAt - attempt.acquireAt, releaseLag: plan.releaseLag });
         const localAcquisition = attempt.acquireAt - attempt.releaseAt;
         expect(localAcquisition).toBeLessThanOrEqual(-difficulty(count).diveDuration - 0.5);
         if (count >= 8) expect(localAcquisition).toBeGreaterThan(-6);
@@ -120,6 +135,8 @@ describe('bounded paired valley formation prototype', () => {
       return { slot, hit: [Math.min(...values.map(m => m.hit)), Math.max(...values.map(m => m.hit))],
         precision: [Math.min(...values.map(m => m.precision)), Math.max(...values.map(m => m.precision))] };
     }) }));
+    formationEvidence(`valley-seed-${seed}`, { seed, candidate: request.candidates,
+      viewport: request.viewport, acquisitionMargin: request.acquisitionMargin, measurements });
   }, 120_000);
 
   it('keeps Green Valley and Desert physics identical without rerolling selection', () => {
