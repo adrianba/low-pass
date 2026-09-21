@@ -430,6 +430,12 @@ follower intercept, and authors both continuous tracks on a shared clock.
 motion format; both host and imported plans must use this evaluator. Lag, path
 candidates, viewport bounds and timing-adjustment allowance are explicit prototype
 inputs, not accepted multiplayer defaults. Solo does not use the paired planner.
+The paired Canyon planner solves both pilots against one shelf, reconciles their
+entries on a shared clock, and checks whole-quintic full-3D speed and conservative
+aircraft clearance through the future continuation. It retains native track
+knots and acceleration-derived attitude. Bounded candidate rejection includes
+complete-ring acquisition and the follower's geometric view of the lead drop;
+actual on-screen readability still requires the formation-preview acceptance gate.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness

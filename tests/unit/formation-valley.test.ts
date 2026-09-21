@@ -58,6 +58,9 @@ describe('bounded paired valley formation prototype', () => {
       expect(plan.releaseLag).toBeLessThanOrEqual(plan.candidate.lag + plan.candidate.maxLagAdjustment);
       for (const attempt of plan.attempts) {
         expect(formationPose(attempt, plan.startAt)).toEqual(request.previous[attempt.slot]);
+        if (request.previousViews[attempt.slot]) {
+          expect(attempt.camera.at(attempt.track.startTime)).toEqual(request.previousViews[attempt.slot]);
+        }
         const imported = FormationTrack.fromData(JSON.parse(JSON.stringify(attempt.track.toData())));
         for (const shared of [plan.startAt, attempt.acquireAt, attempt.releaseAt, attempt.cutoffAt, plan.handoffAt, plan.coverageEndAt]) {
           expect(imported.at(shared - attempt.releaseAt)).toEqual(formationPose(attempt, shared));

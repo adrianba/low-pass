@@ -61,6 +61,7 @@ export class ChaseTimeline {
       if (![pose.position, pose.velocity, pose.acceleration].every(finiteVector) ||
         ![pose.bank, pose.pitch].every(Number.isFinite)) throw new Error('Invalid authored chase motion.');
       const view = chaseView(pose, surface, last?.position ?? null, index ? time - lastTime : 0);
+      if (index === 0 && previous) view.target = { ...previous.target };
       if (!finiteVector(view.position) || !finiteVector(view.target) || distance(view.position, view.target) === 0) {
         throw new Error('Invalid authored chase view.');
       }
