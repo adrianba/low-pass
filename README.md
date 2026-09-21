@@ -89,7 +89,8 @@ startup/shutdown; these tests are also included in `npm test`.
 The test-only two-aircraft preview exercises both real flight paths, cameras,
 bombs and independent scores. It does not save records or implement rooms,
 missile damage, elimination or a complete multiplayer match. All formation
-parameters remain provisional pending Windows Edge review.
+spacing and presentation are recorded in the user-approved G1 profile v1.
+Following-distance changes can be considered later; no cosmetic cue is added.
 
 Build its separate artifacts and the normal application image:
 
@@ -119,9 +120,10 @@ after clicking the canvas. Try passes 1 and 14 in each course.
 
 The prototype canvas supports aspect ratios 0.75-2.0; unsupported sizes pause
 explicitly. The side panel reduces canvas width. The preview checks geometric
-visibility, but the cap-speed bomb is very small: visual readability is an
-unresolved G1 question, not a passed acceptance criterion. See the
-[research measurements](docs/two-player-multiplayer-research.md#local-formation-measurements-g1-still-pending).
+visibility, but the cap-speed bomb remains very small. The user reviewed this
+presentation and approved keeping it unchanged. This is user acceptance, not
+a universal readability guarantee. See the
+[research measurements](docs/two-player-multiplayer-research.md#local-formation-measurements-and-g1-approval).
 
 Neither the normal build nor the normal application image contains this fixture.
 Keep these two files as local read-only mounts, not production assets. Playwright
@@ -478,14 +480,18 @@ The opt-in Valley/Desert formation planner selects one target, solves a distinct
 follower intercept, and authors both continuous tracks on a shared clock.
 `FormationTrack` retains authored Valley attitude alongside the existing quintic
 motion format; both host and imported plans must use this evaluator. Lag, path
-candidates, viewport bounds and timing-adjustment allowance are explicit prototype
-inputs, not accepted multiplayer defaults. Solo does not use the paired planner.
+candidates, viewport bounds and timing-adjustment allowance remain explicit
+planner inputs. `src/config/multiplayer.ts` records the approved profile v1;
+`planFormation` and `initialFormationPoses` apply it consistently for host-side
+authoring and the local preview. Solo does not use the paired planner.
 The paired Canyon planner solves both pilots against one shelf, reconciles their
 entries on a shared clock, and checks whole-quintic full-3D speed and conservative
 aircraft clearance through the future continuation. It retains native track
 knots and acceleration-derived attitude. Bounded candidate rejection includes
 complete-ring acquisition and the follower's geometric view of the lead drop;
-actual on-screen readability still requires the formation-preview acceptance gate.
+the user approved the current on-screen presentation at G1. Damaged-view smoke
+and simultaneous combat-effect obstruction still require their later effects
+checks; this approval does not bypass them.
 Gradual shelf transitions leave clear sightlines to the entire scoring target.
 The planner and renderer share chase-camera visibility rules, with a pre-dive
 timing margin and bounded selection of a suitable upcoming shelf. The fairness

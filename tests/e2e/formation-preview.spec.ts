@@ -37,7 +37,7 @@ test.describe('usable local formation geometry preview', () => {
     await page.goto(mountedURL ?? '/formation-preview.html');
     await page.waitForFunction(() => !!window.formationPreview);
     const state = await page.evaluate(() => window.formationPreview.ready());
-    await expect(page.getByText('UNAPPROVED prototype · Not networked', { exact: false })).toBeVisible();
+    await expect(page.getByText('G1-approved geometry profile v1', { exact: false })).toBeVisible();
     return { errors, glbs, state };
   }
   async function pausedFrames(page: Page): Promise<void> {

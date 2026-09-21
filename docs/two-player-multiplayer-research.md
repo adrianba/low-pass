@@ -15,18 +15,22 @@ The user confirmed the Node-only application deployed and working on 2026-09-20,
 satisfying G0. Subsequent local branch work adds shared pose helpers, serialized
 flight tracks, authored chase timelines, independent aircraft/bomb views and a
 frozen render-frame boundary with a solo adapter. These are multiplayer
-foundations, not playable multiplayer. Formation approval and real Edge
-networking still require their stated gates. On 2026-09-20 the user
+foundations, not playable multiplayer. The user approved the formation preview
+unchanged on 2026-09-20 (G1); real Edge networking and the complete game retain
+their later gates. On 2026-09-20 the user
 reported coturn deployed at `turn.low-pass.biggsea.us` using independently developed
 Ansible code. Relay deployment instructions/examples have been removed here;
 the remaining TURN material describes application integration and acceptance only.
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
 allocation and forced-relay connectivity have not yet been verified.
 
-### Local formation measurements: G1 still pending
+### Local formation measurements and G1 approval
 
-Both opt-in paired planners are now implemented on the local branch. These are
-**unapproved demonstration parameters**, not final multiplayer settings:
+Both opt-in paired planners are implemented on the local branch. The user
+reviewed the preview and approved the current spacing and presentation:
+"this is good as is" and "i like it this way". These demonstrated parameters are
+now recorded as **formation profile v1** in `src/config/multiplayer.ts`.
+Possible following-distance tweaks are deferred, not required before continuing.
 
 | Prototype | Demonstration inputs | Measured course coverage |
 | --- | --- | --- |
@@ -50,11 +54,11 @@ rebuilds kept scene resource counts stable, and records remained untouched.
 | Green Valley / Desert | 15.8 CSS pixels | 1.22 CSS pixels |
 | River Canyon | 20.8 CSS pixels | 1.59 CSS pixels |
 
-The bomb is therefore **on-screen but not reliably readable** at these cap-speed
-demonstration spacings. G1 must decide whether to bring the follower closer,
-retain the spacing with an explicit cosmetic release cue, or accept the current
-presentation after actual Edge review. No cue or spacing change is silently
-assumed. The [local preview instructions](../README.md#local-formation-preview-not-networked)
+The small cap-speed bomb was flagged as a readability concern during G1.
+The user accepted the current presentation unchanged, rather than asking for
+closer spacing or a cosmetic release cue. This does not imply universal
+readability at every display size. The
+[local preview instructions](../README.md#local-formation-preview-not-networked)
 describe the fixture; it is not included in the production image.
 
 Node 24 measurements, using the existing refined release-window driver over
@@ -86,9 +90,11 @@ npm test -- tests/unit/formation-valley.test.ts tests/unit/formation-canyon.test
 ```
 
 Generated reports are evidence artifacts, not source assets or score records.
-**G1 must still approve visual spacing, actual lead-drop readability, viewport
-bounds and the measured difficulty differences in Windows Edge.** These results
-do not establish WebRTC/TURN connectivity or complete multiplayer gameplay.
+**G1 is accepted on the user's preview review.** Retain the measured settings
+without retuning. Damaged-view smoke and simultaneous effect obstruction remain
+part of the later combat-effects gate; the geometry preview did not test those.
+These results do not establish WebRTC/TURN connectivity or complete multiplayer
+gameplay.
 
 **Deployment ownership:** production deployment is managed by Ansible in a
 different repository. This document is a research and implementation handoff,

@@ -3,20 +3,19 @@ import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { STEP } from '../../src/config/game';
+import { FORMATION_PROFILE } from '../../src/config/multiplayer';
 import { isTerrainTheme, TERRAIN_THEMES } from '../../src/config/terrain';
 import type { TerrainTheme } from '../../src/config/terrain';
-import { planValleyFormation } from '../../src/game/formation/valley';
-import type { ValleyFormation } from '../../src/game/formation/valley';
-import { planCanyonFormation } from '../../src/game/formation/canyon';
-import type { CanyonFormation } from '../../src/game/formation/canyon';
+import { planFormation } from '../../src/game/formation/approved';
+import type { FormationPlan as Plan } from '../../src/game/formation/approved';
 import { advanceBomb, contactAccuracy, predictImpact } from '../../src/simulation/ballistics';
 import type { Bomb } from '../../src/simulation/ballistics';
 import { CHASE_VIEW_TOLERANCE } from '../../src/simulation/chase-timeline';
 import type { ChaseView } from '../../src/simulation/chase-camera';
 import { distance, hash } from '../../src/simulation/math';
-import { initialPose, launchFrom } from '../../src/simulation/pose';
+import { launchFrom } from '../../src/simulation/pose';
 import type { Pose } from '../../src/simulation/pose';
-import { routePoint } from '../../src/terrain/canyon-route';
+import { initialFormationPoses } from '../../src/game/formation/initial';
 import { surfaceFor } from '../../src/terrain/surface';
 import type { Contact } from '../../src/terrain/surface';
 import { World } from '../../src/rendering/world';
@@ -24,7 +23,6 @@ import type { AircraftView } from '../../src/rendering/aircraft-view';
 import { snapshotWorldFrame } from '../../src/rendering/world-frame';
 import type { WorldEffectHooks, WorldFrame } from '../../src/rendering/world-frame';
 
-type Plan = ValleyFormation | CanyonFormation;
 type Slot = 0 | 1;
 export interface PreviewConfig { terrain: TerrainTheme; seed: number; tier: number; scripted: boolean }
 interface Pilot {
@@ -69,7 +67,8 @@ const tierInput = element<HTMLInputElement>('#tier'), scriptedInput = element<HT
 const viewInput = element<HTMLSelectElement>('#view'), playButton = element<HTMLButtonElement>('#play');
 const dropButton = element<HTMLButtonElement>('#drop');
 const configuration = element<HTMLFieldSetElement>('#configuration');
-const viewport = Object.freeze({ minAspect: 0.75, maxAspect: 2 });
+const viewport = FORMATION_PROFILE.viewport;
+element('#profile').textContent = `G1-approved geometry profile v${FORMATION_PROFILE.version}`;
 const noCombat: WorldEffectHooks = {
   finale: () => { throw new Error('The geometry preview cannot start a finale.'); },
   flyby: () => {}, damage: () => {},
@@ -100,7 +99,7 @@ function checkViewport(): boolean {
   if (!world) return false;
   const aspect = world.engine.getRenderWidth() / world.engine.getRenderHeight();
   const supported = Number.isFinite(aspect) && aspect >= viewport.minAspect && aspect <= viewport.maxAspect;
-  viewportReason = supported ? '' : `Paused: canvas aspect ${aspect.toFixed(3)} is outside the unapproved 0.75–2 envelope. Resize the window; no flight or release is permitted.`;
+  viewportReason = supported ? '' : `Paused: canvas aspect ${aspect.toFixed(3)} is outside the ${viewport.minAspect}–${viewport.maxAspect} envelope. Resize the window; no flight or release is permitted.`;
   if (!supported) paused = true;
   return supported;
 }
@@ -243,23 +242,14 @@ function disposeWorld(): void {
   world?.dispose(); world = null;
 }
 async function author(request: PreviewConfig): Promise<Plan> {
-  const canyon = request.terrain === 'river-canyon';
-  let previous: [Pose, Pose] = canyon
-    ? [initialPose({ ...routePoint(600, 0), y: 167 }), initialPose({ ...routePoint(600 - 76 * 1.2, 0), y: 167 })]
-    : [initialPose(), initialPose({ x: -8, y: 167, z: -114 })];
+  let previous = initialFormationPoses(request.terrain);
   let previousViews: [ChaseView | null, ChaseView | null] = [null, null], startAt = 0, authored: Plan | null = null;
   for (let count = 0; count < request.tier; count++) {
     status.textContent = `Authoring sequential pass ${count + 1}/${request.tier}…`;
     await new Promise<void>(resolve => setTimeout(resolve, 0));
     if (disposed) throw new Error('Preview was disposed.');
-    const common = { encounterId: `preview-${request.terrain}-${request.seed}-${count}`, count, seed: request.seed,
-      startAt, previous, previousViews, viewport, acquisitionMargin: 0.1 };
-    const result = canyon ? planCanyonFormation({ ...common,
-      candidates: [0.12, -0.12].map(phaseDelta => ({ lag: 1.2, phaseDelta, entryPadding: 0, maxEntryExtension: 3 })),
-      departure: { before: 0.1, after: 0.2, screenMargin: 0.02 },
-    }) : planValleyFormation({ ...common, terrain: request.terrain as 'green-valley' | 'desert',
-      candidates: [{ lag: 1.5, maxLagAdjustment: 0.1, phaseDelta: 0.35, maxLateralCorrection: 80, maxForwardCorrection: 20 }],
-    });
+    const result = planFormation({ encounterId: `preview-${request.terrain}-${request.seed}-${count}`, count, seed: request.seed,
+      startAt, previous, previousViews, terrain: request.terrain });
     if (!result.ok) throw new Error(`Pass ${count + 1} rejected: ${JSON.stringify(result.failures)}`);
     authored = result.plan;
     startAt = authored.handoffAt;
@@ -291,9 +281,10 @@ async function configure(values: Partial<PreviewConfig>): Promise<PreviewSnapsho
     present(true);
     terrainInput.value = config.terrain; seedInput.value = String(config.seed); tierInput.value = String(config.tier);
     scriptedInput.checked = config.scripted;
+    const valley = FORMATION_PROFILE.valley.candidates[0], canyon = FORMATION_PROFILE.canyon;
     element('#parameters').textContent = config.terrain === 'river-canyon'
-      ? 'UNAPPROVED inputs: lag 1.2s, phase ±0.12, entry-extension allowance 3s. Lead-departure check: −0.1…+0.2s.'
-      : 'UNAPPROVED inputs: lag 1.5s + allowance 0.1s, phase 0.35, lateral correction ≤80, forward correction ≤20.';
+      ? `Profile v${FORMATION_PROFILE.version}: lag ${canyon.candidates[0].lag}s, phases ${canyon.candidates.map(c => c.phaseDelta).join('/')}, entry-extension allowance ${canyon.candidates[0].maxEntryExtension}s.`
+      : `Profile v${FORMATION_PROFILE.version}: lag ${valley.lag}s + allowance ${valley.maxLagAdjustment}s, phase ${valley.phaseDelta}, lateral correction ≤${valley.maxLateralCorrection}, forward correction ≤${valley.maxForwardCorrection}.`;
     return snapshot();
   } catch (error) {
     if (!other) disposeWorld();
