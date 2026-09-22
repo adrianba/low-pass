@@ -316,6 +316,30 @@ configuration acceptance does not attempt a relay allocation. Coturn remains
 untouched and unverified. The [application integration contract](../README.md#temporary-turn-credentials-application-integration-only)
 does not replace user-owned deployment or G2 direct/forced-relay acceptance.
 
+On 2026-09-22 the operator supplied the coturn container task: direct public
+3478/UDP and TCP, 5349/TCP, a configured UDP relay-port range, and
+`traefik.enable=false`, for `turn.low-pass.biggsea.us`. These establish the intended
+TURN/UDP, TURN/TCP and TURN/TLS application URLs recorded in the README.
+The subsequent configuration confirms `no-stun`: do not advertise a standalone
+STUN URL. `no-tcp-relay` disables RFC6062 relay allocations, not TCP/TLS client
+transports. The task/configuration do not establish the DNS proxy setting or
+prove TLS/relay functionality. The `/run/secrets/turnserver.conf` mount belongs
+to coturn; the application contract uses a separate read-only
+`/run/secrets/low-pass-turn-secret` file containing only the same shared-secret
+value, referenced by `LOW_PASS_TURN_SECRET_FILE`. Ansible renders it from its
+protected secret store without logging/diffing the value; it is not an environment
+secret or a mounted `.env` file. No Ansible changes or live probes were performed.
+
+The relay's four allocations/user and 16 total allocations are not room-count
+guarantees. Its `max-bps=262144` and `bps-capacity=4194304` are bytes/second:
+256 KiB/s per session and 4 MiB/s aggregate, with input/output accounted separately.
+Its 600-second maximum allocation lifetime requires refresh rather than imposing
+an absolute ten-minute match duration. Verify full-plan throughput, concurrent
+commands, recovery allocation pressure and credential/permission/allocation
+refresh during matches longer than ten minutes at G2. These semantics follow
+the [upstream coturn configuration reference](https://github.com/coturn/coturn/blob/master/examples/etc/turnserver.conf);
+they are not measured performance of the deployed relay.
+
 ### Native peer transport checkpoint
 
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind

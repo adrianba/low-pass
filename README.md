@@ -185,11 +185,40 @@ Bracket IPv6 addresses. Ports and TURN transports are mandatory; embedded
 credentials, URL paths/fragments, unsupported schemes and duplicate URLs are
 rejected. No default external STUN service is used.
 
+The operator-provided coturn task publishes 3478/UDP, 3478/TCP and 5349/TCP
+at `turn.low-pass.biggsea.us`, plus a configured UDP relay-port range, with
+Traefik disabled for coturn. Its configuration enables shared-secret
+authentication and disables standalone STUN (`no-stun`). Use TURN-only URLs:
+
+```text
+LOW_PASS_TURN_URLS=turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp
+```
+
+These URLs describe the intended listeners, not verified connectivity. Docker
+port publication alone does not establish public DNS, firewall reachability or
+TLS certificate validity. `no-tcp-relay` disables TCP relay allocations, not
+TCP/TLS client connections to TURN; those two client URLs remain applicable.
+The UDP relay-port range is
+allocated by coturn; it is not listed in browser ICE URLs. The TURN hostname's
+DNS/proxy setting still needs confirmation independently of the game website.
+
 Mount the existing coturn shared secret read-only outside the asset root. The
 issuer uses its REST format: Unix-expiry-prefixed opaque participant username
 and Base64 HMAC-SHA1 password. Only temporary passwords reach the browser;
 neither the hosting access code nor coturn's permanent key does. Exclude request
 authorization, response bodies and credential-bearing diagnostics from logs.
+
+The application-side file convention is `/run/secrets/low-pass-turn-secret`.
+Set `LOW_PASS_TURN_SECRET_FILE` to that path; do not put the secret value in an
+environment variable or `.env`. Ansible should render a separate host file
+containing only the existing `coturn_auth_secret` value from its protected secret
+store (such as Ansible Vault), using `no_log: true` and `diff: false`. Bind-mount
+that file read-only at the convention above, readable by the application's
+UID/GID `101:101` (for example, file owner `101:101`, mode `0400`).
+Do not mount an encrypted Vault document, the coturn configuration or its TLS
+private key into the application. Recreate Low Pass when the secret file changes
+and coordinate rotation with coturn. This is an application integration contract,
+not an Ansible deployment performed by this repository.
 
 Credentials last at most ten minutes, bounded by the remaining room lease.
 Clients receive server time, expiry and a relative refresh delay (normally five
@@ -205,9 +234,19 @@ Key rotation requires coordinated operator updates/restart; this process reads
 its key at startup and does not watch or rewrite secret files.
 
 Local tests use dummy keys and verify issuance, refresh and browser configuration
-acceptance. They do not prove the deployed relay works. Exact production ICE URLs
-and the application-side secret-file reference still need operator confirmation,
-followed by actual forced-relay data exchange on two Windows Edge computers.
+acceptance. They do not prove the deployed relay works. TURN DNS/proxy routing
+still needs operator confirmation, followed by actual forced-relay data exchange
+on two Windows Edge computers. Ansible owns preparing and mounting the separate
+application secret file; coturn's existing `/run/secrets/turnserver.conf` mount
+does not supply it to Low Pass.
+
+The supplied relay limits are four allocations per user, 16 allocations total,
+256 KiB/s per session and 4 MiB/s aggregate (input/output accounted separately).
+Allocation counts are not match counts: candidate gathering and recovery can use
+multiple allocations. Large-plan transfer, competing control traffic, recovery
+and matches lasting beyond ten minutes need real-relay acceptance under these
+limits. The 600-second maximum allocation lifetime is a refresh interval limit,
+not an absolute match-duration limit or a substitute for REST credential expiry.
 
 ### Native peer transport (not connected to the game UI)
 
@@ -264,8 +303,8 @@ environment settings. Keep the current origin, Traefik-only port 8080,
 read-only/non-root hardening and healthcheck. `/healthz` proves application
 health; `turn: true` in capabilities proves issuer configuration, **not coturn
 reachability**. Multiplayer still reports `false` until later UI/game integration.
-The handoff still requires operator-confirmed ICE URLs/transports and the
-container-side path for the existing coturn key; no secret value is needed here.
+The handoff still requires confirmation of TURN DNS/proxy routing. Ansible must
+supply the private key file described above; no secret value is needed in chat.
 
 ### Local formation preview (not networked)
 
