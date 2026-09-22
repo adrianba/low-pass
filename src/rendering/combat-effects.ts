@@ -142,6 +142,46 @@ export class CombatEffects {
   get missileActive(): boolean { return this.missile.isEnabled(); }
   get damageLevel(): number { return this.hits; }
 
+  createMissileView(prefix: string): { root: TransformNode; trail: Mesh[] } {
+    if (!prefix || this.scene.isDisposed || this.scene.getTransformNodeByName(`${prefix}Surface-to-air missile`)) {
+      throw new Error('Missile views require a live scene and a unique prefix.');
+    }
+    const root = this.missile.clone(`${prefix}Surface-to-air missile`, null);
+    if (!root) throw new Error('Could not clone missile geometry.');
+    root.setEnabled(false);
+    const trail = this.trail.map(mesh => {
+      const copy = mesh.clone(`${prefix}Missile smoke trail`, null);
+      copy.setEnabled(false);
+      return copy;
+    });
+    return { root, trail };
+  }
+
+  createDamageView(prefix: string): { puffs: Mesh[]; flash: Mesh } {
+    if (!prefix || this.scene.isDisposed || this.scene.getMeshByName(`${prefix}Survivable missile impact`)) {
+      throw new Error('Damage views require a live scene and a unique prefix.');
+    }
+    const puffs = this.damageTrail.map(puff => {
+      const copy = puff.mesh.clone(`${prefix}Aircraft damage smoke`, null);
+      copy.setEnabled(false);
+      return copy;
+    });
+    const flash = this.damageFlash.clone(`${prefix}Survivable missile impact`, null);
+    flash.setEnabled(false);
+    return { puffs, flash };
+  }
+
+  createExplosionView(prefix: string): Fragment[] {
+    if (!prefix || this.scene.isDisposed || this.scene.getMeshByName(`${prefix}Aircraft explosion`)) {
+      throw new Error('Explosion views require a live scene and a unique prefix.');
+    }
+    return Array.from({ length: 36 }, (_, i) => {
+      const fragment = this.makeFragment(i, { x: 0, y: 0, z: 0 }, prefix);
+      fragment.mesh.setEnabled(false);
+      return fragment;
+    });
+  }
+
   startFlyby(run: Run, view?: MissileView): void {
     this.startIncoming('flyby', run, view);
   }
@@ -255,20 +295,20 @@ export class CombatEffects {
   }
 
   private explode(position: Vec3): void {
-    for (let i = 0; i < 36; i++) {
-      const smoke = i < 24;
-      const mesh = smoke
-        ? CreatePlane('Aircraft explosion', { size: i < 12 ? 8 : 7 }, this.scene)
-        : CreateBox('Falling aircraft debris', { width: 0.8 + hash(i, 21) * 2, height: 0.3, depth: 1.7 }, this.scene);
-      if (smoke) mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
-      mesh.material = i < 12 ? this.fire : smoke ? this.smoke : this.debris;
-      mesh.isPickable = false;
-      this.fragments.push({
-        mesh, position: { ...position },
-        velocity: { x: (hash(i, 13) - 0.5) * 34, y: 5 + hash(i, 47) * 19, z: (hash(i, 31) - 0.5) * 30 },
-        age: 0, duration: i < 12 ? 1.6 : 3.5, smoke,
-      });
-    }
+    for (let i = 0; i < 36; i++) this.fragments.push(this.makeFragment(i, position));
+  }
+
+  private makeFragment(i: number, position: Vec3, prefix = ''): Fragment {
+    const smoke = i < 24;
+    const mesh = smoke
+      ? CreatePlane(`${prefix}Aircraft explosion`, { size: i < 12 ? 8 : 7 }, this.scene)
+      : CreateBox(`${prefix}Falling aircraft debris`, { width: 0.8 + hash(i, 21) * 2, height: 0.3, depth: 1.7 }, this.scene);
+    if (smoke) mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    mesh.material = i < 12 ? this.fire : smoke ? this.smoke : this.debris;
+    mesh.isPickable = false;
+    return { mesh, position: { ...position },
+      velocity: { x: (hash(i, 13) - 0.5) * 34, y: 5 + hash(i, 47) * 19, z: (hash(i, 31) - 0.5) * 30 },
+      age: 0, duration: i < 12 ? 1.6 : 3.5, smoke };
   }
 
   reset(): void {

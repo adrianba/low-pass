@@ -24,6 +24,7 @@ import '@babylonjs/core/Meshes/thinInstanceMesh';
 import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import type { AssetContainer } from '@babylonjs/core/assetContainer';
 import { CHUNK, QUALITY, TARGET_RADIUS } from '../config/game';
+import { FORMATION_PROFILE } from '../config/multiplayer';
 import type { Quality } from '../config/game';
 import type { TerrainTheme } from '../config/terrain';
 import type { Run } from '../game/run';
@@ -95,6 +96,7 @@ export class World {
   private sharedTime: number | null = null;
   private lastLow = -Infinity;
   private lastHigh = -Infinity;
+  private planningCamera: FreeCamera | null = null;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality, private terrain: TerrainTheme = 'green-valley') {
     this.quality = quality;
@@ -432,6 +434,25 @@ export class World {
   private missileView(): MissileView {
     return { ...this.chaseSnapshot(),
       aspect: this.engine.getRenderWidth() / this.engine.getRenderHeight(), range: this.scene.fogEnd };
+  }
+
+  captureMissileView(view: ChaseView, range: number, aspect = this.engine.getRenderWidth() / this.engine.getRenderHeight()): MissileView {
+    if (this.scene.isDisposed || !Number.isFinite(aspect) || aspect < FORMATION_PROFILE.viewport.minAspect ||
+      aspect > FORMATION_PROFILE.viewport.maxAspect ||
+      !Number.isFinite(range) || range <= 0) throw new Error('Invalid missile camera viewport or range.');
+    if (!this.planningCamera) {
+      this.planningCamera = new FreeCamera('Authored combat camera', Vector3.Zero(), this.scene);
+      this.planningCamera.fov = CHASE_FOV;
+      this.planningCamera.minZ = this.camera.minZ; this.planningCamera.maxZ = this.camera.maxZ;
+    }
+    // Authoring can run ahead of displayed chunks; keep its camera coordinates small.
+    const origin = Math.floor(view.position.z / CHUNK) * CHUNK;
+    this.planningCamera.position.set(view.position.x, view.position.y, view.position.z - origin);
+    this.planningCamera.setTarget(new Vector3(view.target.x, view.target.y, view.target.z - origin));
+    this.planningCamera.getViewMatrix(true);
+    const p = this.planningCamera.position, target = this.planningCamera.getTarget();
+    return { position: { x: p.x, y: p.y, z: p.z + origin },
+      target: { x: target.x, y: target.y, z: target.z + origin }, aspect, range };
   }
 
   reset(): void {

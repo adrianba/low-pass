@@ -1,6 +1,8 @@
 import { MAX_MISSES } from '../../config/game';
 import { hash } from '../../simulation/math';
 import type { Pose } from '../../simulation/pose';
+import { readFlightVector } from '../../simulation/flight-track-data';
+import type { ChaseView } from '../../simulation/chase-camera';
 import { surfaceFor } from '../../terrain/surface';
 import { AircraftMotion } from '../aircraft-motion';
 import type { MissileView } from '../canyon-missile';
@@ -18,6 +20,7 @@ export interface CombatPlanData {
   readonly sequence: number;
   readonly bornAt: number;
   readonly damageLevel: 0 | 1 | 2;
+  readonly view: ChaseView;
   readonly missile: MissilePlanData;
 }
 
@@ -33,11 +36,18 @@ export function readCombatPlanData(value: unknown): CombatPlanData {
     throw new Error('Invalid combat identity, time or damage level.');
   }
   const missile = readMissilePlanData(data.missile);
+  if (!data.view || typeof data.view !== 'object' || Array.isArray(data.view)) throw new Error('Missing combat camera snapshot.');
+  const inputView = data.view as Record<string, unknown>;
+  const view = Object.freeze({ position: readFlightVector(inputView.position, 'combat camera'),
+    target: readFlightVector(inputView.target, 'combat camera target') });
+  if (Math.hypot(view.position.x - view.target.x, view.position.y - view.target.y, view.position.z - view.target.z) < 1e-6) {
+    throw new Error('Invalid combat camera direction.');
+  }
   if ((missile.kind === 'finale' && data.damageLevel !== 2) || (missile.kind === 'damage' && data.damageLevel === 0)) {
     throw new Error('Combat kind does not match its damage state.');
   }
   return Object.freeze({ version: 1, id: data.id, slot: data.slot, sequence: data.sequence,
-    bornAt: data.bornAt, damageLevel: data.damageLevel, missile });
+    bornAt: data.bornAt, damageLevel: data.damageLevel, view, missile });
 }
 
 export function authorCombatPlan(result: AttemptResult, current: FormationPlan, seed: number,
@@ -66,5 +76,7 @@ export function authorCombatPlan(result: AttemptResult, current: FormationPlan, 
   const motion = AircraftMotion.fromFormation(current, result.slot, result.time, renderedPose, kind === 'finale' ? undefined : next);
   const flight = new MissileFlight(kind, motion.at(0), motion.at(MISSILE_INTERCEPT_TIME).position,
     side, surfaceFor(current.terrain), motion, view);
-  return readCombatPlanData({ ...data, missile: flight.toData() });
+  return readCombatPlanData({ ...data,
+    view: view ?? current.attempts[result.slot].camera.at(result.time - current.attempts[result.slot].releaseAt),
+    missile: flight.toData() });
 }
