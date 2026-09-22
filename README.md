@@ -199,8 +199,9 @@ port publication alone does not establish public DNS, firewall reachability or
 TLS certificate validity. `no-tcp-relay` disables TCP relay allocations, not
 TCP/TLS client connections to TURN; those two client URLs remain applicable.
 The UDP relay-port range is
-allocated by coturn; it is not listed in browser ICE URLs. The TURN hostname's
-DNS/proxy setting still needs confirmation independently of the game website.
+allocated by coturn; it is not listed in browser ICE URLs. Live local diagnostics
+now reach this hostname for authenticated UDP and TCP relay traffic, independently
+of the game website's HTTP proxy.
 
 Mount the existing coturn shared secret read-only outside the asset root. The
 issuer uses its REST format: Unix-expiry-prefixed opaque participant username
@@ -241,9 +242,9 @@ Key rotation requires coordinated operator updates/restart; this process reads
 its key at startup and does not watch or rewrite secret files.
 
 Local tests use dummy keys and verify issuance, refresh and browser configuration
-acceptance. They do not prove the deployed relay works. TURN DNS/proxy routing
-still needs operator confirmation, followed by actual forced-relay data exchange
-on two Windows Edge computers. Ansible owns preparing and mounting the separate
+acceptance. Subsequent opt-in diagnostics established deployed UDP/TCP relay use,
+but TLS and two-computer Windows Edge acceptance remain incomplete as noted below.
+Ansible owns preparing and mounting the separate
 application secret file; coturn's existing `/run/secrets/turnserver.conf` mount
 does not supply it to Low Pass.
 
@@ -310,8 +311,83 @@ environment settings. Keep the current origin, Traefik-only port 8080,
 read-only/non-root hardening and healthcheck. `/healthz` proves application
 health; `turn: true` in capabilities proves issuer configuration, **not coturn
 reachability**. Multiplayer still reports `false` until later UI/game integration.
-The handoff still requires confirmation of TURN DNS/proxy routing. Ansible must
-supply the private key file described above; no secret value is needed in chat.
+Ansible must supply the private key file described above; no secret value is
+needed in chat. The known TURN TLS certificate problem below blocks full
+transport acceptance.
+
+### Local connectivity diagnostic
+
+The separate test-only page exercises real hosting, joining, admission,
+signaling, temporary credentials and native peer data. It does not start a
+multiplayer game or write browser records. Use two browser sessions, select a
+transport in each, create/join a room, admit the guest, and connect both sides.
+The host can send one complete Canyon plan; both peers exchange commands and
+ongoing ping/pong probes. Reports contain candidate categories, numeric ICE
+errors, handshake state, RTT and verified payload hashes, never credentials,
+SDP or candidate addresses.
+
+The ignored `./.secret/turn-secret` supplies the existing relay key. Generate a
+separate local hosting code **once**, without printing it:
+
+```sh
+node --input-type=module -e 'import {randomBytes} from "node:crypto"; import {writeFileSync} from "node:fs"; writeFileSync(".secret/hosting-code",randomBytes(32).toString("base64url")+"\n",{mode:0o600,flag:"wx"});'
+npm run build:connectivity-preview
+docker build -t low-pass:connectivity-checkpoint .
+node scripts/run-connectivity-backend.mjs
+```
+
+The launcher reads neither secret into its output: it passes read-only file
+mounts to the application. For this **local-only harness**, the container runs as
+the invoking non-root UID/GID so the user's files can remain owner-only `0600`
+inside a `0700` directory. The production image's default `101:101` is unchanged.
+The application binds an ephemeral loopback host port. In another terminal,
+read that port with `docker port low-pass-connectivity-local 8080/tcp`, then run:
+
+```sh
+CONNECTIVITY_UPSTREAM_PORT=<published-port> node scripts/connectivity-proxy.mjs
+```
+
+This loopback-only fixture proxy supplies a synthetic, fixed client identity to
+exercise the explicit proxy boundary; it is not production proxy configuration.
+It serves `http://localhost:8080/connectivity.html`. Enter the local hosting code
+from `.secret/hosting-code`, **not the TURN key**. Existing formation/combat
+artifacts are mounted too when present. Stop only the previous local listener
+after the replacement backend is ready; do not stop unrelated containers.
+
+`CONNECTIVITY_FIXTURE_DIR` can point to a stable copy of the two generated
+diagnostic files outside the repository, and `CONNECTIVITY_BACKEND_PORT` can
+pin the backend's loopback port. Keep live mounts out of any Playwright output
+directory that a later run will clear.
+
+Ordinary diagnostic tests use local peers/dummy keys. Real relay tests are
+explicitly opt-in, with traces, screenshots and video disabled for that spec:
+
+```sh
+LOW_PASS_LIVE_TURN=1 npx playwright test --project=chromium \
+  tests/e2e/connectivity.spec.ts -g 'opt-in deployed TURN' \
+  --output /path/to/private-test-artifacts
+```
+
+To exercise the already running page instead, also set
+`TEST_URL=http://localhost:8080` and
+`CONNECTIVITY_URL=http://localhost:8080/connectivity.html`.
+Only redacted summaries are retained. Do not enable network traces/HAR capture
+for live credential responses. A failed transport remains a failed test.
+
+**Observed 2026-09-22:** direct connectivity and forced relay-to-relay UDP/TCP
+exchanged commands and a hash-verified 1,191,173-byte Canyon payload. Automatic
+mode chose the direct path, so that result alone is not relay evidence. TCP had
+one connection timeout between successful runs; three subsequent attempts passed,
+so repeatability is not yet established. During bulk transfer, probes still
+experienced substantial delays after prioritization and send-time stamping;
+this is not gameplay latency acceptance or a performance benchmark.
+
+**TLS is blocked:** the public 5349 listener presents a Let's Encrypt **staging**
+certificate chain. Normal OpenSSL verification fails, and Chromium's forced-TLS
+test gathers no relay candidate and times out. Replace it through the
+operator-owned deployment with a publicly trusted certificate/full chain for
+`turn.low-pass.biggsea.us` and retest. Certificate checks were not bypassed.
+Two-computer Edge, long-match refresh and full-match acceptance remain outstanding.
 
 ### Local formation preview (not networked)
 

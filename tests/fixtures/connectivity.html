@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Low Pass connectivity diagnostic</title>
+  <link rel="icon" href="data:,">
+  <style>
+    body { font: 16px system-ui,sans-serif; color: #edf2fa; background: #14202b; max-width: 950px; margin: 30px auto; padding: 0 20px; }
+    label { display: block; margin: 12px 0; }
+    input, select, button { font: inherit; padding: 8px; margin: 4px; }
+    button:disabled { opacity: .5; }
+    pre { white-space: pre-wrap; background: #0b1219; padding: 16px; }
+    #error { color: #ffb4a8; min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <h1>Connectivity diagnostic</h1>
+  <p>Local-only network test, not multiplayer gameplay. No scores or browser records are written.
+    Use two tabs or browser sessions. Both should select the intended transport.</p>
+  <label>Transport
+    <select id="mode">
+      <option value="direct">Direct only (no ICE servers)</option>
+      <option value="auto">Automatic (direct or configured relay)</option>
+      <option value="udp">Forced TURN / UDP</option>
+      <option value="tcp">Forced TURN / TCP</option>
+      <option value="tls">Forced TURN / TLS</option>
+    </select>
+  </label>
+  <label>Local hosting access code (not the TURN secret)
+    <input id="access" type="password" autocomplete="off">
+    <button id="host">Create room</button>
+  </label>
+  <label>Invitation <input id="invitation" autocomplete="off" maxlength="9"><button id="join">Join room</button></label>
+  <p id="room">No room. The host creates one and shares its invitation with the second browser.</p>
+  <button id="admit" disabled>Admit guest</button>
+  <button id="connect" disabled>Connect this browser</button>
+  <button id="probe" disabled>Send command and ping</button>
+  <button id="plan" disabled>Send real Canyon plan (host)</button>
+  <button id="leave" disabled>Disconnect and leave</button>
+  <p>After admission, click Connect in both browsers. The host starts negotiation automatically.
+    Forced modes must report relay candidates on both ends; TURN/TCP or TLS still uses UDP relay allocations.</p>
+  <p id="error" role="alert"></p>
+  <pre id="report" aria-live="polite">Not connected.</pre>
+  <script src="/connectivity.js"></script>
+</body>
+</html>

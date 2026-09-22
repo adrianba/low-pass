@@ -47,6 +47,9 @@ export class RtcPeer implements PeerTransport {
   private localCount = 0;
   private remoteCount = 0;
   private candidateFailures = 0;
+  private readonly candidateErrorCodes = new Set<number>();
+  private readonly gatheredTypes = new Set<string>();
+  private stoppedAt: ReturnType<RtcPeer['linkState']> | null = null;
   private queued = 0;
   private work: Promise<void> = Promise.resolve();
   private inbox: TransportEvent[] = [];
@@ -66,6 +69,8 @@ export class RtcPeer implements PeerTransport {
     this.pc.onicecandidate = event => {
       if (this.disposed || !event.candidate) return;
       if (++this.localCount > RTC_LIMITS.candidates) { this.fail('capacity'); return; }
+      const kind = category(event.candidate.type, ['host', 'srflx', 'prflx', 'relay']);
+      if (kind) this.gatheredTypes.add(kind);
       const value = event.candidate.toJSON();
       const message: OutgoingSignal = { type: 'ice', generation: this.options.generation,
         candidate: { candidate: value.candidate ?? '', sdpMid: value.sdpMid ?? null,
@@ -73,7 +78,12 @@ export class RtcPeer implements PeerTransport {
       if (this.sentDescription) this.signal(message);
       else this.localCandidates.push(message);
     };
-    this.pc.onicecandidateerror = () => { this.candidateFailures = Math.min(1024, this.candidateFailures + 1); };
+    this.pc.onicecandidateerror = event => {
+      this.candidateFailures = Math.min(1024, this.candidateFailures + 1);
+      if (this.candidateErrorCodes.size < 16 && Number.isInteger(event.errorCode) && event.errorCode >= 0 && event.errorCode <= 65535) {
+        this.candidateErrorCodes.add(event.errorCode);
+      }
+    };
     this.pc.onconnectionstatechange = () => {
       if (!this.disposed && ['failed', 'disconnected', 'closed'].includes(this.pc.connectionState)) this.fail('connection');
     };
@@ -241,6 +251,7 @@ export class RtcPeer implements PeerTransport {
     this.inbox = [{ type: 'failed', code }, { type: 'status', status: 'closed', epoch: this.options.epoch }];
   }
   private dispose(): void {
+    this.stoppedAt ??= this.linkState();
     this.disposed = true; this.state = 'closed'; clearTimeout(this.timeout);
     this.pending = []; this.localCandidates = []; this.remoteCandidates = [];
     this.pc.ondatachannel = this.pc.onicecandidate = this.pc.onconnectionstatechange = null;
@@ -254,13 +265,21 @@ export class RtcPeer implements PeerTransport {
     if (this.disposed) return;
     this.dispose(); this.inbox = [{ type: 'status', status: 'closed', epoch: this.options.epoch }];
   }
-  async diagnostics(): Promise<{ status: TransportStatus; failure: RtcPeer['failure']; candidateFailures: number; selected: CandidateSummary | null }> {
+  private linkState() {
+    return { connection: this.pc.connectionState, ice: this.pc.iceConnectionState,
+      control: this.channels.control?.readyState ?? 'missing', state: this.channels.state?.readyState ?? 'missing',
+      sentHello: this.sentHello, receivedHello: this.receivedHello };
+  }
+  async diagnostics(): Promise<{ status: TransportStatus; failure: RtcPeer['failure']; candidateFailures: number;
+    candidateErrorCodes: number[]; gathered: string[]; link: ReturnType<RtcPeer['linkState']>; selected: CandidateSummary | null }> {
     let selected: CandidateSummary | null = null;
     if (!this.disposed) {
       let report: RTCStatsReport;
       try { report = await this.pc.getStats(); }
       catch { if (!this.disposed) throw new RtcError('diagnostics');
-        return { status: this.state, failure: this.failureValue, candidateFailures: this.candidateFailures, selected }; }
+        return { status: this.state, failure: this.failureValue, candidateFailures: this.candidateFailures,
+          candidateErrorCodes: [...this.candidateErrorCodes], gathered: [...this.gatheredTypes],
+          link: this.stoppedAt ?? this.linkState(), selected }; }
       report.forEach((raw: unknown) => {
         const transport = object(raw);
         if (transport?.type !== 'transport' || typeof transport.selectedCandidatePairId !== 'string') return;
@@ -275,6 +294,8 @@ export class RtcPeer implements PeerTransport {
             ? pair.currentRoundTripTime * 1000 : null };
       });
     }
-    return { status: this.state, failure: this.failureValue, candidateFailures: this.candidateFailures, selected };
+    return { status: this.state, failure: this.failureValue, candidateFailures: this.candidateFailures,
+      candidateErrorCodes: [...this.candidateErrorCodes], gathered: [...this.gatheredTypes],
+      link: this.stoppedAt ?? this.linkState(), selected };
   }
 }

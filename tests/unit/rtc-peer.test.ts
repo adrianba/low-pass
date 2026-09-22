@@ -24,11 +24,11 @@ class Channel {
 class Connection {
   static instances: Connection[] = [];
   channels: Channel[] = [];
-  sctp = { maxMessageSize: 65536 }; connectionState = 'new';
+  sctp = { maxMessageSize: 65536 }; connectionState = 'new'; iceConnectionState = 'new';
   localDescription: RTCLocalSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
   onicecandidate: ((event: { candidate: { toJSON: () => RTCIceCandidateInit } | null }) => void) | null = null;
-  onconnectionstatechange: (() => void) | null = null; onicecandidateerror: (() => void) | null = null;
+  onconnectionstatechange: (() => void) | null = null; onicecandidateerror: ((event: { errorCode: number }) => void) | null = null;
   ondatachannel: ((event: { channel: Channel }) => void) | null = null;
   remoteCandidates: Array<RTCIceCandidateInit | undefined> = [];
   constructor(readonly config: RTCConfiguration) { Connection.instances.push(this); }
@@ -147,9 +147,10 @@ describe('bounded native peer adapter', () => {
   it('redacts candidate addresses, URLs and usernames while retaining useful route/RTT diagnostics', async () => {
     const { peer, pc } = setup({ relayOnly: true });
     expect(pc.config.iceTransportPolicy).toBe('relay');
-    pc.onicecandidateerror!();
+    pc.onicecandidateerror!({ errorCode: 701 });
     const diagnostic = await peer.diagnostics();
-    expect(diagnostic).toEqual({ status: 'disconnected', failure: null, candidateFailures: 1,
+    expect(diagnostic).toEqual({ status: 'disconnected', failure: null, candidateFailures: 1, candidateErrorCodes: [701], gathered: [],
+      link: { connection: 'new', ice: 'new', control: 'connecting', state: 'connecting', sentHello: false, receivedHello: false },
       selected: { local: 'relay', remote: 'host', protocol: 'udp', relayProtocol: 'tls', rttMs: 25 } });
     expect(JSON.stringify(diagnostic)).not.toContain('private-');
     peer.close();

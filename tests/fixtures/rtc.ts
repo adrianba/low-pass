@@ -8,17 +8,22 @@ import type { WireMessage } from '../../shared/protocol/messages.js';
 import type { Role } from '../../shared/protocol/limits.js';
 import { versions } from '../unit/protocol-fixtures.js';
 
-interface Options { role: Role; roomId: string; capability: string; generation: number; epoch: number; mismatch?: boolean; relayOnly?: boolean; timeoutMs?: number }
-class RtcFixture {
+export interface Options { role: Role; roomId: string; capability: string; generation: number; epoch: number;
+  mismatch?: boolean; relayOnly?: boolean; timeoutMs?: number; iceServers?: RTCIceServer[] }
+export class RtcFixture {
   readonly errors: string[] = [];
   readonly messages: WireMessage[] = [];
   peer: RtcPeer | null = null;
   received: { digest: string; bytes: number } | null = null;
   backpressure = 0;
+  peerPresent = false;
+  readonly rttMs: number[] = [];
   private readonly socket: WebSocket;
   private readonly receiver = new TransferReceiver(() => performance.now(), { maxTransfers: 2, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
   private outgoing: WireMessage[] = [];
+  private urgent: WireMessage[] = [];
   private sequence = 1;
+  private probeId = 1;
   private closing = false;
   private busy = false;
   private readonly timer: ReturnType<typeof setInterval>;
@@ -39,13 +44,14 @@ class RtcFixture {
           }
           this.peer = new RtcPeer({ role: options.role, sessionId: options.roomId, epoch: options.epoch,
             generation: options.generation, aspect: 1.2, compatibility: options.mismatch ? { ...versions, build: 'b'.repeat(64) } : versions,
-            iceServers: [], relayOnly: options.relayOnly, timeoutMs: options.timeoutMs,
+            iceServers: options.iceServers ?? [], relayOnly: options.relayOnly, timeoutMs: options.timeoutMs,
             signal: value => {
               if (this.socket.readyState !== WebSocket.OPEN) throw new Error('Fixture signaling unavailable.');
               this.socket.send(JSON.stringify(value));
             } });
           resolve();
-        } else if (message.type === 'offer' || message.type === 'answer' || message.type === 'ice') {
+        } else if (message.type === 'peer') this.peerPresent = message.connected;
+        else if (message.type === 'offer' || message.type === 'answer' || message.type === 'ice') {
           if (!this.peer) { this.errors.push('early_signal'); return; }
           void this.peer.receiveSignal(message).catch(() => { if (!this.closing) this.errors.push('negotiation_failed'); });
         } else if (message.type === 'error') this.errors.push(message.code);
@@ -54,7 +60,7 @@ class RtcFixture {
     this.timer = setInterval(() => { void this.pump(); }, 5);
   }
   private envelope() {
-    return { version: 1 as const, sessionId: this.options.roomId, sender: this.options.role, epoch: this.options.epoch, sequence: this.sequence++ };
+    return { version: 1 as const, sessionId: this.options.roomId, sender: this.options.role, epoch: this.options.epoch, sequence: 0 };
   }
   async plan() {
     const data = formationData(new FormationScheduler('river-canyon', 7).plan(), 0);
@@ -64,18 +70,25 @@ class RtcFixture {
     return { digest: transfer.offer.digest, bytes: transfer.offer.bytes };
   }
   command() {
-    this.outgoing.push({ ...this.envelope(), type: 'command', slot: this.options.role === 'host' ? 0 : 1, inputSequence: 1,
+    if (this.urgent.length >= 62) throw new Error('Fixture priority queue capacity.');
+    this.urgent.push({ ...this.envelope(), type: 'command', slot: this.options.role === 'host' ? 0 : 1, inputSequence: 1,
       command: { action: 'pause' } });
-    this.outgoing.push({ ...this.envelope(), type: 'ping', id: 1, sentAt: performance.now() });
+    this.probe();
+  }
+  probe() {
+    if (this.urgent.length >= 64) throw new Error('Fixture priority queue capacity.');
+    this.urgent.push({ ...this.envelope(), type: 'ping', id: this.probeId++, sentAt: 0 });
   }
   private async pump() {
     if (this.busy || this.closing || !this.peer) return;
     this.busy = true;
     try {
-      for (let count = 0; this.outgoing.length && this.peer.status === 'open' && count < 32; count++) {
-        const result = this.peer.send(this.outgoing[0]!);
+      for (let count = 0; (this.urgent.length || this.outgoing.length) && this.peer.status === 'open' && count < 32; count++) {
+        const queue = this.urgent.length ? this.urgent : this.outgoing, message = queue[0]!;
+        const result = this.peer.send({ ...message, sequence: this.sequence,
+          ...(message.type === 'ping' ? { sentAt: performance.now() } : {}) });
         if (!result.ok) { if (result.reason === 'backpressure') this.backpressure++; break; }
-        this.outgoing.shift();
+        this.sequence++; queue.shift();
       }
       for (const event of this.peer.drain()) {
         if (event.type === 'failed') { this.errors.push(event.code); continue; }
@@ -89,13 +102,23 @@ class RtcFixture {
             if (completed.payload.kind !== 'formation') throw new Error('Wrong fixture transfer kind.');
             this.received = { digest: completed.reference.digest, bytes: byteLength(encodePayload(completed.payload)) };
           }
-        } else this.messages.push(message);
+        } else {
+          if (this.messages.length >= 128) this.messages.shift();
+          this.messages.push(message);
+          if (message.type === 'ping') {
+            if (this.urgent.length >= 64) throw new Error('Fixture priority queue capacity.');
+            this.urgent.push({ ...this.envelope(), type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: event.receivedAt });
+          } else if (message.type === 'pong') {
+            if (this.rttMs.length >= 60) this.rttMs.shift();
+            this.rttMs.push(performance.now() - message.sentAt);
+          }
+        }
       }
     } catch { this.errors.push('fixture_transfer_failed'); }
     finally { this.busy = false; }
   }
   async close(): Promise<void> {
-    this.closing = true; clearInterval(this.timer); this.peer?.close(); this.receiver.reset(); this.outgoing = [];
+    this.closing = true; clearInterval(this.timer); this.peer?.close(); this.receiver.reset(); this.outgoing = []; this.urgent = [];
     if (this.socket.readyState === WebSocket.CLOSED) return;
     await new Promise<void>(resolve => { this.socket.addEventListener('close', () => resolve(), { once: true }); this.socket.close(); });
   }

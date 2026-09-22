@@ -22,7 +22,9 @@ reported coturn deployed at `turn.low-pass.biggsea.us` using independently devel
 Ansible code. Relay deployment instructions/examples have been removed here;
 the remaining TURN material describes application integration and acceptance only.
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
-allocation and forced-relay connectivity have not yet been verified.
+allocation and forced-relay connectivity were unverified at that checkpoint.
+The later 2026-09-22 diagnostic below establishes UDP/TCP relay use, but not
+complete TLS, two-computer Edge or long-match acceptance.
 
 ### Host simulation checkpoint (not yet connected to the game UI)
 
@@ -340,6 +342,40 @@ refresh during matches longer than ten minutes at G2. These semantics follow
 the [upstream coturn configuration reference](https://github.com/coturn/coturn/blob/master/examples/etc/turnserver.conf);
 they are not measured performance of the deployed relay.
 
+### Live connectivity diagnostic (2026-09-22)
+
+The user authorized real relay tests using a project-local ignored key file.
+A separate local-only diagnostic page now exercises actual room controls,
+admission, signaling, temporary credentials and native peers. It sends a complete
+1,191,173-byte Canyon payload with hash verification and exchanges commands and
+ping/pong traffic both ways. It uses no game records. The same normal application
+image serves the page through a loopback-only fixture proxy, preserving the
+approved formation/combat preview URLs. No production deployment was performed.
+
+Direct and forced relay-to-relay UDP/TCP tests succeeded. Selected-pair categories
+and relay transport identify the actual path; automatic mode selected direct,
+which is not evidence of a working relay. TCP also had one connection timeout
+between successful runs; three follow-up attempts succeeded. This intermittent
+result remains disclosed rather than treated as reliable network acceptance.
+
+The TLS listener presents a Let's Encrypt staging chain (including the staging
+Bogus Broccoli X2 issuer). Normal hostname/chain verification failed; forced TLS
+in Chromium collected no relay candidates and timed out with numeric ICE error
+701. The required next operator action is a publicly trusted certificate/full
+chain for the TURN hostname, not disabling verification or changing the site's
+HTTP proxy. Secret contents, SDP, ICE addresses and credential responses were not
+logged or placed in traces. Only redacted summaries are retained.
+
+Initial diagnostic probes queued behind bulk data and therefore included time
+waiting to send. The fixture now prioritizes probes/commands and stamps pings at
+actual submission, assigning wire sequence numbers at that same point. Substantial
+probe delays still occur under bulk load; one isolated mounted UDP run reached
+approximately 2 seconds. This warrants pacing/scheduling investigation before
+gameplay integration. It is not a formal latency benchmark, and no flight timing,
+scoring windows or formation spacing were changed to mask it.
+Two-computer Windows Edge, allocation/credential refresh beyond ten minutes,
+recovery pressure and complete multiplayer-game acceptance remain open.
+
 ### Native peer transport checkpoint
 
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
@@ -372,7 +408,8 @@ document to satisfy Chromium's local-network access checks; no browser security
 flag was disabled. Its transfer consumer was also corrected to strip the wire
 envelope before strict chunk validation. Final browser cases pass.
 Full recovery/checkpoint application, real build identities and production UI
-remain later integration work; no live infrastructure was contacted.
+remain later integration work. That initial adapter checkpoint did not contact
+live infrastructure; the later opt-in diagnostic above did.
 
 ### Local formation measurements and G1 approval
 

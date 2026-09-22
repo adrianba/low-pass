@@ -4,11 +4,23 @@ import { resolve } from 'node:path';
 import { ApplicationService } from '../../server/application.js';
 import { readServiceConfig } from '../../server/config.js';
 import { hashSecret } from '../../server/room-store.js';
+import { readTurnConfig } from '../../server/turn-config.js';
+import { readFile } from 'node:fs/promises';
 
-export async function roomService() {
+export async function roomService(options: { turnFile?: string; connectivity?: boolean } = {}) {
   const code = 'browser-only-dummy-hosting-code-for-private-room-tests';
   let targetPort = 0;
+  const html = options.connectivity ? await readFile(resolve('tests/fixtures/connectivity.html'), 'utf8') : null;
+  const turn = options.turnFile ? readTurnConfig({
+    LOW_PASS_TURN_URLS: 'turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp',
+    LOW_PASS_TURN_SECRET_FILE: options.turnFile,
+  }, resolve('dist')) : { urls: ['turn:127.0.0.1:9?transport=udp'],
+    key: createSecretKey(Buffer.from('dummy-coturn-key-for-browser-fixture-only')) };
   const proxy = createServer((request, response) => {
+    if (request.url === '/connectivity.html' && html) {
+      response.setHeader('Content-Type', 'text/html'); response.setHeader('Cache-Control', 'no-store');
+      response.end(html); return;
+    }
     if (request.url === '/room-fixture' || request.url === '/rtc-fixture') {
       response.setHeader('Content-Type', 'text/html');
       response.end('<title>Private room fixture</title><link rel="icon" href="data:,">' +
@@ -28,8 +40,7 @@ export async function roomService() {
   const service = new ApplicationService({ ...readServiceConfig({}), staticRoot: resolve('dist'), port: 0,
     multiplayer: { status: 'rooms', reason: 'not_implemented',
       config: { origin, hostingDigest: hashSecret(code), trustedProxyCidrs: ['127.0.0.1/32'],
-        turn: { urls: ['turn:127.0.0.1:9?transport=udp'],
-          key: createSecretKey(Buffer.from('dummy-coturn-key-for-browser-fixture-only')) } } } },
+        turn } } },
   message => warnings.push(message));
   proxy.on('upgrade', (request, socket, head) => {
     request.headers['x-forwarded-for'] = '203.0.113.10';
