@@ -37,7 +37,7 @@ this branch has local commits.
 | Activation | Multiplayer is unavailable in this build; only absent or literal `false` is accepted for `LOW_PASS_MULTIPLAYER_ENABLED`. |
 
 **Entrypoint compatibility matters:** the exec-form entrypoint is
-`node /opt/low-pass/dist-server/index.js`. Additional arguments fail with exit
+`node /opt/low-pass/dist-server/server/index.js`. Additional arguments fail with exit
 code 64. Old Nginx hooks, templates and `/usr/share/nginx/html` mounts no longer
 apply. If Ansible adds hooks, mounts, a custom command or a different user,
 review those differences before replacement.

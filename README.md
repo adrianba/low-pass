@@ -43,6 +43,8 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
 endpoints are preparation only: no rooms, signaling or relay credentials yet.
+Shared Zod protocol modules compile under `dist-server/shared`; the executable
+is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
 ```sh
 npm run build

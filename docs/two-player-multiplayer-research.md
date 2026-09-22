@@ -151,9 +151,50 @@ exercises all three courses, either death order, ties, survivor spectating,
 independent assistance and held-key suppression. Starting at a later pass first
 plays the earlier passes sequentially. This is a visual-review fixture, not the
 finished multiplayer UI: no rooms, networking, audio or score persistence.
-Approved spacing is unchanged. Windows Edge review of smoke/explosion
-obstruction, bomb/target readability and camera switching remains a manual gate
-before treating these visuals as accepted; Chromium is not that acceptance.
+Approved spacing is unchanged. The user subsequently reviewed this preview in
+Windows Edge, reported "it works great", and approved continuing unchanged.
+This accepts the local combat visuals, not networking or final multiplayer UI.
+
+### Protocol foundation (not yet connected)
+
+`shared/protocol/` defines strict Zod 4.6.5 schemas shared by Node and browsers.
+Versioned envelopes carry the session, epoch, sender and sequence. Receivers
+check those against their connection context, not against another untrusted
+field in the same message. Host-only outcomes/snapshots cannot be sent by guests;
+commands cannot assign a different player slot or supply a score.
+
+Compatibility covers protocol, build, assets, rules, terrain generator and the
+approved formation profile. These are explicit digest fields: generating and
+exchanging the actual build manifest remains part of connection integration.
+Fractional 120 Hz timestamps retain the displayed release time without rounding
+it to a whole physics step. This does not yet implement late-input settlement,
+clock estimation, or release replay; the existing local session remains unchanged.
+
+Strict numeric DTOs describe both tracks and authored cameras, combat plans,
+results, complete small snapshots and recovery checkpoints. Formation export
+uses existing plans; import validation never chooses a new target or launch site.
+Geometry/continuity admission remains the responsibility of the existing
+simulation readers and later replica integration, not just schema validation.
+
+Application messages are limited to 16 KiB **UTF-8 bytes**. Large numeric plans
+use declared, content-hashed transfers, with 8192-byte raw chunks encoded as
+base64 and at most 16 MiB per logical payload. These are bounded implementation
+limits, not measured Internet bandwidth/latency promises. Checkpoints reference
+the required plan/effect digests; consumers must not apply one before those
+dependencies and its content hash are verified. No public signaling endpoint,
+credentials, real WebRTC connection or TURN allocation is enabled here.
+
+Node24 measurements across 15 sequential seed-7 passes found largest complete
+JSON formation payloads of 1,044,618 bytes (Valley), 1,044,612 (Desert) and
+1,630,410 (Canyon), before base64 framing. Full authored camera samples dominate
+these payloads. Streaming/chunk scheduling and bandwidth must be measured before
+network acceptance; this is not a claim that bulk control traffic cannot delay
+commands. No lossy numeric quantization or geometry changes were used to fit them.
+
+Server compilation now emits `dist-server/server` and `dist-server/shared`.
+The shared modules have no DOM/Babylon/game imports. Container entrypoint,
+healthcheck and compiled service tests follow this layout; serving port, public
+origin, optional-feature failure handling and solo records are unchanged.
 
 ### Local formation measurements and G1 approval
 

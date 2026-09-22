@@ -1,10 +1,8 @@
 import type { Vec3 } from './math';
 import type { Pose } from './pose';
 
-export const MAX_TRACK_KNOTS = 2048;
-export const MAX_TRACK_DURATION = 3600;
-export const MIN_TRACK_INTERVAL = 0.000001;
-export const MAX_TRACK_COMPONENT = 1_000_000_000;
+import { MAX_TRACK_KNOTS, MAX_TRACK_DURATION, MIN_TRACK_INTERVAL, MAX_TRACK_COMPONENT } from '../../shared/protocol/limits.js';
+export { MAX_TRACK_KNOTS, MAX_TRACK_DURATION, MIN_TRACK_INTERVAL, MAX_TRACK_COMPONENT };
 
 export interface FlightKnot {
   readonly phase: number;

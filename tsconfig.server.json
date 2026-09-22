@@ -11,9 +11,9 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "types": ["node"],
-    "rootDir": "server",
+    "rootDir": ".",
     "outDir": "dist-server",
     "sourceMap": false
   },
-  "include": ["server"]
+  "include": ["server", "shared"]
 }

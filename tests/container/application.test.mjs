@@ -88,7 +88,7 @@ async function assertNodePid1(id) {
   assert.equal(executable, '/usr/local/bin/node');
   const command = await docker('exec', id, 'node', '-e',
     'console.log(JSON.stringify(require("node:fs").readFileSync("/proc/1/cmdline").toString().split("\\0").filter(Boolean)))');
-  assert.deepEqual(JSON.parse(command), ['node', '/opt/low-pass/dist-server/index.js']);
+  assert.deepEqual(JSON.parse(command), ['node', '/opt/low-pass/dist-server/server/index.js']);
 }
 
 test('hardened Node PID 1 image preserves static HTTP, readiness, notices and source exclusion', async t => {
@@ -112,7 +112,7 @@ test('hardened Node PID 1 image preserves static HTTP, readiness, notices and so
       if (fs.existsSync(path)) throw new Error('Unexpected runtime tooling: ' + path);
     }
   `), '');
-  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/healthcheck.js');
+  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/server/healthcheck.js');
   const html = await container.response('/');
   assert.equal(html.status, 200);
   assert.equal(html.headers.get('cache-control'), 'no-cache');
@@ -149,7 +149,7 @@ test('hardened Node PID 1 image preserves static HTTP, readiness, notices and so
     method: 'POST', body: 'x'.repeat(17 * 1024),
   })).status, 413);
   for (const name of ['low-pass', 'babylonjs-core', 'babylonjs-loaders', 'node',
-    'runtime-express-5.2.1', 'runtime-compression-1.8.2']) {
+    'runtime-express-5.2.1', 'runtime-compression-1.8.2', 'runtime-zod-4.6.5']) {
     const license = await container.response(`/licenses/${name}.txt`);
     assert.equal(license.status, 200, name);
     assert.ok((await license.text()).length > 100, name);
@@ -159,6 +159,7 @@ test('hardened Node PID 1 image preserves static HTTP, readiness, notices and so
   assert.equal((await container.response('/server/index.js')).status, 404);
   assert.equal((await container.response('/node_modules/express/package.json')).status, 404);
   assert.equal((await container.response('/dist-server/index.js')).status, 404);
+  assert.equal((await container.response('/dist-server/shared/protocol/codec.js')).status, 404);
   for (const name of ['nginx', 's6', 'skalibs', 'execline']) {
     assert.equal((await container.response(`/licenses/${name}.txt`)).status, 404);
   }
@@ -167,8 +168,8 @@ test('hardened Node PID 1 image preserves static HTTP, readiness, notices and so
 test('process exit is recovered by Docker restart policy, but manual stop stays stopped', async t => {
   const fixture = fileURLToPath(new globalThis.URL('./fixtures/crash.mjs', import.meta.url));
   const container = await start(t, ['--restart', 'unless-stopped', '--entrypoint', 'node',
-    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/crash.mjs,readonly`],
-  ['/opt/low-pass/dist-server/crash.mjs']);
+    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/server/crash.mjs,readonly`],
+  ['/opt/low-pass/dist-server/server/crash.mjs']);
   await delay(10_100);
   await docker('exec', container.id, 'node', '-e',
     'require("node:fs").writeFileSync("/tmp/low-pass-crash-request", "")');
@@ -201,7 +202,7 @@ test('invalid multiplayer configuration leaves static and application health ava
   await delay(2200);
   const output = await logs(container.id);
   assert.equal(output.split('Multiplayer unavailable:').length - 1, 1);
-  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/healthcheck.js');
+  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/server/healthcheck.js');
   await assertNodePid1(container.id);
   await docker('restart', '--timeout', '45', container.id);
   await container.refreshPort();
@@ -234,7 +235,7 @@ test('Node PID 1 drains and stops without a forced container kill', async t => {
 test('the actual application supports test-only WebSocket frames and bounds upgraded shutdown', async t => {
   const fixture = fileURLToPath(new globalThis.URL('./fixtures/upgrade.mjs', import.meta.url));
   const container = await start(t, ['-e', 'LOW_PASS_SHUTDOWN_TIMEOUT_MS=100',
-    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/index.js,readonly`]);
+    '--mount', `type=bind,src=${fixture},dst=/opt/low-pass/dist-server/server/index.js,readonly`]);
   await until(() => serviceReady(container));
   const socket = new globalThis.WebSocket(container.origin.replace('http:', 'ws:') + '/signal');
   t.after(() => socket.close());

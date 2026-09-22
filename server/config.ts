@@ -25,7 +25,7 @@ function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, maximum:
 export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   const host = env.LOW_PASS_SERVICE_HOST ?? '127.0.0.1';
   if (!isIP(host)) throw new ServiceConfigurationError('LOW_PASS_SERVICE_HOST must be an IP address.');
-  const staticRoot = env.LOW_PASS_STATIC_ROOT ?? fileURLToPath(new URL('../dist', import.meta.url));
+  const staticRoot = env.LOW_PASS_STATIC_ROOT ?? fileURLToPath(new URL('../../dist', import.meta.url));
   if (!isAbsolute(staticRoot) || staticRoot.includes('\0')) {
     throw new ServiceConfigurationError('LOW_PASS_STATIC_ROOT must be an absolute build-directory path.');
   }

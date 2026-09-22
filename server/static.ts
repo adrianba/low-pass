@@ -56,7 +56,7 @@ export function staticFiles(root: string): RequestHandler[] {
       return;
     }
     if (path.split('/').some(part => part.startsWith('.')) ||
-      /^\/(?:node_modules|server|dist-server|src|tests)(?:\/|$)/.test(path)) {
+      /^\/(?:node_modules|server|shared|dist-server|src|tests)(?:\/|$)/.test(path)) {
       response.status(404).json({ error: 'not_found' });
       return;
     }

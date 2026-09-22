@@ -15,13 +15,13 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build:formation-preview": "node scripts/build-formation-preview.mjs",
     "build:combat-preview": "node scripts/build-combat-preview.mjs",
-    "start:server": "node dist-server/index.js",
+    "start:server": "node dist-server/server/index.js",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:server": "vitest run tests/server",
     "test:container": "node --test --test-concurrency=1 --test-timeout=90000 tests/container/*.test.mjs",
     "test:e2e": "playwright test",
-    "lint": "eslint src server tests",
+    "lint": "eslint src server shared tests",
     "assets:verify": "node scripts/verify-assets.mjs",
     "assets:aircraft": "uv run --no-project --python /usr/bin/python3 --with numpy python scripts/export-aircraft.py"
   },
@@ -29,7 +29,8 @@
     "@babylonjs/core": "9.25.0",
     "@babylonjs/loaders": "9.25.0",
     "compression": "1.8.2",
-    "express": "5.2.1"
+    "express": "5.2.1",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

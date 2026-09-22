@@ -28,7 +28,7 @@ COPY package.json package-lock.json ./
 USER 101:101
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-ENTRYPOINT ["node", "/opt/low-pass/dist-server/index.js"]
+ENTRYPOINT ["node", "/opt/low-pass/dist-server/server/index.js"]
 CMD []
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD ["node", "/opt/low-pass/dist-server/healthcheck.js"]
+  CMD ["node", "/opt/low-pass/dist-server/server/healthcheck.js"]

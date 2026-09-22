@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { assetFixture } from './fixtures.js';
 
 interface ProcessUnderTest {
@@ -43,7 +44,7 @@ afterAll(async () => {
 });
 
 function launch(env: NodeJS.ProcessEnv): ProcessUnderTest {
-  const child = spawn(process.execPath, [join(outputDirectory, 'index.js')], {
+  const child = spawn(process.execPath, [join(outputDirectory, 'server/index.js')], {
     env: { ...process.env, LOW_PASS_STATIC_ROOT: staticRoot, ...env },
     cwd: outputDirectory, stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -96,6 +97,20 @@ function ready(running: ProcessUnderTest): Promise<void> {
 }
 
 describe('compiled Node entrypoint', () => {
+  it('executes the compiled shared protocol without browser or game dependencies', async () => {
+    const module = pathToFileURL(join(outputDirectory, 'shared/protocol/codec.js')).href;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
+      import { encodeMessage, decodeMessage } from ${JSON.stringify(module)};
+      const value = { version: 1, sessionId: 'compiled-test', epoch: 0, sender: 'guest',
+        sequence: 1, type: 'ping', id: 1, sentAt: 10 };
+      const result = decodeMessage(encodeMessage(value),
+        { sessionId: 'compiled-test', epoch: 0, peer: 'guest', channel: 'state' });
+      if (typeof document !== 'undefined' || result.sentAt !== 10) throw new Error('Invalid portable protocol.');
+      console.log('portable protocol ready');
+    `]);
+    expect(stdout.trim()).toBe('portable protocol ready');
+  });
+
   it('resolves the default build root from compiled output, not the working directory', async () => {
     const port = await unusedPort();
     const running = launch({ LOW_PASS_SERVICE_PORT: String(port), LOW_PASS_STATIC_ROOT: undefined });
