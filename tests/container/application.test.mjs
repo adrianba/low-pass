@@ -256,10 +256,12 @@ test('the actual application supports test-only WebSocket frames and bounds upgr
 
 test('build context excludes common local secret and artifact paths', async () => {
   const ignore = await readFile(new globalThis.URL('../../.dockerignore', import.meta.url), 'utf8');
-  for (const pattern of ['.env', '.env.*', '.npmrc', '*.pem', '*.key', '*.p12', '*.pfx',
+  for (const pattern of ['.env', '.env.*', '.secret', '.npmrc', '*.pem', '*.key', '*.p12', '*.pfx',
     '.git', 'dist-server', 'test-results', 'node_modules']) {
     assert.ok(ignore.split('\n').includes(pattern), pattern);
   }
+  const gitignore = await readFile(new globalThis.URL('../../.gitignore', import.meta.url), 'utf8');
+  assert.ok(gitignore.split('\n').includes('.secret/'));
 });
 
 test('unexpected container commands are rejected rather than silently ignored', async () => {

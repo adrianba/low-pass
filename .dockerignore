@@ -8,6 +8,7 @@ art
 .asset-tools
 .env
 .env.*
+.secret
 .npmrc
 *.pem
 *.key

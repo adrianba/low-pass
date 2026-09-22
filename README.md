@@ -220,6 +220,13 @@ private key into the application. Recreate Low Pass when the secret file changes
 and coordinate rotation with coturn. This is an application integration contract,
 not an Ansible deployment performed by this repository.
 
+For project-local testing, keep the raw secret in `./.secret/turn-secret`.
+The `.secret/` directory is excluded from Git and Docker build contexts. Bind-mount
+that file read-only at `/run/secrets/low-pass-turn-secret`; the environment
+variable remains the container path above, not the secret value. Keep the host
+file's permissions restricted while allowing the container's UID 101 to read it.
+Never copy the directory into an image or publish it with test artifacts.
+
 Credentials last at most ten minutes, bounded by the remaining room lease.
 Clients receive server time, expiry and a relative refresh delay (normally five
 minutes); schedule refresh with a monotonic browser clock rather than assuming
