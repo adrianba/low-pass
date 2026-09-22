@@ -620,6 +620,15 @@ application; expanded data still counts against the cache's byte budget.
 Recovery publication must retain the original formation dependencies of frozen
 finales, even after those formations leave the active course.
 
+`SessionJournal` owns the host event drain and maps accepted release IDs to
+their actual reliable wire event numbers, including extra combat events. It
+holds each outcome group until its effect is acknowledged and only snapshots
+fully sent groups. Bounded accepted-input metadata survives rejected-command
+traffic without losing a release or issuing a contradictory retry decision.
+Transport backpressure does not advance publication watermarks. Controllers must
+still own the transport, initial handshake, transfer scheduling and plan retirement;
+this journal alone does not start a network match.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

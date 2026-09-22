@@ -1068,6 +1068,19 @@ supported. The eventual publisher must prioritize small combat transfers and
 retain frozen-finale formation dependencies for checkpoints; compact references
 do not permit reauthoring missing history.
 
+The host publication journal now separates core IDs from actual wire-event
+sequences, retains accepted-input metadata independently of the authority's
+bounded rejection cache, and commits publication watermarks only after successful
+sends. Miss outcomes require verified damage/finale data; partial event groups
+cannot produce snapshots. Both elimination timelines precede the final match event.
+All-terrain early-lead-miss/guest-hit cases, duplicate/flood handling, partial sends,
+both finales and fault-network convergence are covered. Initial tests mistakenly
+tried to submit a nominal guest release after the lead's full timeout grace had
+elapsed; that correctly exceeded the allowed age. The tests now use a genuine
+early lead release, without changing flight timing or settlement bounds.
+Application ownership, plan retirement, transfer priority and startup remain to
+be wired; completed module work is not a playable-game checkpoint.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world
