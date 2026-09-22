@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { compatibility, counter, digest, identifier, reference, result, sequence, slot, snapshot, stamp } from './game.js';
+import { compatibility, counter, digest, identifier, manifest, reference, result, sequence, slot, snapshot, stamp } from './game.js';
 import { MAX_PLANS, MAX_TRANSFER_BYTES, MAX_TRANSFER_CHUNKS, PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES } from './limits.js';
 import { lobbyInput, lobbyState } from './lobby.js';
 
@@ -36,7 +36,10 @@ export const event = z.discriminatedUnion('action', [
 ]);
 const envelope = { version: z.literal(PROTOCOL_VERSION), sessionId: identifier, epoch: counter,
   sender: z.enum(['host', 'guest']), sequence: counter };
+const initialPlans = z.tuple([reference, reference]).refine(plans => plans[0].id !== plans[1].id);
 export const wireMessage = z.discriminatedUnion('type', [
+  z.strictObject({ ...envelope, type: z.literal('course-manifest'), revision: counter, manifest, plans: initialPlans }),
+  z.strictObject({ ...envelope, type: z.literal('course-ready'), revision: counter, plans: initialPlans }),
   z.strictObject({ ...envelope, type: z.literal('lobby-state'), state: lobbyState }),
   z.strictObject({ ...envelope, type: z.literal('lobby-input'), input: lobbyInput }),
   z.strictObject({ ...envelope, type: z.literal('hello'), compatibility,
@@ -67,10 +70,15 @@ export const wireMessage = z.discriminatedUnion('type', [
   (v.type !== 'command' || v.slot === (v.sender === 'host' ? 0 : 1)) &&
   (v.type !== 'barrier' || v.nextEpoch === v.epoch + 1));
 export type WireMessage = z.infer<typeof wireMessage>;
+export type MessageBody = {
+  [K in Exclude<WireMessage['type'], 'hello'>]: Omit<Extract<WireMessage, { type: K }>,
+    'version' | 'sessionId' | 'epoch' | 'sender' | 'sequence'>;
+}[Exclude<WireMessage['type'], 'hello'>];
 
 export const HOST_ONLY = new Set<WireMessage['type']>([
   'ack', 'event', 'snapshot', 'transfer-offer', 'transfer-chunk', 'plan-commit', 'checkpoint-commit', 'barrier',
   'lobby-state',
+  'course-manifest',
 ]);
 export function messageChannel(message: WireMessage): 'control' | 'state' {
   return message.type === 'snapshot' || message.type === 'ping' || message.type === 'pong' ? 'state' : 'control';

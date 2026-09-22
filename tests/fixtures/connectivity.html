@@ -35,10 +35,12 @@
   <p id="room">No room. The host creates one and shares its invitation with the second browser.</p>
   <button id="admit" disabled>Admit guest</button>
   <button id="connect" disabled>Connect this browser</button>
+  <button id="reconnect" disabled>Reconnect with fresh credentials</button>
   <button id="probe" disabled>Send command and ping</button>
   <button id="plan" disabled>Send real Canyon plan (host)</button>
   <button id="leave" disabled>Disconnect and leave</button>
   <p>After admission, click Connect in both browsers. The host starts negotiation automatically.
+    Reconnect must also be requested in both browsers; it is a controlled test, not automatic game recovery.
     Forced modes must report relay candidates on both ends; TURN/TCP or TLS still uses UDP relay allocations.</p>
   <p id="error" role="alert"></p>
   <pre id="report" aria-live="polite">Not connected.</pre>

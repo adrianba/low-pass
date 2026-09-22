@@ -25,6 +25,10 @@ export class RoomSession {
       room: this.closing || !this.member ? null : { ...this.member.room },
       invitation: this.closing ? null : this.invitationCode, error: this.error };
   }
+  admittedMember(): RoomMembership {
+    if (!this.member || this.member.room.state !== 'admitted' || this.closing || this.disposed) throw new RoomClientError('admission_required');
+    return structuredClone(this.member);
+  }
   private notify() { if (!this.disposed) this.changed(); }
   private stopPolling() {
     this.revision++;

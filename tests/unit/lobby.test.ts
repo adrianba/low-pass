@@ -46,9 +46,9 @@ describe('host-authoritative shared lobby', () => {
     guest.setAssistance(true);
     expect(() => guest.setAssistance(false)).toThrow('acknowledge');
     for (let i = 0; i < 100; i++) host.setTerrain(i % 2 ? 'river-canyon' : 'desert');
-    host.flush(() => ({ ok: false, reason: 'backpressure' }));
+    expect(host.flush(() => ({ ok: false, reason: 'backpressure' }))).toBe(false);
     let sent: LobbyOutput | null = null;
-    host.flush(message => { sent = message; return { ok: true }; });
+    expect(host.flush(message => { sent = message; return { ok: true }; })).toBe(true);
     expect(sent).toMatchObject({ type: 'lobby-state', state: { terrain: 'river-canyon' } });
     host.flush(() => { throw new Error('An accepted state must not be sent again.'); });
   });

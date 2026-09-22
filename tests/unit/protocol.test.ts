@@ -28,6 +28,9 @@ describe('bounded shared multiplayer protocol', () => {
       { ...base, type: 'lobby-state', state: { update: 1, revision: 0, terrain: 'green-valley',
         assistance: [true, false], ready: [false, false], guestConfigured: false, guestInputSequence: 0 } },
       { ...base, sender: 'guest', type: 'lobby-input', input: { sequence: 1, revision: 0, choice: { action: 'assistance', enabled: false } } },
+      { ...base, type: 'course-manifest', revision: 0, manifest: { compatibility: versions, terrain: 'green-valley',
+        seed: 7, grid: 16, triangle: 'shared-diagonal-v1' }, plans: [reference, { ...reference, id: 'lookahead' }] },
+      { ...base, sender: 'guest', type: 'course-ready', revision: 0, plans: [reference, { ...reference, id: 'lookahead' }] },
       { ...base, type: 'ack', slot: 1, inputSequence: 1, decision: { accepted: true, eventSequence: 1 } },
       { ...base, type: 'ack', slot: 1, inputSequence: 1, decision: { accepted: false, reason: 'too_old' } },
       { ...base, type: 'event', eventSequence: 1, planRevision: 0, event: {

@@ -117,8 +117,9 @@ export class Lobby {
     if (first) this.request({ action: 'assistance', enabled: this.local.assist });
     else if (!this.readyAllowed && state.ready[1] && !this.pending) this.request({ action: 'ready', enabled: false });
   }
-  flush(send: (message: LobbyOutput) => SendResult): void {
+  flush(send: (message: LobbyOutput) => SendResult): boolean {
     const message = this.outgoing;
     if (message && send(structuredClone(message)).ok && this.outgoing === message) this.outgoing = null;
+    return this.outgoing === null;
   }
 }

@@ -23,6 +23,19 @@
   <select id="room-mode"><option value="host">Host</option><option value="guest">Join</option></select>
   <p id="preview-error" role="alert"></p>
   <main id="room-controls"></main>
+  <section aria-label="Connection check">
+    <h2>Lobby connection check</h2>
+    <p>After admission, connect in both windows. This verifies build compatibility and two complete course plans, not a playable match or game-asset prewarming.</p>
+    <label for="connection-mode">Connection mode</label>
+    <select id="connection-mode">
+      <option value="auto">Automatic</option><option value="direct">Direct only</option>
+      <option value="udp">Forced relay / UDP</option><option value="tcp">Forced relay / TCP</option><option value="tls">Forced relay / TLS</option>
+    </select>
+    <button id="connection-start" disabled>CONNECT LOBBY</button>
+    <p id="connection-error" role="alert"></p>
+    <div id="lobby"></div>
+    <pre id="connection-report" aria-live="off"></pre>
+  </section>
   <p><a href="/">Return to solo game</a></p>
   <script src="/room-controls.js"></script>
 </body>

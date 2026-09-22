@@ -463,6 +463,90 @@ The initial readiness gate remains closed until the connection/loading owner
 verifies its prerequisites. This increment is UI/state coverage, not real
 build-manifest or course-loading acceptance.
 
+### Native lobby and course-readiness checkpoint
+
+The host/join preview now wires the actual room membership to authenticated native
+peers, the shared lobby, and two complete initial course transfers. Compatibility
+uses SHA-256 fingerprints of declared client/shared source, dependency/build
+inputs, and actual local asset bytes. It excludes private files, server settings,
+Git metadata and absolute paths. The build-input fingerprint is deliberately
+conservative, not remote-client attestation or the container image digest.
+Symlink inputs are refused; changing identity inputs during bundling fails the
+build, and an active development identity is invalidated before a full reload.
+
+The host alone selects terrain and authors the manifest and numeric plans.
+The guest verifies exact payload hashes/schema/terrain/sequence and acknowledges
+both references. The host confirms the same references before the guest enables
+readiness. A new terrain invalidates the old ready state. Bulk data is bounded
+and paced; metadata cannot overtake an unsent lobby state. Late asynchronous
+authoring cannot strand a switch back to the previous terrain. Progress and failure
+phase/codes are retained without including capabilities, SDP or addresses.
+
+Local native Chromium tests cover real identities, two-plan verification,
+incompatible-build refusal and terrain replacement. Forced deployed UDP/TCP/TLS
+cases all verify both Canyon plans and shared readiness. Their observed peak
+application probes were about 519/520/480 ms; host-side peaks were 49/60/60 ms.
+The combined preflight includes main-thread authoring, unlike the isolated
+bulk-pacing check. This is not the supported in-flight latency envelope.
+One earlier readiness wait timed out alongside compilation; later isolated and
+concurrent checks passed. Exact cause remains unknown. Separate negotiation and
+loading waits and retained redacted progress now make subsequent failures diagnosable.
+Keep that failure and the older TCP negotiation timeout in the evidence.
+
+The final actual-mounted direct/UDP/TCP/TLS batch passed both Canyon plans and
+shared readiness without replacing the served JavaScript in the test. Combined
+guest-side preflight probe maxima were 582/542/540/539 ms; host-side maxima were
+24/80/60/60 ms. These include authoring and are not an in-flight latency bound.
+A later ordinary direct diagnostic closed both peers before opening; two isolated
+follow-ups and the complete eleven-case regression rerun passed. Its cause is
+unknown and is not established as a TURN failure.
+Redacted reports now persist as explicit output files as well as attachments.
+The old TCP timeout and both later intermittent failures remain acceptance evidence.
+
+This checkpoint does **not** implement match startup, game-asset prewarming,
+timestamp-fair remote releases, replica rendering or automatic match recovery.
+The next human gate remains two actual Windows Edge computers; local headless
+contexts do not establish that acceptance.
+
+### Credential expiry versus allocation lifetime: source and live evidence
+
+A 21-minute forced-TLS hold kept the original native peers open with successful
+bidirectional probes beyond the initial ten-minute REST credential expiries.
+Afterward, both browsers requested fresh credentials and recreated their peers
+in generation 2 within the diagnostic's 15-second bound. The same 1,191,173-byte
+Canyon payload was hash-verified again. This proves controlled recreation and
+long-lived connectivity on the deployed relay, not arbitrary outage recovery.
+Only redacted reports, expiry timestamps and the fixture digest were retained;
+the long hold ran alongside other validation and is not a latency benchmark.
+
+Pinned upstream inspection at coturn commit
+[`dcdfddd0fb63e75a62e2783e903170e422ed85df`](https://github.com/coturn/coturn/tree/dcdfddd0fb63e75a62e2783e903170e422ed85df)
+explains the distinction:
+
+- [`userdb.c`](https://github.com/coturn/coturn/blob/dcdfddd0fb63e75a62e2783e903170e422ed85df/src/apps/relay/userdb.c#L538-L564)
+  rejects an expired REST timestamp during key lookup.
+- [`ns_turn_server.c`](https://github.com/coturn/coturn/blob/dcdfddd0fb63e75a62e2783e903170e422ed85df/src/server/ns_turn_server.c#L3566-L3584)
+  stores the authenticated key in the session.
+- The same file's
+  [nonce/authentication path](https://github.com/coturn/coturn/blob/dcdfddd0fb63e75a62e2783e903170e422ed85df/src/server/ns_turn_server.c#L3604-L3899)
+  renews/challenges stale nonces without clearing that key, then checks message
+  integrity against the cached key. Fresh lookup is needed when the key is absent
+  or integrity fails. The observed deployed behavior is consistent with this;
+  the operator's exact coturn image version was not independently inspected.
+
+The search synthesis suggesting every stale nonce necessarily revalidates the
+expired REST timestamp was not supported by that code path. Browsers maintain
+existing allocations themselves; do not add disruptive timer-driven ICE restarts
+solely for credential timestamp expiry. New connections, replacement allocations
+and recovery still require fresh credentials. Network/interface changes and the
+complete game's recovery controller remain separate acceptance work.
+
+The same upstream [`check_new_allocation_quota` path](https://github.com/coturn/coturn/blob/dcdfddd0fb63e75a62e2783e903170e422ed85df/src/apps/relay/userdb.c#L680-L718)
+uses `get_real_username` for REST users. Do not assume changing the timestamp
+creates a fresh per-user quota bucket. The successful reconstruction closed the
+old peers first; overlapping multi-transport generations still need explicit
+budget testing against the supplied four-per-user/sixteen-total allocation limits.
+
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
 the common transport interface. Candidates are generation-scoped, bounded and
 buffered until remote SDP; local candidates follow their description. Room-bound

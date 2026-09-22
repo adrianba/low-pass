@@ -36,7 +36,7 @@ export class GuestRoomPanel {
     this.get('#guest-refresh').onclick = () => { void this.session.refresh(); };
     this.get('#guest-recheck').onclick = () => { void this.check(); };
     this.get('#guest-cancel').onclick = () => { void this.cancel(); };
-    root.addEventListener('keydown', this.keydown);
+    root.ownerDocument.addEventListener('keydown', this.keydown);
     this.render(); void this.check();
   }
   private get<T extends HTMLElement = HTMLElement>(selector: string): T {
@@ -53,7 +53,8 @@ export class GuestRoomPanel {
     if (!this.disposed && this.session.state.availability === 'available') this.get('#guest-invitation').focus();
   }
   private readonly keydown = (event: KeyboardEvent) => {
-    if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); void this.cancel(); }
+    if (event.code === 'Escape' && !event.repeat && !event.defaultPrevented &&
+      this.root.isConnected && this.root.getClientRects().length) { event.preventDefault(); void this.cancel(); }
   };
   private async cancel() {
     this.get<HTMLInputElement>('#guest-invitation').value = ''; this.linkError = null;
@@ -82,7 +83,7 @@ export class GuestRoomPanel {
   }
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    this.disposed = true; this.root.removeEventListener('keydown', this.keydown);
+    this.disposed = true; this.root.ownerDocument.removeEventListener('keydown', this.keydown);
     this.get<HTMLInputElement>('#guest-invitation').value = '';
     this.root.replaceChildren(); await this.session.dispose();
   }

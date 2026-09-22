@@ -1,5 +1,6 @@
 import type { RoomView, RoomMembership } from '../../shared/protocol/rooms.js';
 import { RoomClient, RoomClientError } from '../../src/network/room-client.js';
+import { icePolicy, IcePolicyError } from '../../src/network/ice-policy.js';
 import { RtcFixture } from './rtc.js';
 
 type Mode = 'direct' | 'auto' | 'udp' | 'tcp' | 'tls';
@@ -29,7 +30,7 @@ export class ConnectivityDiagnostic {
     this.error = null;
     this.changed();
     try { await work(); }
-    catch (error) { this.error = error instanceof DiagnosticError || error instanceof RoomClientError ? error.message : 'Diagnostic operation failed (details withheld).'; }
+    catch (error) { this.error = error instanceof DiagnosticError || error instanceof RoomClientError || error instanceof IcePolicyError ? error.message : 'Diagnostic operation failed (details withheld).'; }
     finally { this.busy = false; this.changed(); }
   }
   host(accessCode: string) { return this.action(async () => {
@@ -47,22 +48,21 @@ export class ConnectivityDiagnostic {
     const response = await this.api.admit(this.member.capability, this.member.room.guestId, true);
     this.member.room = response.room;
   }); }
-  connect(mode: Mode) { return this.action(async () => {
+  connect(mode: Mode) { return this.action(() => this.connectPeer(mode)); }
+  private async connectPeer(mode: Mode) {
     if (!['direct', 'auto', 'udp', 'tcp', 'tls'].includes(mode)) throw new DiagnosticError('Unknown transport.');
     if (!this.member || this.member.room.state !== 'admitted' || this.fixture) throw new DiagnosticError('Admit both players before connecting once.');
     this.selectedMode = mode;
-    let iceServers: RTCIceServer[] = [];
-    if (mode !== 'direct') {
-      const config = await this.api.ice(this.member.capability);
-      iceServers = config.iceServers.map(server => ({ ...server, urls: server.urls.filter(url => mode === 'auto' ||
-        (mode === 'tls' ? url.startsWith('turns:') : url.startsWith('turn:') && url.endsWith(`?transport=${mode}`))) }))
-        .filter(server => server.urls.length > 0);
-      if (!iceServers.length) throw new DiagnosticError('Requested transport is not configured.');
-    }
+    const policy = icePolicy(mode, mode === 'direct' ? null : await this.api.ice(this.member.capability));
     const room = this.member.room;
     this.fixture = new RtcFixture({ role: room.role, roomId: room.roomId, capability: this.member.capability,
-      generation: this.generation, epoch: 0, iceServers, relayOnly: mode !== 'direct' && mode !== 'auto' });
+      generation: this.generation, epoch: this.generation - 1, ...policy });
     await this.fixture.ready;
+  }
+  reconnect() { return this.action(async () => {
+    if (!this.member || !this.fixture) throw new DiagnosticError('Connect before recreating the peer.');
+    await this.fixture.close(); this.fixture = null; this.starting = false; this.sentPlan = null; this.generation++;
+    await this.connectPeer(this.selectedMode);
   }); }
   probe() { return this.action(async () => {
     if (this.fixture?.peer?.status !== 'open') throw new DiagnosticError('Connection is not open.');
@@ -96,6 +96,7 @@ export class ConnectivityDiagnostic {
   }
   async report() {
     return { role: this.member?.room.role ?? null, roomState: this.member?.room.state ?? null, mode: this.selectedMode,
+      generation: this.generation,
       connection: await this.fixture?.peer?.diagnostics() ?? null,
       commandReceived: this.fixture?.messages.some(m => m.type === 'command') ?? false,
       rttSamples: this.fixture?.rttMs.length ?? 0,
@@ -139,6 +140,7 @@ async function render() {
     element('error').textContent = report.error ?? '';
     element<HTMLButtonElement>('admit').disabled = busy || room?.role !== 'host' || room.state !== 'pending';
     element<HTMLButtonElement>('connect').disabled = busy || room?.state !== 'admitted' || prepared;
+    element<HTMLButtonElement>('reconnect').disabled = busy || room?.state !== 'admitted' || !prepared;
     element<HTMLButtonElement>('host').disabled = element<HTMLButtonElement>('join').disabled = busy || room !== null;
     element<HTMLSelectElement>('mode').disabled = prepared;
     element<HTMLButtonElement>('probe').disabled = busy || report.connection?.status !== 'open';
@@ -153,6 +155,7 @@ element('host').onclick = () => {
 element('join').onclick = () => { void diagnostic.join(element<HTMLInputElement>('invitation').value); };
 element('admit').onclick = () => { void diagnostic.admit(); };
 element('connect').onclick = () => { void diagnostic.connect(element<HTMLSelectElement>('mode').value as Mode); };
+element('reconnect').onclick = () => { void diagnostic.reconnect(); };
 element('probe').onclick = () => { void diagnostic.probe(); };
 element('plan').onclick = () => { void diagnostic.plan(); };
 element('leave').onclick = () => { void diagnostic.leave(); };

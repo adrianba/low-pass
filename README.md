@@ -289,8 +289,9 @@ connection in a new epoch. It also rejects mismatched builds and proves that
 test-only relay policy cannot fall back to a direct connection when no relay is
 available. This is **local Chromium**, not two-computer Edge or real TURN
 acceptance, and not a complete recovery/game controller. Its compatibility hashes
-are fixture values; real build identity, lobby, clock synchronization, fair release
-settlement and multiplayer records are still unwired.
+are fixture values; the separate room preview below now uses real build identity
+and lobby readiness. Clock synchronization, fair release settlement and multiplayer
+records remain unwired.
 
 ### Building a connection-service checkpoint
 
@@ -375,6 +376,8 @@ LOW_PASS_LIVE_TURN=1 npx playwright test --project=chromium \
 To exercise the already running page instead, also set
 `TEST_URL=http://localhost:8080` and
 `CONNECTIVITY_URL=http://localhost:8080/connectivity.html`.
+Tests reading the private local hosting code accept only the expected loopback
+preview URL, not a remote origin.
 Only redacted summaries are retained. Do not enable network traces/HAR capture
 for live credential responses. A failed transport remains a failed test.
 
@@ -471,9 +474,86 @@ Course/assistance changes clear both ready flags; graphics/audio stay local.
 Guest intents are bounded to one awaiting acknowledgement, unsent host state is
 coalesced, and stale ready requests cannot approve a newer configuration.
 Readiness starts disabled until the connection/loading owner explicitly permits
-it. The UI-only fault harness verifies these rules with delay, loss and replay;
-real manifest/plan readiness is the next integration step, not simulated proof
-that a multiplayer game can start.
+it. The UI-only fault harness verifies these rules with delay, loss and replay.
+
+The same room preview now includes a **native lobby connection check**. After
+admission, choose the intended connection mode in both windows and click
+**CONNECT LOBBY** in each. The peers compare real, portable fingerprints of
+client/shared source, dependency/build inputs and actual local assets. They then
+verify the host's manifest and both initial numeric course plans before enabling
+ready. Terrain changes invalidate readiness and transfer a new verified course.
+Mismatched builds are refused before course readiness. The diagnostic reports
+only redacted connection information and bounded progress/failure codes.
+
+To check the actual mounted lobby artifacts instead of injecting a fresh test
+bundle, run the opt-in direct/UDP/TCP/TLS cases against the loopback preview:
+
+```sh
+TEST_URL=http://localhost:8080 \
+ROOM_CONTROLS_URL=http://localhost:8080/room-controls.html \
+LOW_PASS_LIVE_TURN=1 npx playwright test --project=chromium \
+  tests/e2e/room-controls.spec.ts -g 'opt-in deployed lobby readiness' \
+  --output /path/to/private-test-artifacts
+```
+
+This reads `.secret/hosting-code` internally, without printing it, and creates
+four rooms (the configured per-source ten-minute allowance). Do not run another
+rapid room-creation batch against the same service. Live traces stay disabled.
+
+Direct Chromium and forced deployed UDP/TCP/TLS cases pass for this flow,
+including both full Canyon plans. This remains a connection/course checkpoint,
+**not game-asset prewarming, a match countdown, fair remote bomb release or a
+playable multiplayer game**. Initial plan transfer takes roughly twenty seconds
+at the current conservative pacing. Application probe peaks during the combined
+authoring/loading relay checks reached about 0.48-0.52 seconds; these include
+main-thread planning work and must not be mistaken for ICE RTT or a gameplay
+latency guarantee. The isolated pacing measurements above cover a different phase.
+The final mounted direct/UDP/TCP/TLS batch also passed both-plan verification
+and shared readiness. Combined guest-side preflight peaks were approximately
+582/542/540/539 ms respectively; no gameplay latency threshold is implied.
+
+One readiness wait timed out during overlapping compilation/validation, before
+detailed failure telemetry was retained. Isolated and concurrent follow-ups passed;
+the original cause is not established. The browser check now gives negotiation
+and course verification their own existing deadlines instead of combining both
+under one loading wait. No simulation timing or readiness requirement was relaxed.
+A later ordinary direct-connection diagnostic closed both peers before opening;
+two isolated follow-ups and the complete eleven-case regression rerun passed.
+Its cause is unresolved, not attributed to TURN.
+Redacted diagnostic reports are now also written directly into test output files
+so they survive runs using only the list reporter. Together with the earlier TCP
+failure, this remains repeatability work for the actual-browser acceptance gate.
+
+**Relay lifetime check:** the explicitly enabled TLS diagnostic stayed connected
+for 21 minutes with its original peer generation, beyond both initial credential
+expiries. It then fetched fresh credentials, recreated both peers in generation 2
+within 15 seconds and transferred the same verified Canyon plan again. This was a
+controlled reconstruction, not automatic game recovery or two-computer Edge
+validation. The deployed behavior agrees with coturn's cached authenticated
+session key: credential expiry limits new authentication, not the already-active
+allocation. Do not force periodic ICE restarts solely because its REST timestamp
+expires; obtain fresh credentials before creating replacement peers.
+
+The long check is separate from ordinary tests and requires explicit opt-in:
+
+```sh
+LOW_PASS_LIVE_TURN=1 LOW_PASS_TURN_SOAK=1 npx playwright test \
+  --project=chromium tests/e2e/connectivity.spec.ts -g 'long-lived TLS allocation' \
+  --output /path/to/private-test-artifacts
+```
+
+For a two-computer Edge review, both computers must reach this same test service
+using its configured origin. If they already have SSH access to the development
+host, a loopback tunnel on each can preserve `http://localhost:8080` without opening
+a public listener:
+
+```sh
+ssh -N -L 127.0.0.1:8080:127.0.0.1:8080 <existing-development-ssh-host>
+```
+
+Do not start that tunnel over an existing port forward or share SSH credentials.
+Otherwise the operator must provide a suitable private/HTTPS test endpoint through
+their infrastructure workflow. No deployment or publication is performed here.
 
 ### Local formation preview (not networked)
 
