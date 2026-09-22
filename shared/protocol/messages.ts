@@ -40,6 +40,12 @@ const initialPlans = z.tuple([reference, reference]).refine(plans => plans[0].id
 export const wireMessage = z.discriminatedUnion('type', [
   z.strictObject({ ...envelope, type: z.literal('course-manifest'), revision: counter, manifest, plans: initialPlans }),
   z.strictObject({ ...envelope, type: z.literal('course-ready'), revision: counter, plans: initialPlans }),
+  z.strictObject({ ...envelope, type: z.literal('loading-ready'), revision: counter, ready: z.boolean() }),
+  z.strictObject({ ...envelope, type: z.literal('start-offer'), attempt: counter.min(1), revision: counter,
+    startsAt: z.number().min(-1e12).max(1e12), nextEpoch: counter, at: stamp }),
+  z.strictObject({ ...envelope, type: z.literal('start-ready'), attempt: counter.min(1), revision: counter, ready: z.boolean() }),
+  z.strictObject({ ...envelope, type: z.literal('start-commit'), attempt: counter.min(1) }),
+  z.strictObject({ ...envelope, type: z.literal('start-cancel'), attempt: counter.min(1) }),
   z.strictObject({ ...envelope, type: z.literal('lobby-state'), state: lobbyState }),
   z.strictObject({ ...envelope, type: z.literal('lobby-input'), input: lobbyInput }),
   z.strictObject({ ...envelope, type: z.literal('hello'), compatibility,
@@ -67,8 +73,9 @@ export const wireMessage = z.discriminatedUnion('type', [
   z.strictObject({ ...envelope, type: z.literal('pong'), id: counter, sentAt: z.number().min(-1e12).max(1e12),
     receivedAt: z.number().min(-1e12).max(1e12) }),
 ]).refine(v => (v.type !== 'lobby-input' || v.sender === 'guest') &&
+  (v.type !== 'loading-ready' && v.type !== 'start-ready' || v.sender === 'guest') &&
   (v.type !== 'command' || v.slot === (v.sender === 'host' ? 0 : 1)) &&
-  (v.type !== 'barrier' || v.nextEpoch === v.epoch + 1));
+  (v.type !== 'barrier' && v.type !== 'start-offer' || v.nextEpoch === v.epoch + 1));
 export type WireMessage = z.infer<typeof wireMessage>;
 export type MessageBody = {
   [K in Exclude<WireMessage['type'], 'hello'>]: Omit<Extract<WireMessage, { type: K }>,
@@ -79,6 +86,7 @@ export const HOST_ONLY = new Set<WireMessage['type']>([
   'ack', 'event', 'snapshot', 'transfer-offer', 'transfer-chunk', 'plan-commit', 'checkpoint-commit', 'barrier',
   'lobby-state',
   'course-manifest',
+  'start-offer', 'start-commit', 'start-cancel',
 ]);
 export function messageChannel(message: WireMessage): 'control' | 'state' {
   return message.type === 'snapshot' || message.type === 'ping' || message.type === 'pong' ? 'state' : 'control';

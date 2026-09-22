@@ -644,6 +644,15 @@ The controller must revalidate readiness and complete loading/countdown; a late
 unready intent is preserved. The connection-check preview does not install that
 handoff and therefore retains its existing behavior.
 
+The startup handshake now acknowledges matching loaded/readiness revisions and
+a provisional three-second countdown before the host advances the game epoch.
+Late confirmations, send pressure or a missed start deadline cancel that attempt
+rather than silently launching late. Losing readiness just as the barrier arrives
+requires an immediate shared pause. The clock can anchor to the acknowledged
+start time without counting the loading/countdown interval as gameplay.
+Native-browser startup is exercised separately; application loading/rendering and
+the gameplay controllers are not yet connected to this handshake.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

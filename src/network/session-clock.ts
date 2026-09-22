@@ -5,12 +5,13 @@ export interface ClockAnchor { epoch: number; at: Stamp; monotonicMs: number; ru
 
 /** Host clock anchors are separate from the last actually displayed frame time. */
 export class SessionClock {
-  private epoch = 0;
+  private epoch: number;
   private at: number;
   private wall: number;
   private lastWall: number;
   private running = false;
-  constructor(private readonly now: () => number, startAt = 0) {
+  constructor(private readonly now: () => number, startAt = 0, epoch = 0) {
+    this.epoch = counter.parse(epoch);
     this.at = secondsAt(stampAt(startAt));
     this.wall = this.lastWall = now();
     if (!Number.isFinite(this.wall)) throw new Error('Invalid monotonic clock.');
@@ -31,10 +32,12 @@ export class SessionClock {
     this.at = secondsAt(sample.at); this.wall = sample.monotonicMs; this.running = false;
     return { ...sample, running: false };
   }
-  start(epoch: number): ClockAnchor {
+  start(epoch: number, startedAt?: number): ClockAnchor {
     counter.parse(epoch);
     if (this.running || epoch !== this.epoch + 1) throw new Error('Clock start requires a new paused epoch.');
-    this.wall = this.readNow(); this.epoch = epoch; this.running = true;
+    const now = this.readNow(), wall = startedAt ?? now;
+    if (!Number.isFinite(wall) || wall < this.wall || wall > now) throw new Error('Invalid acknowledged clock start.');
+    this.wall = wall; this.epoch = epoch; this.running = true;
     return this.sample();
   }
 }

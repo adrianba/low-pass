@@ -1099,7 +1099,25 @@ new owner's link. The lobby epoch is retained separately from a transport epoch
 whose barrier may already have arrived. Late readiness changes stay in the shared
 lobby model/outgoing stream: handoff is not permission to launch. The ordinary
 connection-check preview does not install a match owner, so remains a lobby-only
-check; real startup/countdown and application wiring are still outstanding.
+check; application-owned loading/countdown and gameplay wiring are still outstanding.
+
+The standalone startup state machine now exchanges loaded-revision readiness,
+offer/acknowledgement/commit and an actual epoch barrier. Development defaults are
+a three-second countdown, 500 ms confirmation margin, 100 ms host scheduling
+overshoot limit and one-second retry delay. Missed deadlines or barrier-send
+pressure cancel instead of starting late; late local unready/clock loss marks an
+arriving barrier as requiring shared pause. The controller must implement that
+pause before allowing local input. Duplicate committed offers do not revoke consent.
+Session clocks support an acknowledged monotonic start and independent initial
+epoch. Failed probe sends can release their reserved clock slot.
+
+A real native two-context test negotiates epoch 7 -> 8 with matching host-start
+metadata; an initial unsynchronized offer is rejected and retried after clock
+probes. The first browser fixture incorrectly pumped startup only on incoming
+traffic, so neither side initiated traffic; its independent pump was corrected.
+No timing thresholds were relaxed. This is startup-protocol evidence, not WebGL
+asset-readiness, game-controller or full-match acceptance. Application wiring
+remains outstanding.
 
 ### 7.1 Do not score by arrival time
 

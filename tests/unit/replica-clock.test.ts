@@ -9,6 +9,18 @@ function sample(clock: PeerClock, sentAt: number, outward: number, inward: numbe
     sentAt + outward + inward)).toEqual({ ok: true });
 }
 describe('bounded peer-clock estimation', () => {
+  it('cancels unsent probes without exhausting pending capacity or accepting their stray replies', () => {
+    const clock = new PeerClock(); sample(clock, 0, 0, 0);
+    let last = clock.probe(1);
+    clock.cancelProbe(last.id);
+    for (let time = 2; time <= 100; time++) {
+      last = clock.probe(time); clock.cancelProbe(last.id);
+    }
+    expect(() => clock.cancelProbe(last.id)).toThrow('invalid');
+    expect(clock.receive({ type: 'pong', id: last.id, sentAt: last.sentAt, receivedAt: 9000 }, 101))
+      .toEqual({ ok: false, reason: 'unknown' });
+    expect(clock.estimate(102).offsetMs).toBe(500);
+  });
   it('bounds asymmetric delays rather than claiming exact offset and accounts for drift since a sample', () => {
     const clock = new PeerClock();
     sample(clock, 1000, 10, 90);

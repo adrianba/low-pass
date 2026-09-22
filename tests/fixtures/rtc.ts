@@ -7,6 +7,9 @@ import { byteLength, encodePayload } from '../../shared/protocol/codec.js';
 import type { WireMessage } from '../../shared/protocol/messages.js';
 import type { Role } from '../../shared/protocol/limits.js';
 import { versions } from '../unit/protocol-fixtures.js';
+import { ClockError, PeerClock } from '../../src/network/peer-clock.js';
+import { StartHandshake } from '../../src/network/start-handshake.js';
+import type { StartedSession } from '../../src/network/start-handshake.js';
 
 export interface Options { role: Role; roomId: string; capability: string; generation: number; epoch: number;
   mismatch?: boolean; relayOnly?: boolean; timeoutMs?: number; iceServers?: RTCIceServer[] }
@@ -28,6 +31,10 @@ export class RtcFixture {
   private probeId = 1;
   private closing = false;
   private busy = false;
+  private startup: StartHandshake | null = null;
+  private readonly startupClock = new PeerClock();
+  private startupProbeAt = -Infinity;
+  private started: StartedSession | null = null;
   private readonly timer: ReturnType<typeof setInterval>;
   readonly ready: Promise<void>;
   constructor(private readonly options: Options) {
@@ -70,6 +77,31 @@ export class RtcFixture {
       nextEpoch: this.peer.epoch + 1, reason: 'resume', at: { tick: 0, fraction: 0 } });
     if (!result.ok) throw new Error(`Fixture barrier failed: ${result.reason}.`);
     this.sequence++;
+  }
+  startMatch() {
+    if (!this.peer || this.peer.status !== 'open' || this.startup) throw new Error('Fixture startup requires a fresh open peer.');
+    this.startup = new StartHandshake(this.options.role, this.options.roomId, this.peer.epoch,
+      { tick: 0, fraction: 0 }, () => performance.now(), () => {
+        try {
+          const estimate = this.startupClock.estimate(performance.now());
+          return { lower: estimate.remoteLower, upper: estimate.remoteUpper };
+        } catch (error) {
+          if (!(error instanceof ClockError)) throw error;
+          return null;
+        }
+      });
+    this.startup.setReady(true, 0);
+  }
+  startupReport() {
+    let clock: string | { offsetMs: number; uncertaintyMs: number };
+    try {
+      const estimate = this.startupClock.estimate(performance.now());
+      clock = { offsetMs: estimate.offsetMs, uncertaintyMs: estimate.uncertaintyMs };
+    } catch (error) {
+      if (!(error instanceof ClockError)) throw error;
+      clock = error.code;
+    }
+    return { phase: this.startup?.phase ?? null, reason: this.startup?.reason ?? null, started: this.started, clock };
   }
   async plan() {
     const data = formationData(new FormationScheduler('river-canyon', 7).plan(), 0);
@@ -115,20 +147,38 @@ export class RtcFixture {
         } else {
           if (this.messages.length >= 128) this.messages.shift();
           this.messages.push(message);
-          if (message.type === 'ping') {
+          if (this.startup && (message.type === 'loading-ready' || message.type === 'start-offer' || message.type === 'start-ready' ||
+            message.type === 'start-commit' || message.type === 'start-cancel' || message.type === 'barrier')) {
+            this.startup.receive(message);
+          } else if (message.type === 'ping') {
             if (this.urgent.length >= 64) throw new Error('Fixture priority queue capacity.');
             this.urgent.push({ ...this.envelope(), type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: event.receivedAt });
           } else if (message.type === 'pong') {
             if (this.rttMs.length >= 60) this.rttMs.shift();
             this.rttMs.push(performance.now() - message.sentAt);
+            if (this.startup) this.startupClock.receive(message, performance.now());
           }
         }
+      }
+      if (this.startup && this.peer.status === 'open') {
+        if (performance.now() - this.startupProbeAt >= 300) {
+          this.startupProbeAt = performance.now();
+          const probe = this.startupClock.probe(performance.now());
+          if (this.peer.send({ ...this.envelope(), sequence: this.sequence, ...probe }).ok) this.sequence++;
+          else this.startupClock.cancelProbe(probe.id);
+        }
+        this.startup.pump(body => {
+          const result = this.peer!.send({ ...this.envelope(), sequence: this.sequence, ...body });
+          if (result.ok) this.sequence++;
+          return result;
+        });
+        this.started ??= this.startup.takeStart();
       }
     } catch { this.errors.push('fixture_transfer_failed'); }
     finally { this.busy = false; }
   }
   async close(): Promise<void> {
-    this.closing = true; clearInterval(this.timer); this.peer?.close(); this.receiver.reset(); this.outgoing = []; this.urgent = [];
+    this.closing = true; clearInterval(this.timer); this.startup?.close(); this.peer?.close(); this.receiver.reset(); this.outgoing = []; this.urgent = [];
     if (this.socket.readyState === WebSocket.CLOSED) return;
     await new Promise<void>(resolve => { this.socket.addEventListener('close', () => resolve(), { once: true }); this.socket.close(); });
   }

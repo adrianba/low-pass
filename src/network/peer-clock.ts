@@ -26,6 +26,9 @@ export class PeerClock {
     const id = ++this.nextId; this.pending.set(id, now);
     return { type: 'ping', id, sentAt: now };
   }
+  cancelProbe(id: number): void {
+    if (!this.pending.delete(id)) throw new ClockError('invalid');
+  }
   receive(pong: Extract<MessageBody, { type: 'pong' }>, time: number): { ok: true } | { ok: false; reason: 'unknown' | 'expired' } {
     const now = this.now(time), sentAt = this.pending.get(pong.id);
     if (sentAt === undefined) return { ok: false, reason: 'unknown' };

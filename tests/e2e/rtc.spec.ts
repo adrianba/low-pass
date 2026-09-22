@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import { build } from 'vite';
 import { resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
 import { roomService } from '../helpers/room-service.js';
 import type {} from '../fixtures/rtc.js';
 
@@ -99,6 +100,35 @@ test('native host barriers advance game epochs without replacing the authenticat
     expect(state.server.service.signaling!.counts.authenticated).toBe(2);
     expect(state.errors).toEqual([]); expect(state.server.warnings).toEqual([]);
   } finally { await state.close(); }
+});
+
+test('native startup waits for clock probes and an acknowledged countdown before advancing the epoch', async ({ browser }, info) => {
+  const state = await pair(browser);
+  try {
+    await state.connect(1, 7); await Promise.all(state.pages.map(open));
+    await state.h.evaluate(() => window.rtcFixture.startMatch());
+    expect((await state.h.evaluate(() => window.rtcFixture.startupReport())).started).toBeNull();
+    await state.g.evaluate(() => window.rtcFixture.startMatch());
+    for (const page of state.pages) await expect.poll(() => page.evaluate(() => window.rtcFixture.startupReport().phase),
+      { timeout: 12_000 }).toBe('running');
+    const host = await state.h.evaluate(() => window.rtcFixture.startupReport());
+    const guest = await state.g.evaluate(() => window.rtcFixture.startupReport());
+    expect(host.started).toEqual(guest.started);
+    expect(host.started).toMatchObject({ epoch: 8, requiresPause: false, at: { tick: 0, fraction: 0 } });
+    for (const page of state.pages) {
+      expect(await page.evaluate(() => window.rtcFixture.peer!.epoch)).toBe(8);
+      expect(await page.evaluate(() => window.rtcFixture.errors)).toEqual([]);
+    }
+    expect(state.errors).toEqual([]); expect(state.server.warnings).toEqual([]);
+  } finally {
+    const reports = await Promise.all(state.pages.map(page => page.evaluate(() => ({
+      startup: window.rtcFixture.startupReport(), errors: window.rtcFixture.errors.slice(-10),
+      messages: window.rtcFixture.messages.filter(message => message.type.startsWith('start-') || message.type === 'loading-ready'),
+    }))));
+    await info.attach('startup-report', { contentType: 'application/json', body: JSON.stringify(reports, null, 2) });
+    await writeFile(info.outputPath('startup-report.json'), JSON.stringify(reports, null, 2));
+    await state.close();
+  }
 });
 
 test('test-only relay policy cannot silently fall back to a direct path', async ({ browser }) => {
