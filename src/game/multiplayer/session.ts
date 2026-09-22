@@ -18,9 +18,11 @@ export const MAX_SESSION_PLANS = 4;
 export const MAX_SESSION_EVENTS = 256;
 export const MAX_BOMB_SECONDS = 20;
 export const MAX_SESSION_ADVANCE = 60;
+export const MAX_RELEASE_GRACE = 1;
+export interface SessionOptions { releaseGraceSeconds?: number }
 export type SessionStatus = 'running' | 'paused' | 'blocked' | 'over';
 export type CommandRejection = Exclude<SessionStatus, 'running'> | Failure['code'] | 'eliminated'
-  | 'stale_encounter' | 'unknown_encounter' | 'resolved' | 'already_released' | 'not_acquired' | 'cutoff' | 'active_bomb';
+  | 'stale_encounter' | 'unknown_encounter' | 'resolved' | 'already_released' | 'not_acquired' | 'cutoff' | 'active_bomb' | 'too_old' | 'future';
 export type CommandResult = { ok: true } | { ok: false; reason: CommandRejection };
 export interface AttemptResult {
   id: number; sequence: number; slot: PlayerSlot; time: number; points: number; impact: Contact | null;
@@ -64,6 +66,7 @@ function samePose(a: Pose, b: Pose): boolean {
 
 export class HostSession {
   readonly terrain: TerrainTheme;
+  readonly releaseGraceSeconds: number;
   private clock: number;
   private state: SessionStatus = 'running';
   private readonly players: [Player, Player] = [player(), player()];
@@ -74,8 +77,11 @@ export class HostSession {
   private failure: Failure | null = null;
   private requiredCoverage = 0;
 
-  constructor(first: FormationPlan) {
+  constructor(first: FormationPlan, options: SessionOptions = {}) {
     if (!isTerrainTheme(first.terrain)) throw new Error('Invalid session terrain.');
+    const grace = options.releaseGraceSeconds ?? 0;
+    if (!Number.isFinite(grace) || grace < 0 || grace > MAX_RELEASE_GRACE) throw new Error('Invalid release settlement allowance.');
+    this.releaseGraceSeconds = grace;
     this.terrain = first.terrain;
     this.clock = first.startAt;
     this.installPlan(0, first);
@@ -83,6 +89,14 @@ export class HostSession {
 
   get time(): number { return this.clock; }
   get status(): SessionStatus { return this.state; }
+  get lastEventId(): number { return this.eventId; }
+  get planSequences(): number[] { return [...this.encounters.keys()]; }
+  releaseWindow(slot: PlayerSlot, sequence: number): { acquireAt: number; cutoffAt: number } {
+    validSlot(slot);
+    const attempt = this.encounters.get(sequence)?.attempts[slot];
+    if (!attempt) throw new Error('Unknown release window.');
+    return { acquireAt: attempt.acquireAt, cutoffAt: attempt.cutoffAt };
+  }
   get winner(): PlayerSlot | 'draw' | null {
     if (this.state !== 'over') return null;
     return this.players[0].score === this.players[1].score ? 'draw'
@@ -118,8 +132,9 @@ export class HostSession {
       if (previous && !samePose(track.at(localStart), previous.attempts[slot].track.at(plan.startAt - previous.attempts[slot].releaseAt))) {
         throw new Error('Session handoff changed full aircraft motion.');
       }
-      let resolveCutoffAt = plan.startAt + (Math.floor((input.cutoffAt - plan.startAt) / STEP) + 1) * STEP;
-      if (resolveCutoffAt <= input.cutoffAt) resolveCutoffAt += STEP;
+      const settlementAt = input.cutoffAt + this.releaseGraceSeconds;
+      let resolveCutoffAt = plan.startAt + (Math.floor((settlementAt - plan.startAt) / STEP) + 1) * STEP;
+      if (resolveCutoffAt <= settlementAt) resolveCutoffAt += STEP;
       return { acquireAt: input.acquireAt, releaseAt: input.releaseAt, cutoffAt: input.cutoffAt, resolveCutoffAt,
         track, releasedAt: null, result: null, skipped: this.players[slot].completion !== null } satisfies Attempt;
     };
@@ -130,39 +145,61 @@ export class HostSession {
   }
 
   pose(slot: PlayerSlot): Pose {
+    return this.poseAt(slot, this.clock);
+  }
+
+  private poseAt(slot: PlayerSlot, time: number): Pose {
     validSlot(slot);
     const completed = this.players[slot].completion;
     if (completed) return structuredClone(completed.pose);
-    const encounter = [...this.encounters.values()].reverse().find(e => e.startAt <= this.clock);
-    if (!encounter || this.clock > encounter.coverageEndAt) throw new Error('Missing session pose coverage.');
-    return encounter.attempts[slot].track.at(this.clock - encounter.attempts[slot].releaseAt);
+    const encounter = [...this.encounters.values()].reverse().find(e => e.startAt <= time);
+    if (!encounter || time > encounter.coverageEndAt) throw new Error('Missing session pose coverage.');
+    return encounter.attempts[slot].track.at(time - encounter.attempts[slot].releaseAt);
   }
 
   releaseState(slot: PlayerSlot, sequence: number): CommandResult {
+    return this.releaseStateAt(slot, sequence, this.clock, false);
+  }
+
+  private releaseStateAt(slot: PlayerSlot, sequence: number, time: number, settlingPause: boolean): CommandResult {
     validSlot(slot);
     if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error('Invalid release sequence.');
-    if (this.state !== 'running') return { ok: false, reason: this.state };
+    if (!Number.isFinite(time) || time < 0 || typeof settlingPause !== 'boolean') throw new Error('Invalid release time.');
+    if (this.state !== 'running' && !(settlingPause && this.state === 'paused')) return { ok: false, reason: this.state };
+    if (time > this.clock) return { ok: false, reason: 'future' };
+    if (this.clock > time + this.releaseGraceSeconds) return { ok: false, reason: 'too_old' };
     const p = this.players[slot], encounter = this.encounters.get(sequence);
     if (p.completion) return { ok: false, reason: 'eliminated' };
     if (!encounter) return { ok: false, reason: sequence <= this.lastSequence ? 'stale_encounter' : 'unknown_encounter' };
     const attempt = encounter.attempts[slot];
     if (attempt.result || attempt.skipped) return { ok: false, reason: 'resolved' };
     if (attempt.releasedAt !== null) return { ok: false, reason: 'already_released' };
-    if (this.clock < attempt.acquireAt) return { ok: false, reason: 'not_acquired' };
-    if (this.clock > attempt.cutoffAt) return { ok: false, reason: 'cutoff' };
+    if (time < attempt.acquireAt) return { ok: false, reason: 'not_acquired' };
+    if (time > attempt.cutoffAt) return { ok: false, reason: 'cutoff' };
     if (p.bomb) return { ok: false, reason: 'active_bomb' };
     return { ok: true };
   }
 
   release(slot: PlayerSlot, sequence: number): CommandResult {
-    const state = this.releaseState(slot, sequence);
+    return this.releaseAt(slot, sequence, this.clock);
+  }
+
+  releaseAt(slot: PlayerSlot, sequence: number, time: number, settlingPause = false): CommandResult {
+    const state = this.releaseStateAt(slot, sequence, time, settlingPause);
     if (!state.ok) return state;
     const p = this.players[slot], attempt = this.encounters.get(sequence)!.attempts[slot];
-    this.reserveEvents(1);
-    const value = launchFrom(attempt.track.at(this.clock - attempt.releaseAt));
-    attempt.releasedAt = this.clock;
-    p.bomb = { sequence, releasedAt: this.clock, steps: 0, value };
-    this.emit({ type: 'released', slot, sequence, time: this.clock });
+    const value = launchFrom(attempt.track.at(time - attempt.releaseAt));
+    let steps = 0, impact: Contact | null = null;
+    while (time + (steps + 1) * STEP <= this.clock) {
+      impact = advanceBomb(value, STEP, surfaceFor(this.terrain));
+      steps++;
+      if (impact) break;
+    }
+    this.reserveEvents(impact ? 4 : 1);
+    attempt.releasedAt = time;
+    p.bomb = { sequence, releasedAt: time, steps, value };
+    this.emit({ type: 'released', slot, sequence, time });
+    if (impact) this.resolve(sequence, slot, impact, time + steps * STEP);
     return { ok: true };
   }
 
@@ -231,7 +268,7 @@ export class HostSession {
     }
   }
 
-  private resolve(sequence: number, slot: PlayerSlot, impact: Contact | null): void {
+  private resolve(sequence: number, slot: PlayerSlot, impact: Contact | null, time = this.clock): void {
     const encounter = this.encounters.get(sequence)!;
     const attempt = encounter.attempts[slot], p = this.players[slot];
     if (attempt.result || attempt.skipped || p.completion) throw new Error('Attempt was already finalized.');
@@ -242,15 +279,18 @@ export class HostSession {
     p.bomb = null;
     p.score += points;
     if (!points) p.misses++;
-    attempt.result = { id: sequence * 2 + slot + 1, sequence, slot, time: this.clock, points, impact,
+    attempt.result = { id: sequence * 2 + slot + 1, sequence, slot, time, points, impact,
       score: p.score, misses: p.misses, assisted: p.assisted };
     encounter.destroyed ||= points > 0;
     this.emit({ type: 'resolved', result: attempt.result });
     if (eliminated) {
-      p.completion = { slot, sequence, time: this.clock, score: p.score, misses: p.misses, assisted: p.assisted, pose: this.pose(slot) };
+      p.completion = { slot, sequence, time, score: p.score, misses: p.misses, assisted: p.assisted, pose: this.poseAt(slot, time) };
       for (const other of this.encounters.values()) if (!other.attempts[slot].result) other.attempts[slot].skipped = true;
       this.emit({ type: 'eliminated', completion: p.completion });
-      if (ended) { this.state = 'over'; this.emit({ type: 'ended', time: this.clock, winner: this.winner! }); }
+      if (ended) {
+        this.state = 'over';
+        this.emit({ type: 'ended', time: Math.max(...this.players.map(player => player.completion!.time)), winner: this.winner! });
+      }
     }
   }
 

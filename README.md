@@ -558,6 +558,35 @@ Do not start that tunnel over an existing port forward or share SSH credentials.
 Otherwise the operator must provide a suitable private/HTTPS test endpoint through
 their infrastructure workflow. No deployment or publication is performed here.
 
+### Timestamped release authority (not yet wired to network gameplay)
+
+The host simulation now optionally accepts a release at its actual displayed
+plan time and replays only that bomb through the same fixed-step ground/water
+physics. Both roles use the same fractional-tick command convention. The ordinary
+local simulation keeps its zero-grace default; flight paths and scoring windows
+are unchanged.
+
+The provisional network allowance is 750 ms, above the observed roughly 582 ms
+combined preflight stalls, with a hard one-second simulation cap. This is an
+initial development bound, not an accepted Internet latency guarantee. Late
+commands must still name a time inside the original acquisition/cutoff window.
+Timeout misses wait until the first physics boundary after cutoff plus allowance;
+an expired command cannot undo a finalized result or saved elimination.
+Replay retains canonical contact/result times and historical elimination poses.
+
+`ReleaseAuthority` validates identity, role, epoch, plan and input sequence,
+remembers bounded duplicate decisions, and identifies the accepted core release
+event. The publishing controller must map that event to its actual wire event
+sequence before sending an accepted acknowledgement. Pause freezes simulation
+while already-issued inputs settle for the bounded monotonic-wall-clock interval;
+resume requires a sealed new epoch. Clock anchors preserve fractional times and
+exclude paused elapsed time.
+
+Coverage includes both slots at passes 1, 13 and 15 in all terrains, delays through
+750 ms, sub-millisecond release offsets, exact cutoff boundaries, completed-bomb
+replay, third-miss finality, duplicate traffic and different peer clocks. These
+are simulation/fault-harness results, not yet a playable native multiplayer match.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

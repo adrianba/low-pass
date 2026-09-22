@@ -1019,6 +1019,19 @@ grids and the existing shared triangle diagonal.
 
 ## 7. Network timing and fair bomb release
 
+**Implementation checkpoint:** the local authority now accepts displayed-time
+releases, performs bounded canonical bomb replay, and deduplicates decisions.
+Its optional settlement grace defaults to zero for legacy/local callers. The
+provisional network configuration uses 750 ms (one-second hard cap), informed
+by the observed preflight stalls rather than the separate 15-second reconnect
+lease. It preserves the original release cutoff and delays timeout finality,
+including third misses. Replayed contacts/results and eliminated poses retain
+their canonical historical times. Pause settlement uses a monotonic wall-clock
+deadline while simulation remains frozen, followed by an explicit epoch change.
+Core release IDs require mapping to the publishing controller's wire event
+sequence before acknowledgement. Guest reconciliation and native game wiring
+remain separate steps; this is not an accepted in-flight latency envelope.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

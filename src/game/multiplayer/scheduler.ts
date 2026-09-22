@@ -5,7 +5,7 @@ import { planFormation } from '../formation/approved';
 import { initialFormationPoses } from '../formation/initial';
 import { assertScheduleBounds, MIN_SCHEDULE_DURATION } from './schedule-bounds';
 import { HostSession, MAX_SESSION_ADVANCE } from './session';
-import type { CommandResult } from './session';
+import type { CommandResult, SessionOptions } from './session';
 
 export type FormationAuthor = (request: FormationRequest) => ReturnType<typeof planFormation>;
 export const MAX_SCHEDULE_WORK = Math.ceil(MAX_SESSION_ADVANCE / MIN_SCHEDULE_DURATION) + 1;
@@ -17,11 +17,12 @@ export class FormationScheduler {
   private highest = 0;
   private error: string | null = null;
 
-  constructor(readonly terrain: TerrainTheme, readonly seed: number, private readonly author: FormationAuthor = planFormation) {
+  constructor(readonly terrain: TerrainTheme, readonly seed: number, private readonly author: FormationAuthor = planFormation,
+    options: SessionOptions = {}) {
     if (!isTerrainTheme(terrain) || !Number.isSafeInteger(seed)) throw new Error('Invalid shared course configuration.');
     const first = this.authorPlan(0);
-    assertScheduleBounds(first);
-    this.session = new HostSession(first);
+    assertScheduleBounds(first, undefined, options.releaseGraceSeconds);
+    this.session = new HostSession(first, options);
     this.plans.set(0, first);
     this.lookAhead();
   }
@@ -69,7 +70,7 @@ export class FormationScheduler {
     this.error = `Encounter ${sequence} lookahead is incomplete.`;
     this.session.pause();
     const plan = this.authorPlan(sequence, previous);
-    assertScheduleBounds(plan, previous);
+    assertScheduleBounds(plan, previous, this.session.releaseGraceSeconds);
     this.session.installPlan(sequence, plan);
     this.plans.set(sequence, plan);
     this.highest = sequence;

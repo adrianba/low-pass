@@ -4,7 +4,7 @@ import { BOMB_MOUNT } from '../../simulation/pose';
 import { CANYON } from '../../terrain/river-canyon';
 import type { FormationPlan } from '../formation/approved';
 import { FINALE_DURATION } from '../missile';
-import { MAX_BOMB_SECONDS, MAX_SESSION_PLANS } from './session';
+import { MAX_BOMB_SECONDS, MAX_RELEASE_GRACE, MAX_SESSION_PLANS } from './session';
 
 // Current + lookahead leave two retained tails. Even a last-instant release
 // must settle and finish its effects within those two subsequent encounters.
@@ -32,8 +32,13 @@ export function latestBombSettlement(plan: FormationPlan, slot: 0 | 1): number {
   return latest;
 }
 
-export function assertScheduleBounds(plan: FormationPlan, previous?: FormationPlan): void {
-  if (plan.handoffAt - plan.startAt < MIN_SCHEDULE_DURATION) throw new Error('Plan exceeds the bounded history budget.');
+export function assertScheduleBounds(plan: FormationPlan, previous?: FormationPlan, releaseGraceSeconds = 0): void {
+  if (!Number.isFinite(releaseGraceSeconds) || releaseGraceSeconds < 0 || releaseGraceSeconds > MAX_RELEASE_GRACE) {
+    throw new Error('Invalid release settlement allowance.');
+  }
+  if (plan.handoffAt - plan.startAt < MIN_SCHEDULE_DURATION + releaseGraceSeconds / (MAX_SESSION_PLANS - 2)) {
+    throw new Error('Plan exceeds the bounded history budget.');
+  }
   for (const slot of [0, 1] as const) {
     const attempt = plan.attempts[slot], deadline = attempt.releaseAt + attempt.acquisition.deadline;
     if (!Number.isFinite(deadline) || deadline < attempt.acquireAt || deadline > attempt.releaseAt) {
@@ -41,7 +46,9 @@ export function assertScheduleBounds(plan: FormationPlan, previous?: FormationPl
     }
     latestBombSettlement(plan, slot);
     if (previous) {
-      if (latestBombSettlement(previous, slot) + STEP >= deadline) {
+      const previousSettlement = Math.max(latestBombSettlement(previous, slot),
+        previous.attempts[slot].cutoffAt + releaseGraceSeconds + STEP);
+      if (previousSettlement + STEP >= deadline) {
         throw new Error('Previous bomb can overlap the next dive deadline.');
       }
     }
