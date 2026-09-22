@@ -138,7 +138,7 @@ export class HostSession {
     return encounter.attempts[slot].track.at(this.clock - encounter.attempts[slot].releaseAt);
   }
 
-  release(slot: PlayerSlot, sequence: number): CommandResult {
+  releaseState(slot: PlayerSlot, sequence: number): CommandResult {
     validSlot(slot);
     if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error('Invalid release sequence.');
     if (this.state !== 'running') return { ok: false, reason: this.state };
@@ -151,6 +151,13 @@ export class HostSession {
     if (this.clock < attempt.acquireAt) return { ok: false, reason: 'not_acquired' };
     if (this.clock > attempt.cutoffAt) return { ok: false, reason: 'cutoff' };
     if (p.bomb) return { ok: false, reason: 'active_bomb' };
+    return { ok: true };
+  }
+
+  release(slot: PlayerSlot, sequence: number): CommandResult {
+    const state = this.releaseState(slot, sequence);
+    if (!state.ok) return state;
+    const p = this.players[slot], attempt = this.encounters.get(sequence)!.attempts[slot];
     this.reserveEvents(1);
     const value = launchFrom(attempt.track.at(this.clock - attempt.releaseAt));
     attempt.releasedAt = this.clock;

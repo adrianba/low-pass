@@ -95,6 +95,29 @@ back onto an obsolete flight path. Canyon authoring still requires an explicit
 world-space camera view. This is data/authoring support, not network combat or the
 multi-player effects renderer.
 
+### Shared scene checkpoint
+
+`World.updateSharedFrame` accepts an owned two-aircraft frame rather than two
+advancing solo worlds. It renders both bombs, up to four cached target groups
+and eight attributed impact slots. Each target group retains its own tank,
+radar and SAM models, independent wreck state and one-time shadow registration;
+painted rings share the original geometry/material. Repeated same-kind targets
+reset without repairing other wrecks.
+
+Ground dust/scars and canonical river splashes use separate pooled impact slots,
+so simultaneous contacts cannot overwrite each other. Their ages and river flow
+use the shared presentation clock, preserving pause and late restoration without
+replaying old bursts. Each browser still chooses its own render origin; all
+entities subtract that origin locally. Streaming covers both aircraft/bombs and
+nearby effect positions with the existing route-shaped Canyon columns and the
+legacy ten Valley/Desert columns. Explicit row/chunk caps reject unsupported
+coverage rather than dropping required chunks or coarsening physical banks.
+
+The shared renderer is exercised by a test-only all-terrain browser fixture,
+including low/high quality, both camera views, different origins, overlapping
+targets and cleanup when returning to solo. It is not yet the manual combat
+preview: independent aircraft damage/finale presentation is the next step.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user

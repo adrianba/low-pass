@@ -1,7 +1,5 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
-import { CreateIcoSphere } from '@babylonjs/core/Meshes/Builders/icoSphereBuilder';
-import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
 import { MaterialPluginBase } from '@babylonjs/core/Materials/materialPluginBase';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
@@ -9,11 +7,12 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import type { UniformBuffer } from '@babylonjs/core/Materials/uniformBuffer';
 import type { Scene } from '@babylonjs/core/scene';
 import { CHUNK } from '../config/game';
-import { hash, mix } from '../simulation/math';
+import { mix } from '../simulation/math';
 import type { Vec3 } from '../simulation/math';
 import { canyonSurface } from '../terrain/surface';
 import { CANYON } from '../terrain/river-canyon';
 import { projectRoute, routeMotion } from '../terrain/canyon-route';
+import { SplashView } from './splash-view';
 
 class Flow extends MaterialPluginBase {
   time = 0;
@@ -74,8 +73,8 @@ export function wetTriangle(triangle: Vec3[]): Vec3[] {
 export class River {
   readonly material: PBRMaterial;
   private flow: Flow;
-  private drops: Mesh[] = [];
-  private ripple: Mesh;
+  readonly splashMaterial: StandardMaterial;
+  private splashView: SplashView;
   private splashPosition: Vec3 = { x: 0, y: 0, z: 0 };
   private age = Infinity;
   constructor(private scene: Scene) {
@@ -87,21 +86,12 @@ export class River {
     this.material.backFaceCulling = false;
     this.flow = new Flow(this.material);
     const foam = new StandardMaterial('River spray', scene);
+    this.splashMaterial = foam;
     foam.diffuseColor = new Color3(0.64, 0.84, 0.82);
     foam.emissiveColor = new Color3(0.1, 0.16, 0.16);
     foam.transparencyMode = StandardMaterial.MATERIAL_ALPHABLEND;
     foam.disableDepthWrite = true;
-    for (let i = 0; i < 20; i++) {
-      const drop = CreateIcoSphere('Splash droplet', { radius: 0.38, subdivisions: 1 }, scene);
-      drop.material = foam;
-      drop.isPickable = false;
-      drop.setEnabled(false);
-      this.drops.push(drop);
-    }
-    this.ripple = CreateTorus('Splash ripple', { diameter: 2, thickness: 0.16, tessellation: 48 }, scene);
-    this.ripple.material = foam;
-    this.ripple.isPickable = false;
-    this.ripple.setEnabled(false);
+    this.splashView = new SplashView(scene, foam);
   }
   chunk(cx: number, cz: number, origin: number): Mesh {
     const mesh = new Mesh(`River ${cx},${cz}`, this.scene);
@@ -139,29 +129,16 @@ export class River {
   reset(): void {
     this.age = Infinity;
     this.flow.time = 0;
-    for (const drop of this.drops) drop.setEnabled(false);
-    this.ripple.setEnabled(false);
+    this.splashView.reset();
+  }
+  setFlowTime(time: number, origin: number): void {
+    if (!Number.isFinite(time) || time < 0 || !Number.isFinite(origin)) throw new Error('Invalid river presentation clock.');
+    this.flow.time = time % (Math.PI * 2);
+    this.flow.origin = origin;
   }
   update(dt: number, origin: number): void {
-    this.flow.time = (this.flow.time + dt) % (Math.PI * 2);
-    this.flow.origin = origin;
+    this.setFlowTime(this.flow.time + dt, origin);
     this.age += dt;
-    const t = this.age, p = this.splashPosition;
-    for (let i = 0; i < this.drops.length; i++) {
-      const drop = this.drops[i]!;
-      const height = (10 + hash(i, 271) * 12) * t - 12 * t * t;
-      drop.setEnabled(t < 2 && height >= 0);
-      if (!drop.isEnabled()) continue;
-      const angle = i * Math.PI * 2 / this.drops.length;
-      drop.position.set(p.x + Math.cos(angle) * t * 8, p.y + height, p.z - origin + Math.sin(angle) * t * 8);
-      drop.scaling.set(1, 1.8, 1);
-      drop.visibility = Math.max(0, 1 - t / 2);
-    }
-    this.ripple.setEnabled(t < 2.4);
-    if (this.ripple.isEnabled()) {
-      this.ripple.position.set(p.x, p.y + 0.08, p.z - origin);
-      this.ripple.scaling.set(1 + t * 9, 1, 1 + t * 9);
-      this.ripple.visibility = Math.max(0, 1 - t / 2.4);
-    }
+    this.splashView.update(this.splashPosition, this.age, origin);
   }
 }

@@ -29,16 +29,20 @@ export function snapshotTarget(target: TargetFrame): TargetFrame {
   return Object.freeze({ ...target, position: vector(target.position) });
 }
 
+export function snapshotAircraft(aircraft: WorldFrame['aircraft']): WorldFrame['aircraft'] {
+  const { pose, bomb } = aircraft;
+  return Object.freeze({
+    pose: Object.freeze({ ...pose, position: vector(pose.position), velocity: vector(pose.velocity),
+      acceleration: vector(pose.acceleration) }),
+    bomb: bomb ? Object.freeze({ ...bomb, position: vector(bomb.position), velocity: vector(bomb.velocity) }) : null,
+    released: aircraft.released,
+  });
+}
+
 export function snapshotWorldFrame(frame: WorldFrame): WorldFrame {
-  const { pose, bomb } = frame.aircraft;
   const impact = frame.result?.impact;
   return Object.freeze({
-    aircraft: Object.freeze({
-      pose: Object.freeze({ ...pose, position: vector(pose.position), velocity: vector(pose.velocity),
-        acceleration: vector(pose.acceleration) }),
-      bomb: bomb ? Object.freeze({ ...bomb, position: vector(bomb.position), velocity: vector(bomb.velocity) }) : null,
-      released: frame.aircraft.released,
-    }),
+    aircraft: snapshotAircraft(frame.aircraft),
     target: snapshotTarget(frame.target),
     prediction: frame.prediction ? Object.freeze({ ...frame.prediction, position: vector(frame.prediction.position) }) : null,
     ready: frame.ready, over: frame.over,

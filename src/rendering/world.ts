@@ -46,9 +46,14 @@ import type { MissileView } from '../game/canyon-missile';
 import { AircraftView } from './aircraft-view';
 import { soloTargetFrame, soloWorldFrame } from './solo-frame';
 import type { TargetFrame, WorldEffectHooks, WorldFrame } from './world-frame';
+import { snapshotSharedFrame } from './shared-frame';
+import type { SharedWorldFrame } from './shared-frame';
+import { SharedTargets } from './shared-targets';
+import { SharedImpacts } from './shared-impacts';
 
 interface Chunk { mesh: Mesh; trees: Mesh; rocks: Mesh; water: Mesh | null; z: number }
 interface Burst { mesh: Mesh; velocity: Vector3; age: number }
+export const MAX_SHARED_CHUNKS = (2 * Math.ceil(3500 / CHUNK) + 8) * 10;
 
 export class World {
   readonly engine: Engine;
@@ -83,6 +88,13 @@ export class World {
   private containers: AssetContainer[] = [];
   private surface: Surface;
   private river: River;
+  private sharedAircraft: AircraftView | null = null;
+  private sharedTargets: SharedTargets | null = null;
+  private sharedImpacts: SharedImpacts | null = null;
+  private sharedActive = false;
+  private sharedTime: number | null = null;
+  private lastLow = -Infinity;
+  private lastHigh = -Infinity;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality, private terrain: TerrainTheme = 'green-valley') {
     this.quality = quality;
@@ -378,18 +390,22 @@ export class World {
       ? this.river.chunk(cx, cz, this.origin) : null, z: cz * CHUNK };
   }
 
-  private stream(z: number, immediate = false): void {
+  private stream(z: number, immediate = false, anchors: readonly Readonly<Vec3>[] = []): void {
     const center = Math.floor(z / CHUNK);
     const ahead = Math.ceil(this.scene.fogEnd / CHUNK) + 1;
-    if (center === this.lastChunk && ahead === this.lastAhead && !immediate) return;
-    this.lastChunk = center;
-    this.lastAhead = ahead;
+    const low = Math.min(center, ...anchors.map(p => Math.floor(p.z / CHUNK))) - 3;
+    const high = Math.max(center, ...anchors.map(p => Math.floor(p.z / CHUNK))) + ahead;
+    if (!Number.isFinite(low) || !Number.isFinite(high) || high - low + 1 > MAX_SHARED_CHUNKS / 10) {
+      throw new Error('Formation exceeds bounded terrain coverage.');
+    }
+    if (center === this.lastChunk && ahead === this.lastAhead && low === this.lastLow && high === this.lastHigh && !immediate) return;
     const required = new Map<string, [number, number]>();
-    for (let cz = center - 3; cz <= center + ahead; cz++) {
+    for (let cz = low; cz <= high; cz++) {
       const bounds = this.surface.canyon ? routeBounds(cz * CHUNK - 256, (cz + 1) * CHUNK + 256, 380) : null;
       const left = bounds ? Math.floor(bounds[0] / CHUNK) : -5, right = bounds ? Math.floor(bounds[1] / CHUNK) : 4;
       for (let cx = left; cx <= right; cx++) required.set(`${cx},${cz}`, [cx, cz]);
     }
+    if (required.size > MAX_SHARED_CHUNKS) throw new Error('Formation exceeds the terrain chunk budget.');
     for (const [key, chunk] of this.chunks) {
       if (!required.has(key)) {
         this.disposeChunk(chunk);
@@ -399,9 +415,12 @@ export class World {
     for (const [key, [cx, cz]] of required) {
       if (!this.chunks.has(key)) this.chunks.set(key, this.makeChunk(cx, cz));
     }
+    this.lastChunk = center; this.lastAhead = ahead;
+    this.lastLow = low; this.lastHigh = high;
   }
 
   private local(p: Vec3): Vector3 { return new Vector3(p.x, p.y, p.z - this.origin); }
+  get renderOrigin(): number { return this.origin; }
 
   chaseSnapshot(): ChaseView {
     this.camera.getViewMatrix(true);
@@ -425,6 +444,11 @@ export class World {
     this.river.reset();
     for (const burst of this.bursts) burst.mesh.dispose();
     this.bursts = [];
+    this.sharedActive = false; this.sharedTime = null;
+    this.sharedAircraft?.reset();
+    this.sharedAircraft?.root.setEnabled(false);
+    this.sharedTargets?.reset(); this.sharedImpacts?.reset();
+    this.target.setEnabled(true); this.targetModels.root.setEnabled(true);
   }
 
   update(run: Run, pose: Pose, prediction: Vec3 | null, dt: number, authoredView?: ChaseView): void {
@@ -436,46 +460,19 @@ export class World {
   }
 
   updateFrame(frame: WorldFrame, dt: number, effects: WorldEffectHooks, authoredView?: ChaseView): void {
+    if (this.sharedActive) this.reset();
     let pose = frame.aircraft.pose;
     this.scene.fogEnd = Math.max(QUALITY[this.quality].distance, frame.target.sightDistance + 400);
     if (frame.over) effects.finale(pose);
     this.combat.advance(dt);
     pose = this.combat.finalePose ?? pose;
-    if (Math.abs(pose.position.z - this.origin) > 4096) {
-      const nextOrigin = Math.floor(pose.position.z / CHUNK) * CHUNK;
-      const shift = nextOrigin - this.origin;
-      this.origin = nextOrigin;
-      this.camera.position.z -= shift;
-      for (const chunk of this.chunks.values()) {
-        chunk.mesh.position.z = chunk.trees.position.z = chunk.rocks.position.z = chunk.z - this.origin;
-        if (chunk.water) chunk.water.position.z = chunk.z - this.origin;
-      }
-      for (const burst of this.bursts) burst.mesh.position.z -= shift;
-      this.impactMark.position.z -= shift;
-    }
-    if (this.desertSurface) this.desertSurface.origin = this.origin;
-    this.stream(pose.position.z);
+    this.prepareScene(pose, dt, frame.target.sightDistance, authoredView);
     this.aircraft.update({ pose, bomb: frame.aircraft.bomb, released: frame.aircraft.released,
       destroyed: this.combat.aircraftDestroyed, canyon: frame.target.canyon }, this.origin);
-    const view = authoredView ?? chaseView(pose, this.surface, this.cameraInitialized
-      ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
-    this.camera.position.copyFrom(this.local(view.position));
-    this.camera.setTarget(this.local(view.target));
-    this.cameraInitialized = true;
-    this.sun.position.copyFrom(this.aircraft.root.position).addInPlace(new Vector3(160, 290, -150));
     this.target.position.copyFrom(this.local(frame.target.position));
     this.target.position.y += 0.08;
     this.targetModels.root.position.copyFrom(this.local(frame.target.position));
-    const prediction = frame.prediction;
-    this.marker.setEnabled(frame.prediction !== null && frame.ready);
-    if (prediction) {
-      this.marker.position.copyFrom(this.local(prediction.position));
-      this.marker.position.y += 0.5;
-      this.alignSurface(this.marker, prediction.position, false);
-      const hit = prediction.hit;
-      const material = this.marker.material as StandardMaterial;
-      material.emissiveColor.set(hit ? 0.3 : 1, hit ? 1 : 0.58, 0.5);
-    }
+    this.updatePrediction(frame.prediction, frame.ready);
     if (this.lastEncounter !== frame.target.id) {
       this.lastEncounter = frame.target.id;
       this.impactMark.setEnabled(false);
@@ -504,6 +501,75 @@ export class World {
     this.bursts = this.bursts.filter(burst => burst.age < 2);
     this.combat.render(pose, this.origin, dt);
     this.river.update(dt, this.origin);
+  }
+
+  updateSharedFrame(input: SharedWorldFrame): void {
+    const frame = snapshotSharedFrame(input);
+    if (frame.terrain !== this.terrain) throw new Error('Shared frame does not match the selected physical course.');
+    if (this.sharedTime !== null && frame.time < this.sharedTime) throw new Error('Reset before rewinding a shared scene.');
+    if (!this.sharedActive) {
+      this.reset();
+      this.sharedAircraft ??= this.createAircraftView('Player 2 ');
+      this.sharedTargets ??= new SharedTargets(this.scene, this.shadows, this.target);
+      if (!this.impactMark.material) throw new Error('Missing shared impact material.');
+      this.sharedImpacts ??= new SharedImpacts(this.scene, this.burstMaterial, this.impactMark.material, this.river.splashMaterial);
+      this.sharedActive = true;
+      this.target.setEnabled(false); this.targetModels.root.setEnabled(false);
+    }
+    const dt = this.sharedTime === null ? 0 : frame.time - this.sharedTime;
+    const pose = frame.aircraft[frame.viewedSlot].pose, view = frame.views[frame.viewedSlot];
+    const anchors = frame.aircraft.filter(a => !a.destroyed).map(a => a.pose.position);
+    for (const aircraft of frame.aircraft) if (aircraft.bomb) anchors.push(aircraft.bomb.position);
+    const range = Math.max(QUALITY[this.quality].distance, ...frame.targets.map(t => t.sightDistance + 400));
+    for (const point of frame.effectPositions) {
+      if (Math.hypot(point.x - view.position.x, point.y - view.position.y, point.z - view.position.z) <= range + CHUNK) anchors.push(point);
+    }
+    this.prepareScene(pose, dt, Math.max(...frame.targets.map(t => t.sightDistance)), view, anchors);
+    const canyon = frame.terrain === 'river-canyon';
+    this.aircraft.update({ ...frame.aircraft[0], canyon }, this.origin);
+    this.sharedAircraft!.update({ ...frame.aircraft[1], canyon }, this.origin);
+    this.sharedTargets!.update(frame.targets, this.origin);
+    this.sharedImpacts!.update(frame.impacts, frame.time, this.origin, canyon);
+    this.updatePrediction(frame.prediction, frame.ready && !frame.aircraft[frame.viewedSlot].destroyed);
+    this.river.setFlowTime(frame.time, this.origin);
+    this.sharedTime = frame.time;
+  }
+
+  private prepareScene(pose: Pose, dt: number, sightDistance: number, authoredView?: ChaseView,
+    anchors: readonly Readonly<Vec3>[] = []): void {
+    this.scene.fogEnd = Math.max(QUALITY[this.quality].distance, sightDistance + 400);
+    if (Math.abs(pose.position.z - this.origin) > 4096) {
+      const nextOrigin = Math.floor(pose.position.z / CHUNK) * CHUNK;
+      const shift = nextOrigin - this.origin;
+      this.origin = nextOrigin;
+      this.camera.position.z -= shift;
+      for (const chunk of this.chunks.values()) {
+        chunk.mesh.position.z = chunk.trees.position.z = chunk.rocks.position.z = chunk.z - this.origin;
+        if (chunk.water) chunk.water.position.z = chunk.z - this.origin;
+      }
+      for (const burst of this.bursts) burst.mesh.position.z -= shift;
+      this.impactMark.position.z -= shift;
+    }
+    if (this.desertSurface) this.desertSurface.origin = this.origin;
+    this.stream(pose.position.z, false, anchors);
+    const view = authoredView ?? chaseView(pose, this.surface, this.cameraInitialized
+      ? { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z + this.origin } : null, dt);
+    this.camera.position.copyFrom(this.local(view.position));
+    this.camera.setTarget(this.local(view.target));
+    this.cameraInitialized = true;
+    this.sun.position.copyFrom(this.local(pose.position)).addInPlace(new Vector3(160, 290, -150));
+  }
+
+  private updatePrediction(prediction: WorldFrame['prediction'], ready: boolean): void {
+    this.marker.setEnabled(prediction !== null && ready);
+    if (prediction) {
+      this.marker.position.copyFrom(this.local(prediction.position));
+      this.marker.position.y += 0.5;
+      this.alignSurface(this.marker, prediction.position, false);
+      const hit = prediction.hit;
+      const material = this.marker.material as StandardMaterial;
+      material.emissiveColor.set(hit ? 0.3 : 1, hit ? 1 : 0.58, 0.5);
+    }
   }
 
   private explode(impact: Vec3): void {
@@ -563,6 +629,8 @@ export class World {
 
   render(): void { this.scene.render(); }
   dispose(): void {
+    this.sharedAircraft?.dispose();
+    this.sharedTargets?.dispose(); this.sharedImpacts?.dispose();
     this.aircraft.dispose();
     for (const container of this.containers) container.dispose();
     this.scene.dispose();
