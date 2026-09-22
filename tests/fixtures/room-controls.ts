@@ -21,6 +21,7 @@ const connectionError = document.getElementById('connection-error'), lobbyRoot =
 const reportRoot = document.getElementById('connection-report');
 if (!connectButton || !connectionMode || !connectionError || !lobbyRoot || !reportRoot) throw new Error('Missing connection controls.');
 let connection: LobbyConnection | null = null, lobby: LobbyPanel | null = null, connecting = false, disposed = false, painting = false;
+let wasAdmitted = false;
 async function connect(identity = BUILD_IDENTITY) {
   if (connecting || connection || disposed) return;
   connecting = true; connectionError!.textContent = '';
@@ -53,9 +54,12 @@ async function render() {
   if (disposed || painting) return;
   painting = true;
   try {
-    if (panel.session.state.room?.state !== 'admitted' && connection) closeConnection();
-    connectButton!.disabled = connecting || !!connection || panel.session.state.room?.state !== 'admitted';
+    const admitted = panel.session.state.room?.state === 'admitted';
+    if (!admitted && connection) closeConnection();
+    connectButton!.disabled = connecting || !!connection || !admitted;
     connectionMode!.disabled = connecting || !!connection;
+    if (admitted && !wasAdmitted && !connectButton!.disabled) connectButton!.focus();
+    wasAdmitted = admitted;
     lobby?.render();
     const current = connection;
     const report = await current?.report();

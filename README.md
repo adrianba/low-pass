@@ -478,9 +478,12 @@ it. The UI-only fault harness verifies these rules with delay, loss and replay.
 
 The same room preview now includes a **native lobby connection check**. After
 admission, choose the intended connection mode in both windows and click
-**CONNECT LOBBY** in each. The peers compare real, portable fingerprints of
-client/shared source, dependency/build inputs and actual local assets. They then
-verify the host's manifest and both initial numeric course plans before enabling
+**CONNECT LOBBY** in each. Admission hides the host's now-unused invitation controls
+and focuses **CONNECT LOBBY** in
+both windows, bringing the next action into view without automatically connecting.
+The peers compare real, portable fingerprints of client/shared source,
+dependency/build inputs and actual local assets. They then verify the host's
+manifest and both initial numeric course plans before enabling
 ready. Terrain changes invalidate readiness and transfer a new verified course.
 Mismatched builds are refused before course readiness. The diagnostic reports
 only redacted connection information and bounded progress/failure codes.

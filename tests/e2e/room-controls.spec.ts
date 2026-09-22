@@ -31,6 +31,13 @@ async function post(page: Page, path: string, data: object, credential?: string)
     return { status: response.status, body: await response.json() as unknown };
   }, { path, data, credential });
 }
+async function previewService(live = false) {
+  const external = loopbackPreview(process.env.ROOM_CONTROLS_URL, '/room-controls.html');
+  return external
+    ? { origin: new URL(external).origin, url: external,
+      code: (await readFile(resolve('.secret/hosting-code'), 'utf8')).trim(), close: async () => {} }
+    : { ...await roomService({ roomControls: true, turnFile: live ? resolve('.secret/turn-secret') : undefined }), url: undefined };
+}
 async function admitPair(host: Page, guest: Page, server: { origin: string; code: string; url?: string }) {
   await load(host, server.origin, server.url);
   try { await host.getByLabel('Hosting access code', { exact: true }).fill(server.code); }
@@ -43,6 +50,32 @@ async function admitPair(host: Page, guest: Page, server: { origin: string; code
   await guest.getByRole('button', { name: 'ASK TO JOIN', exact: true }).click();
   await host.getByRole('button', { name: 'ADMIT PLAYER 2', exact: true }).click();
   await expect(guest.locator('#guest-status')).toContainText('The host admitted you');
+}
+
+for (const height of [720, 600]) {
+  test(`both players can see CONNECT LOBBY immediately after admission at ${height}px height`, async ({ browser }, info) => {
+    const server = await previewService();
+    const hostContext = await browser.newContext({ viewport: { width: 1000, height } });
+    const guestContext = await browser.newContext({ viewport: { width: 1000, height } });
+    const host = await hostContext.newPage(), guest = await guestContext.newPage();
+    try {
+      await admitPair(host, guest, server);
+      for (const page of [host, guest]) {
+        const connect = page.getByRole('button', { name: 'CONNECT LOBBY', exact: true });
+        await expect(connect).toBeEnabled();
+        if (!server.url) await page.screenshot({ path: info.outputPath(page === host ? 'host-admitted.png' : 'guest-admitted.png') });
+        // Locator.click() would automatically scroll and conceal a below-the-fold control.
+        await expect(connect).toBeInViewport({ ratio: 1 });
+        await expect(connect).toBeFocused();
+        expect(await page.evaluate(() => window.roomPreview.report())).toBeNull();
+      }
+      await expect(host.locator('#host-invitation')).toBeHidden();
+      await expect(host.getByRole('button', { name: 'CANCEL / CLOSE ROOM', exact: true })).toBeEnabled();
+    } finally {
+      await Promise.all([host, guest].map(page => page.evaluate(() => window.roomPreview.dispose())));
+      await hostContext.close(); await guestContext.close(); await server.close();
+    }
+  });
 }
 
 test('host controls clear credentials, copy safely, decline/renew/admit and close a real private room', async ({ browser }, info) => {
@@ -295,11 +328,7 @@ for (const mode of ['direct', 'udp', 'tcp', 'tls'] as const) {
   test(`opt-in deployed lobby readiness: ${mode}`, async ({ browser }, info) => {
     test.skip(process.env.LOW_PASS_LIVE_TURN !== '1', 'Requires explicit operator authorization and the ignored local TURN key.');
     test.setTimeout(100_000);
-    const external = loopbackPreview(process.env.ROOM_CONTROLS_URL, '/room-controls.html');
-    const server = external
-      ? { origin: new URL(external).origin, url: external,
-        code: (await readFile(resolve('.secret/hosting-code'), 'utf8')).trim(), close: async () => {} }
-      : await roomService({ roomControls: true, turnFile: resolve('.secret/turn-secret') });
+    const server = await previewService(true);
     const hostContext = await browser.newContext(), guestContext = await browser.newContext();
     const host = await hostContext.newPage(), guest = await guestContext.newPage();
     try {

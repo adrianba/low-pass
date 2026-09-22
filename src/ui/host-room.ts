@@ -17,14 +17,16 @@ export class HostRoomPanel {
         <button id="host-submit" type="submit" class="primary">CREATE ROOM</button>
       </form>
       <section id="host-room" hidden aria-label="Private room">
-        <label for="host-invitation">Room invitation</label>
-        <input id="host-invitation" readonly autocomplete="off" spellcheck="false">
-        <button id="host-copy" type="button" class="secondary">COPY INVITATION</button>
-        <label for="host-link">Room join link</label>
-        <input id="host-link" readonly autocomplete="off" spellcheck="false">
-        <button id="host-copy-link" type="button" class="secondary">COPY JOIN LINK</button>
-        <p id="host-expiry"></p>
-        <button id="host-renew" type="button" class="secondary">NEW INVITATION</button>
+        <div id="host-invitation-controls">
+          <label for="host-invitation">Room invitation</label>
+          <input id="host-invitation" readonly autocomplete="off" spellcheck="false">
+          <button id="host-copy" type="button" class="secondary">COPY INVITATION</button>
+          <label for="host-link">Room join link</label>
+          <input id="host-link" readonly autocomplete="off" spellcheck="false">
+          <button id="host-copy-link" type="button" class="secondary">COPY JOIN LINK</button>
+          <p id="host-expiry"></p>
+          <button id="host-renew" type="button" class="secondary">NEW INVITATION</button>
+        </div>
         <div id="host-admission" hidden>
           <p>Player 2 is asking to join. Confirm with your friend before admitting them.</p>
           <button id="host-admit" type="button" class="primary">ADMIT PLAYER 2</button>
@@ -101,6 +103,7 @@ export class HostRoomPanel {
     this.root.dataset.roomState = state.closing ? 'closing' : room?.state ?? 'empty';
     this.get('#host-create').hidden = room !== null || state.closing;
     this.get('#host-room').hidden = room === null;
+    this.get('#host-invitation-controls').hidden = room?.state === 'admitted';
     this.get<HTMLInputElement>('#host-code').disabled = state.busy || state.availability !== 'available';
     this.get<HTMLButtonElement>('#host-submit').disabled = state.busy || state.availability !== 'available';
     const input = this.get<HTMLInputElement>('#host-invitation');
