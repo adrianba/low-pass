@@ -5,9 +5,11 @@ import type { RoomConfig } from './room-config.js';
 import { ClientAddresses } from './client-address.js';
 import { RoomError, RoomStore } from './room-store.js';
 import { RoomLimits } from './room-limits.js';
+import { TurnCredentials } from './turn-credentials.js';
 
 const paths = new Set(['/api/multiplayer/host-authorizations', '/api/multiplayer/rooms', '/api/multiplayer/join',
-  '/api/multiplayer/room/status', '/api/multiplayer/room/admission', '/api/multiplayer/room/invitation', '/api/multiplayer/room/leave']);
+  '/api/multiplayer/room/status', '/api/multiplayer/room/admission', '/api/multiplayer/room/invitation', '/api/multiplayer/room/leave',
+  '/api/multiplayer/room/ice']);
 
 function bearer(request: Request): string {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/i.exec(request.headers.authorization ?? '');
@@ -23,6 +25,7 @@ function body(request: Request): unknown {
 
 export class RoomApi {
   readonly store: RoomStore;
+  readonly turn: TurnCredentials | null;
   private readonly addresses: ClientAddresses;
   private readonly limits = new RoomLimits();
   private readonly sweep: ReturnType<typeof setInterval>;
@@ -48,10 +51,11 @@ export class RoomApi {
   constructor(private readonly config: RoomConfig, warn: (message: string) => void) {
     this.store = new RoomStore(config.hostingDigest);
     this.addresses = new ClientAddresses(config.trustedProxyCidrs);
+    this.turn = config.turn ? new TurnCredentials(config.turn, this.store, warn) : null;
     this.sweep = setInterval(() => {
       try { this.store.sweep(); this.limits.sweep(); }
       catch {
-        this.failed = true; clearInterval(this.sweep); this.store.close(); this.limits.clear();
+        this.failed = true; clearInterval(this.sweep); this.turn?.close(); this.store.close(); this.limits.clear();
         warn('Multiplayer room maintenance failed; rooms disabled until restart.');
       }
     }, 1000);
@@ -96,7 +100,13 @@ export class RoomApi {
         response.json({ room: this.store.admit(credential, parsed.data.participantId, parsed.data.admit) }); return;
       }
       if (!emptyRequest.safeParse(data).success) throw new RoomError('invalid_request', 400);
-      if (request.path === '/api/multiplayer/rooms') {
+      if (request.path === '/api/multiplayer/room/ice') {
+        const member = this.store.authenticate(credential, true);
+        this.limits.take('turn-global', 120); this.limits.take(`turn-source:${source}`, 20);
+        this.limits.take(`turn-room:${member.roomId}`, 8); this.limits.take(`turn-member:${member.participantId}`, 4);
+        if (!this.turn) throw new RoomError('turn_unavailable', 503);
+        response.json(this.turn.issue(credential));
+      } else if (request.path === '/api/multiplayer/rooms') {
         this.limits.take(`create:${source}`, 4, 10 * 60_000);
         response.status(201).json(this.store.create(credential, source));
       } else if (request.path === '/api/multiplayer/room/status') {
@@ -112,5 +122,5 @@ export class RoomApi {
       response.status(error.status).json({ error: error.code });
     }
   };
-  close(): void { this.failed = true; clearInterval(this.sweep); this.store.close(); this.limits.clear(); }
+  close(): void { this.failed = true; clearInterval(this.sweep); this.turn?.close(); this.store.close(); this.limits.clear(); }
 }

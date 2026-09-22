@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createServer, request as httpRequest } from 'node:http';
 import { resolve } from 'node:path';
+import { createSecretKey } from 'node:crypto';
 import { ApplicationService } from '../../server/application.js';
 import { readServiceConfig } from '../../server/config.js';
 import { hashSecret } from '../../server/room-store.js';
@@ -26,7 +27,9 @@ test('two isolated browsers use private rooms without sharing capabilities or ch
   const origin = `http://127.0.0.1:${address.port}`, warnings: string[] = [];
   const service = new ApplicationService({ ...readServiceConfig({}), staticRoot: resolve('dist'), port: 0,
     multiplayer: { status: 'rooms', reason: 'not_implemented',
-      config: { origin, hostingDigest: hashSecret(code), trustedProxyCidrs: ['127.0.0.1/32'] } } },
+      config: { origin, hostingDigest: hashSecret(code), trustedProxyCidrs: ['127.0.0.1/32'],
+        turn: { urls: ['turn:127.0.0.1:9?transport=udp'],
+          key: createSecretKey(Buffer.from('dummy-coturn-key-for-browser-fixture-only')) } } } },
   message => warnings.push(message));
   proxy.on('upgrade', (request, socket, head) => {
     request.headers['x-forwarded-for'] = '203.0.113.10';
@@ -65,6 +68,17 @@ test('two isolated browsers use private rooms without sharing capabilities or ch
       return { status: response.status, body: await response.json() };
     }, { credential: created.body.capability, id: joined.body.room.participantId });
     expect(admitted.status).toBe(200); expect(admitted.body.room.state).toBe('admitted');
+    const ice = await guestPage.evaluate(async capability => {
+      const response = await fetch('/api/multiplayer/room/ice', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${capability}` }, body: '{}',
+      });
+      const config = await response.json();
+      const peer = new RTCPeerConnection({ iceServers: config.iceServers });
+      peer.close();
+      return { status: response.status, refreshAfterMs: config.refreshAfterMs, username: config.iceServers[0].username };
+    }, joined.body.capability);
+    expect(ice.status).toBe(200); expect(ice.refreshAfterMs).toBeGreaterThan(0);
+    expect(ice.username).toContain(joined.body.room.participantId);
     const hostSocket = await hostPage.evaluateHandle(credential => new Promise<WebSocket>((resolve, reject) => {
       const socket = new WebSocket(location.origin.replace('http:', 'ws:') + '/signal');
       socket.onopen = () => socket.send(JSON.stringify({ type: 'auth', version: 1, capability: credential }));

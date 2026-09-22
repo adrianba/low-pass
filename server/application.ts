@@ -58,14 +58,16 @@ export class ApplicationService {
       } else if (path === '/livez') {
         response.json({ status: 'ok' });
       } else if (path === '/api/multiplayer/readyz' && (config.multiplayer.status === 'unavailable' ||
-        this.rooms?.available === false || this.signaling?.available === false)) {
+        this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false)) {
         response.status(503).json({ error: 'multiplayer_unavailable',
-          reason: this.rooms?.available === false || this.signaling?.available === false ? 'service_error' : config.multiplayer.reason });
+          reason: this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false
+            ? 'service_error' : config.multiplayer.reason });
       } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
         response.json({ status: 'ready', multiplayer: false, ...(this.rooms ? { rooms: this.rooms.available } : {}) });
       } else response.json({ multiplayer: false,
-        reason: this.rooms?.available === false || this.signaling?.available === false ? 'service_error' : config.multiplayer.reason,
-        ...(this.rooms ? { rooms: this.rooms.available, signaling: this.signaling!.available } : {}) });
+        reason: this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false
+          ? 'service_error' : config.multiplayer.reason,
+        ...(this.rooms ? { rooms: this.rooms.available, signaling: this.signaling!.available, turn: this.rooms.turn?.available ?? false } : {}) });
     });
     app.use(...staticFiles(root, config.privateFiles));
     app.use(httpErrors(warn));

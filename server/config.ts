@@ -44,7 +44,8 @@ export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   return {
     host,
     staticRoot,
-    privateFiles: env.LOW_PASS_HOSTING_CODE_FILE && isAbsolute(env.LOW_PASS_HOSTING_CODE_FILE) ? [env.LOW_PASS_HOSTING_CODE_FILE] : [],
+    privateFiles: [env.LOW_PASS_HOSTING_CODE_FILE, env.LOW_PASS_TURN_SECRET_FILE]
+      .filter((path): path is string => !!path && isAbsolute(path)),
     port: integer(env, 'LOW_PASS_SERVICE_PORT', 8080, 65535),
     shutdownTimeoutMs: integer(env, 'LOW_PASS_SHUTDOWN_TIMEOUT_MS', 5000, 30_000),
     multiplayer,

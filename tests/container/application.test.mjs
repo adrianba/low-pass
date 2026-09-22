@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { spawn, execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -271,17 +271,21 @@ test('unexpected container commands are rejected rather than silently ignored', 
 test('explicit private-room activation works with a read-only secret mount and trusted proxy chain', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'low-pass-room-container-'));
   const path = join(directory, 'test-code'), code = 'container-only-dummy-code-never-production';
+  const turnPath = join(directory, 'turn-key'), turnKey = 'container-only-dummy-turn-key-never-production';
   await writeFile(path, code, { mode: 0o444 });
+  await writeFile(turnPath, turnKey, { mode: 0o444 });
   t.after(() => rm(directory, { recursive: true, force: true }));
   const gateway = await docker('network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}');
   const container = await start(t, [
     '-e', 'LOW_PASS_MULTIPLAYER_ENABLED=true', '-e', 'LOW_PASS_PUBLIC_ORIGIN=https://room-test.example',
     '-e', `LOW_PASS_TRUSTED_PROXY_CIDRS=${gateway}/32,173.245.48.0/20`,
     '-e', 'LOW_PASS_HOSTING_CODE_FILE=/run/low-pass-test-code',
+    '-e', 'LOW_PASS_TURN_URLS=turn:127.0.0.1:9?transport=udp', '-e', 'LOW_PASS_TURN_SECRET_FILE=/run/low-pass-test-turn-key',
     '--mount', `type=bind,src=${path},dst=/run/low-pass-test-code,readonly`,
+    '--mount', `type=bind,src=${turnPath},dst=/run/low-pass-test-turn-key,readonly`,
   ]);
   assert.deepEqual(await (await container.response('/api/multiplayer/capabilities')).json(),
-    { multiplayer: false, reason: 'not_implemented', rooms: true, signaling: true });
+    { multiplayer: false, reason: 'not_implemented', rooms: true, signaling: true, turn: true });
   const headers = { 'Content-Type': 'application/json', Origin: 'https://room-test.example',
     'X-Forwarded-For': '203.0.113.10,173.245.48.5' };
   const authorized = await container.response('/api/multiplayer/host-authorizations',
@@ -293,8 +297,24 @@ test('explicit private-room activation works with a read-only secret mount and t
   assert.equal(created.status, 201);
   const room = await created.json();
   assert.match(room.invitation, /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+  const guest = await (await container.response('/api/multiplayer/join', {
+    method: 'POST', headers, body: JSON.stringify({ invitation: room.invitation }),
+  })).json();
+  assert.equal((await container.response('/api/multiplayer/room/admission', {
+    method: 'POST', headers: { ...headers, Authorization: `Bearer ${room.capability}` },
+    body: JSON.stringify({ participantId: guest.room.participantId, admit: true }),
+  })).status, 200);
+  const issued = await container.response('/api/multiplayer/room/ice', {
+    method: 'POST', headers: { ...headers, Authorization: `Bearer ${guest.capability}` }, body: '{}',
+  });
+  assert.equal(issued.status, 200); assert.equal(issued.headers.get('cache-control'), 'no-store');
+  const ice = await issued.json();
+  assert.equal(ice.iceServers[0].credentialType, 'password');
+  assert.ok(ice.iceServers[0].username.endsWith(guest.room.participantId));
+  assert.equal(ice.iceServers[0].credential, createHmac('sha1', turnKey).update(ice.iceServers[0].username).digest('base64'));
   const output = await logs(container.id);
-  for (const value of [code, grant.capability, room.capability, room.invitation]) assert.ok(!output.includes(value));
+  for (const value of [code, turnKey, grant.capability, room.capability, room.invitation,
+    guest.capability, ice.iceServers[0].credential]) assert.ok(!output.includes(value));
   assert.equal((await container.response('/run/low-pass-test-code')).status, 404);
   await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/server/healthcheck.js');
 });

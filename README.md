@@ -43,7 +43,8 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
 endpoints are preparation only: opt-in private rooms and authenticated signaling
-exist, but there is no relay-credential issuance or playable multiplayer yet.
+exist, with optional temporary TURN credentials, but there is no playable
+multiplayer yet.
 Shared Zod protocol modules compile under `dist-server/shared`; the executable
 is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
@@ -79,6 +80,8 @@ connections at the shutdown deadline with a warning.
 | `LOW_PASS_PUBLIC_ORIGIN` | unset | Canonical HTTPS origin; HTTP loopback is allowed for local tests |
 | `LOW_PASS_TRUSTED_PROXY_CIDRS` | unset | Comma-separated explicit IP/CIDR ranges for the immediate proxy and trusted upstream proxies; universal `/0` ranges are rejected |
 | `LOW_PASS_HOSTING_CODE_FILE` | unset | Absolute private file outside the HTTP root; 32-256 printable ASCII characters, optionally followed by one newline |
+| `LOW_PASS_TURN_URLS` | unset | Comma-separated explicit ICE URLs (up to eight), including at least one TURN URL; see below |
+| `LOW_PASS_TURN_SECRET_FILE` | unset | Absolute private file containing the same shared secret as coturn; 32-4096 printable non-space ASCII characters, optionally followed by one newline |
 
 Invalid core listener/shutdown configuration exits with code 78. An unsupported
 multiplayer flag is logged explicitly without echoing its value; capabilities
@@ -122,6 +125,7 @@ in URLs; member operations use `Authorization: Bearer <capability>`.
 | `room/admission` | Host approves or denies the identified pending guest |
 | `room/invitation` | Host revokes/rotates an invitation before admission |
 | `room/leave` | Cancel pending participation or close an admitted room; no replacement player or host migration |
+| `room/ice` | Obtain temporary relay credentials for an admitted member; unavailable unless TURN is configured |
 
 Default bounds: 16 rooms, two rooms per source, 64 host grants, one guest per
 room, 60-second grants/pending admissions, five-minute invitations, 15-minute
@@ -162,8 +166,47 @@ authentication and negotiation failures are explicit. Logs contain no SDP, ICE
 addresses or credentials. Service shutdown also closes upgraded sockets.
 
 Server and native-browser checks cover signaling messages, not actual peer data
-channels or relay allocations. Native WebRTC, connection UI, fair remote release
+channels or relay allocations. Native WebRTC transport, connection UI, fair remote release
 settlement and two-computer Edge/TURN acceptance remain subsequent milestones.
+
+### Temporary TURN credentials (application integration only)
+
+Coturn remains independently managed by Ansible. Configure **both** TURN settings
+above to enable issuance; omitting both leaves room/signaling preparation usable
+with `turn: false` in capabilities. Supplying only one or invalid settings reports
+a multiplayer configuration error without breaking solo/static serving.
+Nothing contacts coturn during application startup or credential issuance.
+
+Use the operator-confirmed addresses, not guessed public ports:
+`stun:<host>:<port>`, `turn:<host>:<port>?transport=udp`,
+`turn:<host>:<port>?transport=tcp`, or `turns:<host>:<port>?transport=tcp`.
+Bracket IPv6 addresses. Ports and TURN transports are mandatory; embedded
+credentials, URL paths/fragments, unsupported schemes and duplicate URLs are
+rejected. No default external STUN service is used.
+
+Mount the existing coturn shared secret read-only outside the asset root. The
+issuer uses its REST format: Unix-expiry-prefixed opaque participant username
+and Base64 HMAC-SHA1 password. Only temporary passwords reach the browser;
+neither the hosting access code nor coturn's permanent key does. Exclude request
+authorization, response bodies and credential-bearing diagnostics from logs.
+
+Credentials last at most ten minutes, bounded by the remaining room lease.
+Clients receive server time, expiry and a relative refresh delay (normally five
+minutes); schedule refresh with a monotonic browser clock rather than assuming
+its wall clock agrees with the server. Repeated early requests reuse the current
+credential. Closed/revoked rooms cannot refresh, but **already issued credentials
+remain usable until expiry**; the application cannot instantly revoke coturn
+allocations. Coturn's own allocation/bandwidth quotas remain operator-owned.
+The issuer caps its cache at two entries per allowed room and rate-limits requests
+globally and per source/room/member. Large detected wall-clock jumps disable
+issuance explicitly until restart; synchronize the application and relay clocks.
+Key rotation requires coordinated operator updates/restart; this process reads
+its key at startup and does not watch or rewrite secret files.
+
+Local tests use dummy keys and verify issuance, refresh and browser configuration
+acceptance. They do not prove the deployed relay works. Exact production ICE URLs
+and the application-side secret-file reference still need operator confirmation,
+followed by actual forced-relay data exchange on two Windows Edge computers.
 
 ### Local formation preview (not networked)
 

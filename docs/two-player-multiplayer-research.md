@@ -291,6 +291,31 @@ check does **not** create an RTCPeerConnection or establish actual relay use.
 Capabilities expose healthy signaling separately while `multiplayer` stays
 false; the approved combat preview and production deployment are unchanged.
 
+### Temporary relay credential checkpoint
+
+The application can now issue coturn REST-format temporary credentials to
+admitted room members through the protected `room/ice` endpoint. Configuration
+requires explicit supported ICE URLs and a private file containing the existing
+coturn shared secret; neither is guessed or populated for production here.
+The common bounded private-file reader is also used for the hosting code.
+Declared secret files remain excluded from static serving, including invalid
+configurations.
+
+Usernames bind expiry and opaque room/participant IDs; Base64 HMAC-SHA1 uses a
+server-only key object. Credentials last at most ten minutes, with cached reuse
+until the normal five-minute refresh point, and cannot extend the room lease.
+Responses include server time and relative refresh timing. Issuance has bounded
+per-source/room/member/global quotas and cache state. Revocation prevents future
+refresh, not immediate use of already issued credentials. Material wall-clock
+drift disables issuance explicitly without taking down solo serving.
+
+Tests independently verify HMAC through WebCrypto, cache/refresh, room lifetime,
+clock faults, HTTP authorization/quotas and secret exclusion. A hardened local
+image and isolated browser contexts exercise dummy credential issuance; browser
+configuration acceptance does not attempt a relay allocation. Coturn remains
+untouched and unverified. The [application integration contract](../README.md#temporary-turn-credentials-application-integration-only)
+does not replace user-owned deployment or G2 direct/forced-relay acceptance.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user
