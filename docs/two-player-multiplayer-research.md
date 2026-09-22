@@ -95,6 +95,13 @@ back onto an obsolete flight path. Canyon authoring still requires an explicit
 world-space camera view. This is data/authoring support, not network combat or the
 multi-player effects renderer.
 
+Live damage/flyby continuations can include the next committed track when their
+2.8-second horizon crosses a handoff. Both segments are frozen numerically and
+their full pose join is checked; a missing required next track fails explicitly.
+This prevents a near-handoff missile from aiming along the old recovery instead
+of the survivor's actual next path. Finales deliberately retain their current
+safe continuation: a dead pilot does not resume the next encounter.
+
 ### Shared scene checkpoint
 
 `World.updateSharedFrame` accepts an owned two-aircraft frame rather than two

@@ -11,10 +11,14 @@ import type { Encounter } from './run';
 interface Entry {
   readonly start: FlightKnot['pose']; readonly startAt: number; readonly endAt: number;
 }
+interface NextTrack {
+  readonly age: number; readonly from: number; readonly offset: number; readonly track: FlightTrackData;
+}
 export type AircraftMotionData =
   | { readonly version: 1; readonly kind: 'tangent'; readonly start: FlightKnot['pose'] }
   | { readonly version: 1; readonly kind: 'track'; readonly start: FlightKnot['pose'];
-    readonly style: 'canyon' | 'formation'; readonly offset: number; readonly track: FlightTrackData; readonly entry: Entry | null };
+    readonly style: 'canyon' | 'formation'; readonly offset: number; readonly track: FlightTrackData;
+    readonly entry: Entry | null; readonly next?: NextTrack | null };
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid aircraft motion object.');
@@ -42,10 +46,21 @@ export function readAircraftMotionData(value: unknown): AircraftMotionData {
     if (data.style !== 'canyon' || entry.endAt - entry.startAt < MIN_TRACK_INTERVAL || entry.endAt < track.knots[0]!.time ||
       entry.endAt > track.knots.at(-1)!.time) throw new Error('Invalid aircraft motion entry join.');
   }
-  if (offset < (entry?.startAt ?? track.knots[0]!.time) || offset + FLYBY_DURATION > track.knots.at(-1)!.time) {
+  let next: NextTrack | null = null;
+  if (data.next !== undefined && data.next !== null) {
+    const input = record(data.next);
+    next = Object.freeze({ age: time(input.age), from: time(input.from), offset: time(input.offset), track: readFlightTrackData(input.track) });
+    if (entry || next.age < 0 || next.age > FLYBY_DURATION || Math.abs(offset + next.age - next.from) > 1e-7 ||
+      next.from < track.knots[0]!.time || next.from > track.knots.at(-1)!.time ||
+      next.offset < next.track.knots[0]!.time || next.offset + FLYBY_DURATION - next.age > next.track.knots.at(-1)!.time) {
+      throw new Error('Invalid aircraft motion handoff coverage.');
+    }
+  }
+  if (offset < (entry?.startAt ?? track.knots[0]!.time) ||
+    (next?.from ?? offset + FLYBY_DURATION) > track.knots.at(-1)!.time) {
     throw new Error('Aircraft motion does not cover the complete combat continuation.');
   }
-  return Object.freeze({ version: 1, kind: 'track', start, style: data.style, track, offset, entry });
+  return Object.freeze({ version: 1, kind: 'track', start, style: data.style, track, offset, entry, next });
 }
 
 export class AircraftMotion {
@@ -53,24 +68,40 @@ export class AircraftMotion {
   private readonly track: FlightTrack | FormationTrack | null;
   private readonly initial: Pose;
   private readonly entryEnd: Pose | null;
+  private readonly nextTrack: FlightTrack | FormationTrack | null;
 
   constructor(data: AircraftMotionData) {
     this.data = readAircraftMotionData(data);
     this.track = this.data.kind === 'track' ? this.data.style === 'canyon'
       ? FlightTrack.fromData(this.data.track) : FormationTrack.fromData(this.data.track) : null;
     this.entryEnd = this.data.kind === 'track' && this.data.entry ? this.track!.at(this.data.entry.endAt) : null;
+    this.nextTrack = this.data.kind === 'track' && this.data.next ? this.data.style === 'canyon'
+      ? FlightTrack.fromData(this.data.next.track) : FormationTrack.fromData(this.data.next.track) : null;
+    if (this.data.kind === 'track' && this.data.next) {
+      const before = this.track!.at(this.data.next.from), after = this.nextTrack!.at(this.data.next.offset);
+      if ((['position', 'velocity', 'acceleration'] as const).some(key =>
+        (['x', 'y', 'z'] as const).some(axis => before[key][axis] !== after[key][axis])) ||
+        before.bank !== after.bank || before.pitch !== after.pitch) throw new Error('Discontinuous aircraft motion handoff.');
+    }
     this.initial = this.sourceAt(0);
   }
 
   static fromData(data: unknown): AircraftMotion { return new AircraftMotion(readAircraftMotionData(data)); }
   static tangent(start: Pose): AircraftMotion { return new AircraftMotion({ version: 1, kind: 'tangent', start }); }
-  static fromFormation(plan: FormationPlan, slot: 0 | 1, sharedTime: number, start?: Pose): AircraftMotion {
+  static fromFormation(plan: FormationPlan, slot: 0 | 1, sharedTime: number, start?: Pose, nextPlan?: FormationPlan): AircraftMotion {
     if ((slot !== 0 && slot !== 1) || !Number.isFinite(sharedTime) || sharedTime < plan.startAt || sharedTime > plan.handoffAt) {
       throw new Error('Invalid formation combat motion anchor.');
     }
     const attempt = plan.attempts[slot], offset = sharedTime - attempt.releaseAt;
+    if (nextPlan && (nextPlan.terrain !== plan.terrain || nextPlan.startAt !== plan.handoffAt)) {
+      throw new Error('Incompatible aircraft motion handoff plan.');
+    }
+    const next = nextPlan && sharedTime + FLYBY_DURATION > plan.handoffAt ? {
+      age: nextPlan.startAt - sharedTime, from: nextPlan.startAt - attempt.releaseAt,
+      offset: nextPlan.startAt - nextPlan.attempts[slot].releaseAt, track: nextPlan.attempts[slot].track.toData(),
+    } : null;
     return new AircraftMotion({ version: 1, kind: 'track', start: start ?? attempt.track.at(offset),
-      style: plan.terrain === 'river-canyon' ? 'canyon' : 'formation', offset, track: attempt.track.toData(), entry: null });
+      style: plan.terrain === 'river-canyon' ? 'canyon' : 'formation', offset, track: attempt.track.toData(), entry: null, next });
   }
   static fromSoloCanyon(start: Pose, encounter: Encounter): AircraftMotion {
     const flight = encounter.canyon;
@@ -109,6 +140,7 @@ export class AircraftMotion {
       for (const axis of ['x', 'y', 'z'] as const) next.position[axis] += next.velocity[axis] * age;
       return next;
     }
+    if (this.data.next && age >= this.data.next.age) return this.nextTrack!.at(this.data.next.offset + age - this.data.next.age);
     const at = this.data.offset + age, entry = this.data.entry;
     if (entry && at < entry.endAt) return joinPose(entry.start, this.entryEnd!, entry.endAt - entry.startAt, at - entry.startAt);
     return this.track!.at(at);
