@@ -316,6 +316,40 @@ configuration acceptance does not attempt a relay allocation. Coturn remains
 untouched and unverified. The [application integration contract](../README.md#temporary-turn-credentials-application-integration-only)
 does not replace user-owned deployment or G2 direct/forced-relay acceptance.
 
+### Native peer transport checkpoint
+
+`RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
+the common transport interface. Candidates are generation-scoped, bounded and
+buffered until remote SDP; local candidates follow their description. Room-bound
+authenticated signaling supplies the DTLS fingerprints. On the data channel,
+session/epoch/role and compatibility hellos must match before application events
+become visible. State traffic that overtakes the control hello waits in a bounded
+buffer instead of spuriously failing a valid cross-channel race.
+
+Control is ordered/reliable; state is unordered with zero retransmissions.
+Chunk producers reuse the existing bounded verified-transfer protocol.
+Bulk traffic stops below the full control-buffer watermark, while callers receive
+explicit backpressure and retain responsibility for scheduling. Unexpected channel
+modes, oversized/invalid messages, queue overflow, timeout, native errors and
+incompatibility close with structured, redacted failure information.
+
+Local Chromium tests use two isolated contexts, real authenticated signaling,
+native SDP/ICE/DTLS/SCTP, and a complete 1,191,173-byte Canyon payload. The receiver
+verifies the transfer hash; simultaneous command/state messages arrive separately.
+Recreating both peers under the same membership with a newer signaling generation
+and application epoch succeeds. Mismatched builds fail before application messages
+are exposed. A relay-only/no-relay case closes rather than silently taking a
+direct path. Selected-pair diagnostics reveal categories and RTT but not addresses.
+
+These are localhost direct-connection and refusal-path results, not Internet
+bandwidth, successful TURN allocation, Windows Edge, or gameplay fairness evidence.
+The fixture initially needed a real HTTP document rather than a fulfilled mock
+document to satisfy Chromium's local-network access checks; no browser security
+flag was disabled. Its transfer consumer was also corrected to strip the wire
+envelope before strict chunk validation. Final browser cases pass.
+Full recovery/checkpoint application, real build identities and production UI
+remain later integration work; no live infrastructure was contacted.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user

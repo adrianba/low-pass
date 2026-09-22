@@ -4,9 +4,11 @@ import type { WireMessage } from '../../shared/protocol/messages.js';
 
 export type TransportStatus = 'open' | 'disconnected' | 'closed';
 export type SendResult = { ok: true } | { ok: false; reason: 'not_open' | 'backpressure' };
+export type TransportFailure = 'negotiation' | 'candidate' | 'channel' | 'capacity' | 'timeout' | 'connection' | 'signaling' | 'diagnostics';
 export type TransportEvent =
   | { type: 'message'; channel: Channel; message: WireMessage; receivedAt: number }
   | { type: 'rejected'; channel: Channel; code: ProtocolErrorCode }
+  | { type: 'failed'; code: TransportFailure }
   | { type: 'status'; status: TransportStatus; epoch: number };
 
 export interface PeerTransport {

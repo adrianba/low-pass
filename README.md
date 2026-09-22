@@ -64,8 +64,9 @@ with 503 while the HTTP service remains available. Intentionally disabled
 multiplayer returns 200 with `multiplayer: false`.
 `GET /api/multiplayer/capabilities` returns
 `{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
-unknown routes (including `/signal`, and room endpoints when disabled) return 404 with no HTML
-fallback. Static delivery supports HEAD, validators, ranges and compression;
+unknown routes and disabled multiplayer endpoints return 404 with no HTML
+fallback. `/signal` accepts only enabled WebSocket upgrades, not ordinary HTTP
+requests. Static delivery supports HEAD, validators, ranges and compression;
 only hashed JS/CSS is immutable, while other assets revalidate. SIGTERM and
 SIGINT stop accepting connections, drain requests, then close remaining HTTP
 connections at the shutdown deadline with a warning.
@@ -165,9 +166,9 @@ Pending guests that are denied or revoked cannot reconnect. Closure, overload,
 authentication and negotiation failures are explicit. Logs contain no SDP, ICE
 addresses or credentials. Service shutdown also closes upgraded sockets.
 
-Server and native-browser checks cover signaling messages, not actual peer data
-channels or relay allocations. Native WebRTC transport, connection UI, fair remote release
-settlement and two-computer Edge/TURN acceptance remain subsequent milestones.
+Server and native-browser checks cover signaling messages. The separate native
+peer adapter is described below; relay allocations, connection UI, fair remote
+release settlement and two-computer Edge/TURN acceptance remain later milestones.
 
 ### Temporary TURN credentials (application integration only)
 
@@ -207,6 +208,64 @@ Local tests use dummy keys and verify issuance, refresh and browser configuratio
 acceptance. They do not prove the deployed relay works. Exact production ICE URLs
 and the application-side secret-file reference still need operator confirmation,
 followed by actual forced-relay data exchange on two Windows Edge computers.
+
+### Native peer transport (not connected to the game UI)
+
+`RtcPeer` implements the common transport interface using native browser WebRTC:
+host-authored offers, guest answers and generation-tagged trickle ICE. Candidates
+wait for remote SDP, and outgoing SDP precedes its candidates. Each instance owns
+one connection/generation; after connection loss, the future recovery controller
+must establish a new peer/epoch and checkpoint rather than resume stale channels.
+
+DTLS fingerprints come from authenticated, room-bound signaling. Before exposing
+application data, peers exchange and validate the expected session, epoch, role,
+compatibility hashes and viewport on the connected control channel. Reliable
+ordered control carries commands/events/transfers; unordered, zero-retry state
+carries disposable snapshots and clock probes. Cross-channel traffic that beats
+the hello is bounded and held until compatibility is verified.
+
+Wire messages remain at most 16 KiB. Each channel has a 64 KiB send watermark;
+bulk chunks stop at 32 KiB, preserving control-buffer space for small messages.
+The adapter reports backpressure instead of accumulating an outgoing queue.
+It bounds received events and ICE/negotiation queues, rejects unexpected channel
+modes, and disposes timers/handlers/channels on closure. Diagnostics expose only
+candidate categories, transport type and RTT, never addresses, SDP or credentials.
+
+The local browser fixture connects two isolated identities through the actual
+authenticated signaling service, sends a complete hash-verified Canyon plan
+over native data channels, exchanges command/state traffic and recreates the
+connection in a new epoch. It also rejects mismatched builds and proves that
+test-only relay policy cannot fall back to a direct connection when no relay is
+available. This is **local Chromium**, not two-computer Edge or real TURN
+acceptance, and not a complete recovery/game controller. Its compatibility hashes
+are fixture values; real build identity, lobby, clock synchronization, fair release
+settlement and multiplayer records are still unwired.
+
+### Building a connection-service checkpoint
+
+The room, signaling and optional credential services ship in the existing
+application image; there is no second application listener or coturn image here.
+To build a local artifact without publishing or deploying:
+
+```sh
+docker build -t low-pass:connection-checkpoint .
+docker image inspect low-pass:connection-checkpoint --format '{{.Id}} {{.Architecture}}'
+```
+
+Record the source commit and image ID together. A local build uses the builder's
+architecture; do not transfer an ARM64 image to the production AMD64 host.
+If an offline artifact is needed on a matching host, `docker image save` can
+export that tag to an operator-selected location outside the repository.
+GitHub's existing main-only workflow remains the publication path, requiring
+separate merge/push approval. These commands do not update the live deployment.
+
+Ansible owns the actual image selection, trusted CIDR values, secret mounts and
+environment settings. Keep the current origin, Traefik-only port 8080,
+read-only/non-root hardening and healthcheck. `/healthz` proves application
+health; `turn: true` in capabilities proves issuer configuration, **not coturn
+reachability**. Multiplayer still reports `false` until later UI/game integration.
+The handoff still requires operator-confirmed ICE URLs/transports and the
+container-side path for the existing coturn key; no secret value is needed here.
 
 ### Local formation preview (not networked)
 
