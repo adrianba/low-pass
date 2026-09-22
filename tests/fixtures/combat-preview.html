@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Low Pass - Shared combat preview</title>
+  <link rel="icon" href="data:,">
+  <style>
+    *{box-sizing:border-box}html,body{margin:0;height:100%;background:#101820;color:#e8f0f4;font:14px system-ui,sans-serif}
+    body{display:grid;grid-template-rows:auto minmax(0,1fr)}header{padding:12px 18px;background:#172833}
+    h1{font-size:19px;margin:0 0 5px}header p{margin:0;color:#ffd38d}main{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:0}
+    aside{padding:16px;overflow:auto;background:#15222c}label{display:block;margin-bottom:10px}
+    input,select,button{font:inherit;color:inherit;background:#243b49;border:1px solid #6f929f;border-radius:4px;padding:7px}
+    select,input[type=number]{display:block;width:100%;margin-top:4px}button{cursor:pointer;margin:0 4px 8px 0}
+    button:disabled{opacity:.5;cursor:default}.hint{font-size:12px;color:#afc4cc;line-height:1.5}
+    #stage{position:relative;min-height:0;min-width:0;overflow:hidden}canvas{display:block;width:100%;height:100%}
+    #hud,#status{position:absolute;left:14px;background:#101c27e8;padding:10px;border-radius:4px;white-space:pre-line;pointer-events:none}
+    #hud{top:12px;font-variant-numeric:tabular-nums}#status{right:14px;bottom:12px;max-height:35%;overflow:auto}
+    #status.error{color:#ffd38d;border:1px solid #d89843}
+    #reticle{position:absolute;width:30px;height:30px;border:2px solid #9dffcb;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;filter:drop-shadow(0 1px 2px #000)}
+    [hidden]{display:none!important}canvas:focus-visible,button:focus-visible{outline:2px solid #b4ffe2}
+    @media(max-width:900px){main{grid-template-columns:1fr;grid-template-rows:190px minmax(0,1fr)}aside{padding:10px;display:flex;gap:12px;flex-wrap:wrap;align-content:start}aside label{width:150px}aside .hint{max-width:300px}header{padding:8px}}
+  </style>
+</head>
+<body>
+  <header><h1>Low Pass - Shared combat preview</h1><p>Approved spacing v1. Local visual review only: no networking, audio or saved records.</p></header>
+  <main>
+    <aside>
+      <label>Course<select id="terrain"><option value="green-valley">Green Valley</option><option value="desert">Desert</option><option value="river-canyon">River Canyon</option></select></label>
+      <label>Seed<input id="seed" type="number" min="0" max="2147483647" value="7"></label>
+      <label>Starting pass (1-30)<input id="pass" type="number" min="1" max="30" value="1"></label>
+      <label>Quality<select id="quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+      <label>Scenario<select id="scenario"><option value="lead-first">Lead eliminated first</option><option value="follower-first">Follower eliminated first</option><option value="early-lead">Early lead misses / smoke crossing</option><option value="draw">Both miss / draw</option><option value="hits">Both hit continuously</option><option value="manual">Manual drops</option></select></label>
+      <button id="configure">Build course</button><button id="restart">Restart</button>
+      <label>Local pilot<select id="view"><option value="0">Lead</option><option value="1" selected>Follower</option></select></label>
+      <label><input id="assist" type="checkbox"> Impact assistance</label>
+      <button id="play">Play</button><button id="step">Step 1 second</button><button id="next-pass">Next pass / finish</button>
+      <button id="drop">Drop bomb (Space)</button>
+      <p class="hint">Scripted scenarios exercise separate scores, cumulative misses and either death order. The selected pilot automatically spectates after destruction.</p>
+      <p class="hint">Use Manual mode and click the canvas for Space. Earlier passes are scripted hits when starting above pass 1. Pause also freezes finales.</p>
+      <p class="hint">Review both views, smoke readability and the camera handoff. The early-miss scenario deliberately exercises an explosion near the surviving pilot's path.</p>
+    </aside>
+    <section id="stage" aria-label="Shared combat flight">
+      <canvas tabindex="0" aria-label="Shared combat preview canvas"></canvas>
+      <div id="hud"></div><div id="reticle" hidden aria-label="Predicted impact"></div>
+      <div id="status" role="status" aria-live="polite">Preparing shared combat...</div>
+    </section>
+  </main>
+  <script defer src="/combat-preview.js"></script>
+</body>
+</html>

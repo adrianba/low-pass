@@ -92,8 +92,8 @@ using a player's later final state. The multiplayer combat author freezes the
 currently active flight at the outcome's timestamp while retaining the bomb's
 original encounter/player ID. Thus a late bomb cannot pull its missile or finale
 back onto an obsolete flight path. Canyon authoring still requires an explicit
-world-space camera view. This is data/authoring support, not network combat or the
-multi-player effects renderer.
+world-space camera view. This is data/authoring support, not network-connected
+gameplay. Independent presentation is described below.
 
 Live damage/flyby continuations can include the next committed track when their
 2.8-second horizon crosses a handoff. Both segments are frozen numerically and
@@ -122,8 +122,38 @@ coverage rather than dropping required chunks or coarsening physical banks.
 
 The shared renderer is exercised by a test-only all-terrain browser fixture,
 including low/high quality, both camera views, different origins, overlapping
-targets and cleanup when returning to solo. It is not yet the manual combat
-preview: independent aircraft damage/finale presentation is the next step.
+targets and cleanup when returning to solo.
+
+### Independent combat checkpoint and local review
+
+`HostCombat` consumes each resolved outcome once and records a bounded set of
+player-attributed effects. Its camera provider obtains an actual Babylon
+world-space snapshot for each aircraft without moving the displayed camera.
+Finale envelopes also retain this initial camera; their chase timelines follow
+the frozen aircraft continuation rather than an ended or subsequently advanced
+session. Live missiles retain the actual next track when needed.
+
+`CombatTimeline` separates logical elimination from physical interception:
+damage appears at 1.7 seconds, the first destroyed pilot switches to the
+survivor's unchanged slot, and the last finale ends at 5.5 seconds. Pause freezes
+all presentation; resuming that presentation never revives an ended simulation.
+Both final poses/cameras remain reconstructible after other effects expire.
+Restoring an aged state does not replay old cues or repair existing damage.
+
+`SharedCombat` has eight pooled missile/explosion views and two persistent smoke
+pools. Absolute-age fragments and smoke reconstruct consistently across update
+rates and rebases. Each player retains independent damage, and the shared alpha
+texture/materials are reused without the `RawTexture.clone()` alpha regression.
+Reset clears all shared presentation without changing the solo template.
+
+The [local combat preview](../README.md#local-combat-preview-not-networked)
+exercises all three courses, either death order, ties, survivor spectating,
+independent assistance and held-key suppression. Starting at a later pass first
+plays the earlier passes sequentially. This is a visual-review fixture, not the
+finished multiplayer UI: no rooms, networking, audio or score persistence.
+Approved spacing is unchanged. Windows Edge review of smoke/explosion
+obstruction, bomb/target readability and camera switching remains a manual gate
+before treating these visuals as accepted; Chromium is not that acceptance.
 
 ### Local formation measurements and G1 approval
 

@@ -14,6 +14,7 @@
     "build": "tsc --noEmit && vite build && node scripts/copy-notices.mjs",
     "build:server": "tsc -p tsconfig.server.json",
     "build:formation-preview": "node scripts/build-formation-preview.mjs",
+    "build:combat-preview": "node scripts/build-combat-preview.mjs",
     "start:server": "node dist-server/index.js",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",

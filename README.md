@@ -136,6 +136,51 @@ FORMATION_PREVIEW_URL=http://127.0.0.1:8080/formation-preview.html \
 npx playwright test --project=chromium tests/e2e/formation-preview.spec.ts
 ```
 
+### Local combat preview (not networked)
+
+The separate combat fixture adds independent damage, missiles, destruction and
+survivor spectating to the approved formation. It has no networking, audio or
+saved records and is excluded from normal application builds.
+
+```sh
+npm run build:combat-preview
+docker build -t low-pass:combat-preview .
+```
+
+After stopping only your existing local preview if it occupies port 8080:
+
+```sh
+docker run --rm --name low-pass-combat-preview -p 8080:8080 \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges:true --stop-timeout 45 \
+  -e LOW_PASS_MULTIPLAYER_ENABLED=false \
+  --mount "type=bind,src=$PWD/test-results/combat-preview/combat-preview.html,dst=/opt/low-pass/dist/combat-preview.html,readonly" \
+  --mount "type=bind,src=$PWD/test-results/combat-preview/combat-preview.js,dst=/opt/low-pass/dist/combat-preview.js,readonly" \
+  low-pass:combat-preview
+```
+
+Open `http://localhost:8080/combat-preview.html`. Select a course and scenario,
+then **Build course** and **Play**. **Local pilot** selects either view; a destroyed
+pilot automatically spectates the survivor. **Next pass / finish** skips ahead;
+**Step 1 second** advances a paused view explicitly. Earlier passes are scripted
+hits when starting above pass 1. For manual releases, choose **Manual drops**,
+play and click the canvas before pressing Space. Assistance belongs only to the
+selected pilot. Pause/focus loss also freezes the final destruction sequence.
+
+Review both death orders, both views, passes 1 and 14, and the **Early lead misses /
+smoke crossing** scenario. Judge smoke/explosion obstruction, target and bomb
+readability, and the spectator camera switch. Spacing remains G1-approved v1.
+The supported canvas aspect range is 0.75-2.0; unsupported sizes explicitly pause.
+
+As with the formation fixture, rebuild artifacts after Playwright clears
+`test-results` and recreate the container to refresh individual file mounts.
+To exercise the actual mounted fixture rather than injecting current source:
+
+```sh
+TEST_URL=http://127.0.0.1:8080 COMBAT_PREVIEW_MOUNTED=1 \
+npx playwright test --project=chromium tests/e2e/combat-preview.spec.ts
+```
+
 ## Controls and rules
 
 | Control | Action |
