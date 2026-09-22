@@ -1,15 +1,12 @@
-import { z } from 'zod';
-import { capability, roomView } from '../../shared/protocol/rooms.js';
-import type { RoomView } from '../../shared/protocol/rooms.js';
-import { iceConfiguration } from '../../shared/protocol/ice.js';
+import type { RoomView, RoomMembership } from '../../shared/protocol/rooms.js';
+import { RoomClient, RoomClientError } from '../../src/network/room-client.js';
 import { RtcFixture } from './rtc.js';
 
 type Mode = 'direct' | 'auto' | 'udp' | 'tcp' | 'tls';
-const memberResponse = z.strictObject({ capability, room: roomView });
-const createdResponse = memberResponse.extend({ invitation: z.string().regex(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/) });
 class DiagnosticError extends Error {}
 export class ConnectivityDiagnostic {
-  private member: z.infer<typeof memberResponse> | null = null;
+  private readonly api = new RoomClient();
+  private member: RoomMembership | null = null;
   private invitation: string | null = null;
   private fixture: RtcFixture | null = null;
   private timer: ReturnType<typeof setInterval>;
@@ -26,43 +23,28 @@ export class ConnectivityDiagnostic {
   constructor(private readonly changed: () => void) {
     this.timer = setInterval(() => { void this.poll(); }, 250);
   }
-  private async post(path: string, body: unknown = {}, credential = this.member?.capability): Promise<unknown> {
-    let response: Response;
-    try {
-      response = await fetch('/api/multiplayer/' + path, { method: 'POST', cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', ...(credential ? { Authorization: `Bearer ${credential}` } : {}) },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
-    } catch { throw new DiagnosticError('Local service request failed.'); }
-    if (!response.ok) {
-      const error = z.strictObject({ error: z.string().regex(/^[a-z_]{1,64}$/) }).safeParse(await response.json());
-      throw new DiagnosticError(error.success ? `Service: ${error.data.error}` : `Service HTTP ${response.status}`);
-    }
-    return response.status === 204 ? null : response.json();
-  }
   private async action(work: () => Promise<void>) {
     if (this.busy) { this.error = 'Another diagnostic operation is running.'; this.changed(); return; }
     this.busy = true;
     this.error = null;
     this.changed();
     try { await work(); }
-    catch (error) { this.error = error instanceof DiagnosticError ? error.message : 'Diagnostic operation failed (details withheld).'; }
+    catch (error) { this.error = error instanceof DiagnosticError || error instanceof RoomClientError ? error.message : 'Diagnostic operation failed (details withheld).'; }
     finally { this.busy = false; this.changed(); }
   }
   host(accessCode: string) { return this.action(async () => {
     if (this.member) throw new DiagnosticError('Leave the current room first.');
-    const grant = z.strictObject({ capability, expiresInMs: z.number().positive() })
-      .parse(await this.post('host-authorizations', { accessCode }));
-    const created = createdResponse.parse(await this.post('rooms', {}, grant.capability));
+    const grant = await this.api.authorize(accessCode);
+    const created = await this.api.create(grant.capability);
     this.member = { capability: created.capability, room: created.room }; this.invitation = created.invitation;
   }); }
   join(invitation: string) { return this.action(async () => {
     if (this.member) throw new DiagnosticError('Leave the current room first.');
-    this.member = memberResponse.parse(await this.post('join', { invitation }));
+    this.member = await this.api.join(invitation);
   }); }
   admit() { return this.action(async () => {
     if (!this.member?.room.guestId) throw new DiagnosticError('No guest awaiting admission.');
-    const response = z.strictObject({ room: roomView }).parse(await this.post('room/admission',
-      { participantId: this.member.room.guestId, admit: true }));
+    const response = await this.api.admit(this.member.capability, this.member.room.guestId, true);
     this.member.room = response.room;
   }); }
   connect(mode: Mode) { return this.action(async () => {
@@ -71,7 +53,7 @@ export class ConnectivityDiagnostic {
     this.selectedMode = mode;
     let iceServers: RTCIceServer[] = [];
     if (mode !== 'direct') {
-      const config = iceConfiguration.parse(await this.post('room/ice'));
+      const config = await this.api.ice(this.member.capability);
       iceServers = config.iceServers.map(server => ({ ...server, urls: server.urls.filter(url => mode === 'auto' ||
         (mode === 'tls' ? url.startsWith('turns:') : url.startsWith('turn:') && url.endsWith(`?transport=${mode}`))) }))
         .filter(server => server.urls.length > 0);
@@ -99,7 +81,7 @@ export class ConnectivityDiagnostic {
     try {
       if (performance.now() - this.lastRoomPoll >= 2000) {
         this.lastRoomPoll = performance.now();
-        const current = z.strictObject({ room: roomView }).parse(await this.post('room/status'));
+        const current = await this.api.status(member.capability);
         if (this.member !== member || this.closing) return;
         this.member.room = current.room;
       }
@@ -109,7 +91,7 @@ export class ConnectivityDiagnostic {
       if (this.fixture?.peer?.status === 'open' && performance.now() - this.lastProbe >= 1000) {
         this.lastProbe = performance.now(); this.fixture.probe();
       }
-    } catch (error) { this.error = error instanceof DiagnosticError ? error.message : 'Connection setup failed (details withheld).'; }
+    } catch (error) { this.error = error instanceof DiagnosticError || error instanceof RoomClientError ? error.message : 'Connection setup failed (details withheld).'; }
     finally { this.polling = false; this.changed(); }
   }
   async report() {
@@ -129,7 +111,7 @@ export class ConnectivityDiagnostic {
     this.closing = true;
     try {
       await this.fixture?.close();
-      if (this.member) await this.post('room/leave');
+      if (this.member) await this.api.leave(this.member.capability);
     } finally {
       this.member = null; this.fixture = null; this.invitation = null; this.starting = false;
       this.sentPlan = null; this.closing = false; this.generation = 1;

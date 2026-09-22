@@ -25,6 +25,10 @@ function mount(source, destination) {
 mount(resolve(root, '.secret/turn-secret'), '/run/secrets/low-pass-turn-secret');
 mount(resolve(root, '.secret/hosting-code'), '/run/secrets/low-pass-hosting-code');
 for (const file of ['connectivity.html', 'connectivity.js']) mount(resolve(directory, file), `/opt/low-pass/dist/${file}`);
+const controls = resolve(root, process.env.ROOM_CONTROLS_DIR ?? 'test-results/room-controls');
+if (existsSync(controls)) for (const extension of ['html', 'js']) {
+  mount(resolve(controls, `room-controls.${extension}`), `/opt/low-pass/dist/room-controls.${extension}`);
+}
 for (const name of ['formation-preview', 'combat-preview']) for (const extension of ['html', 'js']) {
   const source = resolve(root, `test-results/${name}/${name}.${extension}`);
   if (existsSync(source)) mount(source, `/opt/low-pass/dist/${name}.${extension}`);

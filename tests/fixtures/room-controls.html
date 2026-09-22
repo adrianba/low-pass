@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Low Pass private-room controls preview</title>
+  <link rel="icon" href="data:,">
+  <style>
+    body { font: 16px "Segoe UI", sans-serif; color: #edf2fa; background: #14202b; max-width: 760px; margin: 30px auto; padding: 0 24px; }
+    label { display: block; margin: 16px 0 8px; }
+    input, button { font: inherit; padding: 10px; margin: 4px 0; }
+    input { max-width: 90%; }
+    button:disabled { opacity: .5; }
+    button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #d5e698; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    #host-error { color: #ffb4a8; }
+    a { color: #d5e698; }
+  </style>
+</head>
+<body>
+  <p>Private-room controls preview. This is not multiplayer gameplay; solo records are not changed.</p>
+  <main id="room-controls"></main>
+  <p><a href="/">Return to solo game</a></p>
+  <script src="/room-controls.js"></script>
+</body>
+</html>

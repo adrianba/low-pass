@@ -431,6 +431,18 @@ recovery under load and timestamp-fair gameplay remain later gates.
 
 ### Native peer transport checkpoint
 
+The subsequent host-controls increment adds a reusable, separately previewed
+hosting UI and a typed same-origin room API client (also reused by the diagnostic).
+It covers private-code clearing, invitation expiry/copy/manual fallback, explicit
+admission/decline and renewal, unavailable/error states, keyboard focus and Escape
+cancellation. Canceling a late successful creation closes its returned room;
+lost-response/cleanup uncertainty is surfaced and still bounded by server expiry.
+Membership snapshots contain no bearer credentials. Serialized polls cannot
+overwrite a newer admission, and failed polls wait for user-requested refresh.
+Node24 unit/real-service checks and real-browser controls pass. Guest controls,
+shared lobby, real manifest readiness and main-menu integration are separate
+increments; this is not a playable multiplayer release.
+
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
 the common transport interface. Candidates are generation-scoped, bounded and
 buffered until remote SDP; local candidates follow their description. Room-bound

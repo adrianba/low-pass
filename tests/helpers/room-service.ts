@@ -7,16 +7,21 @@ import { hashSecret } from '../../server/room-store.js';
 import { readTurnConfig } from '../../server/turn-config.js';
 import { readFile } from 'node:fs/promises';
 
-export async function roomService(options: { turnFile?: string; connectivity?: boolean } = {}) {
+export async function roomService(options: { turnFile?: string; connectivity?: boolean; roomControls?: boolean } = {}) {
   const code = 'browser-only-dummy-hosting-code-for-private-room-tests';
   let targetPort = 0;
   const html = options.connectivity ? await readFile(resolve('tests/fixtures/connectivity.html'), 'utf8') : null;
+  const controls = options.roomControls ? await readFile(resolve('tests/fixtures/room-controls.html'), 'utf8') : null;
   const turn = options.turnFile ? readTurnConfig({
     LOW_PASS_TURN_URLS: 'turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp',
     LOW_PASS_TURN_SECRET_FILE: options.turnFile,
   }, resolve('dist')) : { urls: ['turn:127.0.0.1:9?transport=udp'],
     key: createSecretKey(Buffer.from('dummy-coturn-key-for-browser-fixture-only')) };
   const proxy = createServer((request, response) => {
+    if (request.url === '/room-controls.html' && controls) {
+      response.setHeader('Content-Type', 'text/html'); response.setHeader('Cache-Control', 'no-store');
+      response.end(controls); return;
+    }
     if (request.url === '/connectivity.html' && html) {
       response.setHeader('Content-Type', 'text/html'); response.setHeader('Cache-Control', 'no-store');
       response.end(html); return;

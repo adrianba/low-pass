@@ -16,6 +16,7 @@
     "build:formation-preview": "node scripts/build-formation-preview.mjs",
     "build:combat-preview": "node scripts/build-combat-preview.mjs",
     "build:connectivity-preview": "node scripts/build-connectivity-preview.mjs",
+    "build:room-controls": "node scripts/build-room-controls.mjs",
     "start:server": "node dist-server/server/index.js",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",

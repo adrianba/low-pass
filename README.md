@@ -424,6 +424,36 @@ wait for verified initial plans and pause at readiness barriers rather than let
 missing plans consume a player's opportunity. No compression, quantization,
 flight-spacing, release-window or scoring change was needed.
 
+### Private-room controls checkpoint
+
+Reusable host controls now cover hosting-code entry, invitation expiry/copying,
+clipboard-denied manual copying, admission/decline, replacement invitations,
+refresh errors, and closing a room. The hosting input is cleared on submission
+and cancellation; capabilities remain in memory and never enter DOM state,
+URLs or browser storage. A bounded typed HTTP client is shared with the
+connectivity diagnostic. It validates responses, uses no-store/same-origin
+requests without cookies or redirects, and never automatically retries mutations.
+
+Canceling a creation waits for its bounded outstanding response and closes any
+returned room. If the response is lost, the UI reports the uncertainty rather
+than claiming cleanup; server expiry remains the fallback. Polls are serialized,
+stale responses cannot undo admission, and a failed poll requires an explicit
+refresh instead of repeatedly consuming service limits.
+
+These controls are not yet integrated into the game menu or a playable lobby.
+To add their separate local preview to the existing diagnostic launcher:
+
+```sh
+npm run build:room-controls
+# Start/restart only the local diagnostic backend using its existing launch command.
+```
+
+The launcher optionally mounts the generated `test-results/room-controls` files
+at `/room-controls.html`. `ROOM_CONTROLS_DIR` can select a stable copy outside
+test output directories. Use the separate local hosting code, never the TURN key.
+The preview clearly labels its incomplete gameplay integration and does not
+change solo records, settings, terrain or the approved aircraft formation.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,
