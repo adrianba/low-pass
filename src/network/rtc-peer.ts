@@ -8,6 +8,7 @@ import type { WireMessage } from '../../shared/protocol/messages.js';
 import { clientSignal, serverSignal } from '../../shared/protocol/signaling.js';
 import type { ClientSignal, ServerSignal } from '../../shared/protocol/signaling.js';
 import type { PeerTransport, SendResult, TransportEvent, TransportFailure, TransportStatus } from './transport.js';
+import { BytePacer } from './byte-pacer.js';
 
 export type OutgoingSignal = Exclude<ClientSignal, { type: 'auth' }>;
 export type PeerSignal = Extract<ServerSignal, { type: 'offer' | 'answer' | 'ice' }>;
@@ -16,7 +17,7 @@ export class RtcError extends Error {
   constructor(readonly code: RtcFailure) { super(`Peer connection failed: ${code}.`); }
 }
 export const RTC_LIMITS = Object.freeze({ bufferedBytes: 64 * 1024, bulkBytes: 32 * 1024, lowBytes: 16 * 1024,
-  inbox: 128, candidates: 128, queuedSignals: 130 });
+  bulkBytesPerSecond: 160 * 1024, bulkBurstBytes: MAX_WIRE_BYTES, inbox: 128, candidates: 128, queuedSignals: 130 });
 export interface RtcOptions {
   role: Role; sessionId: string; epoch: number; generation: number; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; signal: (message: OutgoingSignal) => void;
@@ -34,6 +35,8 @@ export class RtcPeer implements PeerTransport {
   private readonly pc: RTCPeerConnection;
   private readonly options: RtcOptions;
   private readonly channels: Partial<Record<Channel, RTCDataChannel>> = {};
+  private readonly bulkPacer = new BytePacer(RTC_LIMITS.bulkBytesPerSecond, RTC_LIMITS.bulkBurstBytes);
+  private pacingTimer: ReturnType<typeof setTimeout> | null = null;
   private state: TransportStatus = 'disconnected';
   private failureValue: RtcFailure | ProtocolError['code'] | null = null;
   private disposed = false;
@@ -237,12 +240,25 @@ export class RtcPeer implements PeerTransport {
     const channel = this.channels[label]!;
     if (channel.readyState !== 'open') { this.fail('channel'); return { ok: false, reason: 'not_open' }; }
     const limit = message.type === 'transfer-chunk' ? RTC_LIMITS.bulkBytes : RTC_LIMITS.bufferedBytes;
-    if (channel.bufferedAmount + byteLength(text) > limit) return { ok: false, reason: 'backpressure' };
-    try { channel.send(text); return { ok: true }; }
+    const bytes = byteLength(text), now = this.now();
+    if (channel.bufferedAmount + bytes > limit) return { ok: false, reason: 'backpressure' };
+    if (message.type === 'transfer-chunk') {
+      const delay = this.bulkPacer.delay(bytes, now);
+      if (delay > 0) {
+        if (this.options.writable && this.pacingTimer === null) this.pacingTimer = setTimeout(() => {
+          this.pacingTimer = null;
+          if (!this.disposed) this.options.writable?.();
+        }, delay);
+        return { ok: false, reason: 'backpressure' };
+      }
+    }
+    try { channel.send(text); }
     catch (error) {
       if (error instanceof DOMException && error.name === 'OperationError') return { ok: false, reason: 'backpressure' };
       this.fail('channel'); return { ok: false, reason: 'not_open' };
     }
+    if (message.type === 'transfer-chunk') this.bulkPacer.sent(bytes, now);
+    return { ok: true };
   }
   drain(): TransportEvent[] { const events = this.inbox; this.inbox = []; return events; }
   private fail(code: RtcFailure): void {
@@ -253,6 +269,7 @@ export class RtcPeer implements PeerTransport {
   private dispose(): void {
     this.stoppedAt ??= this.linkState();
     this.disposed = true; this.state = 'closed'; clearTimeout(this.timeout);
+    if (this.pacingTimer !== null) { clearTimeout(this.pacingTimer); this.pacingTimer = null; }
     this.pending = []; this.localCandidates = []; this.remoteCandidates = [];
     this.pc.ondatachannel = this.pc.onicecandidate = this.pc.onconnectionstatechange = null;
     this.pc.onicecandidateerror = null;

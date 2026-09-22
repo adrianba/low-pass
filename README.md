@@ -273,6 +273,10 @@ the hello is bounded and held until compatibility is verified.
 
 Wire messages remain at most 16 KiB. Each channel has a 64 KiB send watermark;
 bulk chunks stop at 32 KiB, preserving control-buffer space for small messages.
+Bulk chunks are additionally paced at 160 KiB/s of encoded wire bytes, with at
+most a 16 KiB idle burst. Commands and probes are not paced. This deliberately
+applies to direct connections too; it avoids route-dependent scheduling and
+leaves headroom under the deployed coturn 256 KiB/s per-session limit.
 The adapter reports backpressure instead of accumulating an outgoing queue.
 It bounds received events and ICE/negotiation queues, rejects unexpected channel
 modes, and disposes timers/handlers/channels on closure. Diagnostics expose only
@@ -394,8 +398,31 @@ earlier intermittent failure remains part of the record.
 Bulk-load application-probe maxima in this retest were approximately 2.31 seconds
 (UDP), 1.18 seconds (TCP) and 1.57 seconds (TLS), despite selected ICE-pair RTTs
 around 17-19 ms. Connectivity is established, but bulk scheduling/pacing still
-needs work before gameplay latency acceptance.
+needed work before gameplay latency acceptance.
 Two-computer Edge, long-match refresh and full-match acceptance remain outstanding.
+
+**Pacing checkpoint:** a subsequent fresh-source Chromium batch passed forced
+UDP, TCP and TLS with the bounded pacer. Peak application-probe RTTs were 56.1 ms,
+49.3 ms and 49.9 ms respectively. The same uncompressed 1,191,173-byte Canyon
+payload was hash-verified after 9.81-9.84 seconds from its received offer.
+This resolves the reproduced bulk-interference problem in that batch, not the
+earlier intermittent TCP negotiation failure or arbitrary Internet congestion.
+A second batch against the actual mounted page also passed direct/UDP/TCP/TLS;
+its relay maxima were 54.6/433.5/60.3 ms. The isolated TCP probe spike remains
+visible in the evidence; the improvement is not a promise of sub-60 ms latency.
+The live diagnostic has a 500 ms probe regression ceiling; it is not the game's
+eventual supported-latency or scoring-fairness envelope.
+
+Fifteen sequential plans per terrain, through the speed cap, retain every numeric
+value. Accounting for actual base64 chunks and worst-case envelope lengths,
+the longest ideal paced transfers are 8.734 seconds (Valley/Desert) and 13.633
+seconds (Canyon). Compared with the **preceding** encounter's lookahead interval,
+minimum headroom is 7.766 and 2.758 seconds respectively. These are ideal wire
+budgets, not measured worst-case delivery guarantees: timer/CPU delay, loss,
+other events and congestion consume the margin. The later game controller must
+wait for verified initial plans and pause at readiness barriers rather than let
+missing plans consume a player's opportunity. No compression, quantization,
+flight-spacing, release-window or scoring change was needed.
 
 ### Local formation preview (not networked)
 

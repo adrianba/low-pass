@@ -107,6 +107,30 @@ describe('bounded native peer adapter', () => {
     expect(peer.drain()).toMatchObject([{ type: 'failed', code: 'capacity' }, { type: 'status', status: 'closed' }]);
   });
 
+  it('paces bulk bytes without blocking commands or probes and wakes a stalled producer', () => {
+    const writable = vi.fn(), state = setup({ writable }); state.ready();
+    const chunk = { ...base, type: 'transfer-chunk' as const, transferId: 'chunk', index: 0, data: 'AAAA'.repeat(2700) };
+    expect(state.peer.send(chunk)).toEqual({ ok: true });
+    expect(state.peer.send(chunk)).toEqual({ ok: false, reason: 'backpressure' });
+    expect(state.peer.send(release('host'))).toEqual({ ok: true });
+    expect(state.peer.send({ ...base, type: 'ping', id: 1, sentAt: 0 })).toEqual({ ok: true });
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(100);
+    expect(writable).toHaveBeenCalledTimes(1);
+    expect(state.peer.send(chunk)).toEqual({ ok: true });
+    expect(state.peer.send(chunk)).toEqual({ ok: false, reason: 'backpressure' });
+    state.peer.close(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not spend paced credit when the native buffer rejects a send', () => {
+    const state = setup(); state.ready();
+    const chunk = { ...base, type: 'transfer-chunk' as const, transferId: 'chunk', index: 0, data: 'AAAA'.repeat(2700) };
+    vi.spyOn(state.pc.channels[0]!, 'send').mockImplementationOnce(() => { throw new DOMException('Full', 'OperationError'); });
+    expect(state.peer.send(chunk)).toEqual({ ok: false, reason: 'backpressure' });
+    expect(state.peer.send(chunk)).toEqual({ ok: true });
+    expect(state.peer.send(chunk)).toEqual({ ok: false, reason: 'backpressure' });
+  });
+
   it('buffers ICE before remote SDP, enforces generation/role, and emits the answer before local candidates', async () => {
     const { peer, pc, signal } = setup({ role: 'guest' });
     const candidate = { candidate: 'candidate:fixture', sdpMid: '0', sdpMLineIndex: 0 };

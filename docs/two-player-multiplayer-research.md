@@ -386,7 +386,48 @@ resolves the certificate blocker, not the remaining gameplay/Edge gates.
 No TCP timeout recurred in this batch, but the earlier failure is not erased.
 Maximum application-probe RTT during bulk transfer was about 2.31 seconds on UDP,
 1.18 seconds on TCP and 1.57 seconds on TLS, with selected ICE-pair RTTs about
-17-19 ms. Bounded bulk pacing/scheduling remains the next network-quality task.
+17-19 ms. The following pacing checkpoint addresses this reproduced interference.
+
+### Bounded relay pacing checkpoint
+
+The native adapter now meters `transfer-chunk` messages at 160 KiB/s of exact
+encoded UTF-8 bytes, with a 16 KiB maximum idle burst. Only successful native
+sends consume credit; backpressure schedules at most one writable wakeup, which
+is canceled on close. Commands and state probes retain their existing path.
+The existing 32 KiB bulk/64 KiB overall native-buffer bounds remain. The policy
+also applies to direct links rather than changing behavior when ICE picks a
+different route. It reserves headroom below the supplied coturn 256 KiB/s cap,
+not a guarantee of available bandwidth.
+
+A fresh-source Chromium batch passed forced relay/UDP, TCP and TLS with the same
+verified 1,191,173-byte Canyon plan. Offer-to-verification time was 9.81-9.84
+seconds; peak application-probe RTT across both peers was 56.1 ms, 49.3 ms and
+49.9 ms respectively. A 500 ms diagnostic regression guard now catches a return
+of the reproduced interference; it does not define the eventual gameplay latency
+envelope. No TCP negotiation timeout recurred; the earlier unexplained timeout
+remains recorded. All certificate checks remain enabled.
+A second batch against the mounted port-8080 artifact passed direct and all
+three relay modes, with relay maxima 54.6/433.5/60.3 ms (UDP/TCP/TLS). The TCP
+probe outlier remains unexplained; do not discard it or claim a sub-60 ms
+worst-case bound. Offer-to-verification time remained 9.83-9.84 seconds.
+
+The existing 15-sequential-pass tests now count the actual encoded chunks using
+worst-case envelope lengths. Largest logical payloads remain 1,044,618 bytes
+(Valley), 1,044,612 (Desert), and 1,630,410 (Canyon), without reducing precision.
+Longest ideal paced transfer times are 8.734 seconds for Valley/Desert and
+13.633 for Canyon. A future plan becomes available during the **previous**
+encounter, so its payload must be compared to that preceding interval, not its
+own duration. Minimum ideal headroom is 7.766 seconds for Valley/Desert and
+2.758 for Canyon. This calculation excludes network/CPU delay and competing
+events; startup and recovery still need explicit verified-plan barriers, and
+late lookahead must pause fairly instead of silently proceeding.
+
+Unit coverage checks byte accounting, bounded idle credit, failed-send credit,
+priority traffic, writable wakeups and cancellation. The expanded sequential
+serialization tests have a local 15-second test-runner timeout because they now
+encode/hash every full transfer as well as round-trip plans; gameplay timing
+and physical thresholds are unchanged. Two-PC Edge, >10-minute refresh,
+recovery under load and timestamp-fair gameplay remain later gates.
 
 ### Native peer transport checkpoint
 

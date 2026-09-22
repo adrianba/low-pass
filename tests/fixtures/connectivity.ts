@@ -118,6 +118,7 @@ export class ConnectivityDiagnostic {
       commandReceived: this.fixture?.messages.some(m => m.type === 'command') ?? false,
       rttSamples: this.fixture?.rttMs.length ?? 0,
       maximumRttMs: this.fixture?.rttMs.length ? Math.max(...this.fixture.rttMs) : null,
+      transferReceiveMs: this.fixture?.transferReceiveMs ?? null,
       sentPlan: this.sentPlan, receivedPlan: this.fixture?.received ?? null,
       backpressure: this.fixture?.backpressure ?? 0, errors: [...new Set(this.fixture?.errors ?? [])], error: this.error };
   }

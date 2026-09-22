@@ -12,6 +12,8 @@ import { MissileFlight } from '../../src/game/missile';
 import { FlightTrack } from '../../src/simulation/flight-track';
 import { FormationTrack } from '../../src/game/formation/track';
 import { STEP } from '../../src/config/game';
+import { createTransfer } from '../../src/network/transfer';
+import { RTC_LIMITS } from '../../src/network/rtc-peer';
 
 const context = { sessionId: base.sessionId, epoch: 0, peer: 'host' as const, channel: 'control' as const };
 function rejected(callback: () => unknown, code: ProtocolError['code']) {
@@ -90,15 +92,27 @@ describe('bounded shared multiplayer protocol', () => {
     expect(stampAt(8.314159265358).fraction).not.toBe(0);
   });
 
-  it.each(['green-valley', 'desert', 'river-canyon'] as const)('fits sequential %s plans through the speed cap without reducing numeric precision', terrain => {
+  it.each(['green-valley', 'desert', 'river-canyon'] as const)('fits sequential %s plans through the speed cap without reducing numeric precision', async terrain => {
     const scheduler = new FormationScheduler(terrain, 7);
-    let largest = 0;
+    let largest = 0, minimumPacingHeadroom = Infinity, lookaheadWindow: number | null = null, longestPacedTransfer = 0;
     for (let sequence = 0; sequence < 15; sequence++) {
       const plan = scheduler.plan();
       const text = encodePayload({ kind: 'formation', data: formationData(plan, sequence) });
       largest = Math.max(largest, byteLength(text));
       const decoded = decodePayload(text);
       if (decoded.kind !== 'formation') throw new Error('Wrong payload.');
+      const outgoing = await createTransfer(decoded, decoded.data.encounterId);
+      const worstEnvelope = { ...base, sessionId: 's'.repeat(128), epoch: Number.MAX_SAFE_INTEGER, sequence: Number.MAX_SAFE_INTEGER };
+      const wireBytes = outgoing.chunks.reduce((bytes, chunk) => bytes +
+        byteLength(encodeMessage({ ...worstEnvelope, type: 'transfer-chunk', ...chunk })), 0);
+      const seconds = wireBytes / RTC_LIMITS.bulkBytesPerSecond;
+      longestPacedTransfer = Math.max(longestPacedTransfer, seconds);
+      if (lookaheadWindow !== null) {
+        const headroom = lookaheadWindow - seconds;
+        minimumPacingHeadroom = Math.min(minimumPacingHeadroom, headroom);
+        expect(headroom).toBeGreaterThan(0);
+      }
+      lookaheadWindow = plan.handoffAt - plan.startAt;
       for (const slot of [0, 1] as const) {
         const data = decoded.data.attempts[slot];
         const imported = terrain === 'river-canyon' ? FlightTrack.fromData(data.track) : FormationTrack.fromData(data.track);
@@ -111,7 +125,8 @@ describe('bounded shared multiplayer protocol', () => {
     expect(largest).toBeLessThan(MAX_TRANSFER_BYTES);
     expect(scheduler.session.snapshot().players.map(p => p.score)).toEqual([1500, 1500]);
     console.info(`${terrain}: largest complete numeric plan ${largest} UTF-8 bytes`);
-  });
+    console.info(`${terrain}: longest ideal paced transfer ${longestPacedTransfer.toFixed(3)}s; minimum lookahead headroom ${minimumPacingHeadroom.toFixed(3)}s (network/CPU margin not guaranteed)`);
+  }, 15_000);
 
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('round-trips real %s plans, combat and checkpoint references without reauthoring', terrain => {
     const scheduler = new FormationScheduler(terrain, 7);

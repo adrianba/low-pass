@@ -18,6 +18,8 @@ export class RtcFixture {
   backpressure = 0;
   peerPresent = false;
   readonly rttMs: number[] = [];
+  transferReceiveMs: number | null = null;
+  private receiveStarted = 0;
   private readonly socket: WebSocket;
   private readonly receiver = new TransferReceiver(() => performance.now(), { maxTransfers: 2, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
   private outgoing: WireMessage[] = [];
@@ -95,12 +97,13 @@ export class RtcFixture {
         if (event.type === 'rejected') { this.errors.push(event.code); continue; }
         if (event.type !== 'message') continue;
         const message = event.message;
-        if (message.type === 'transfer-offer') this.receiver.offer(message.transfer);
+        if (message.type === 'transfer-offer') { this.receiver.offer(message.transfer); this.receiveStarted = performance.now(); }
         else if (message.type === 'transfer-chunk') {
           const completed = await this.receiver.accept({ transferId: message.transferId, index: message.index, data: message.data });
           if (completed) {
             if (completed.payload.kind !== 'formation') throw new Error('Wrong fixture transfer kind.');
             this.received = { digest: completed.reference.digest, bytes: byteLength(encodePayload(completed.payload)) };
+            this.transferReceiveMs = performance.now() - this.receiveStarted;
           }
         } else {
           if (this.messages.length >= 128) this.messages.shift();

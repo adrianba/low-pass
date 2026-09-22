@@ -71,6 +71,8 @@ async function exercise(browser: Browser, mode: Mode, info: TestInfo, live: bool
     for (const page of pages) {
       const report = await page.evaluate(() => window.connectivity.report());
       expect(report.error).toBeNull(); expect(report.errors).toEqual([]);
+      // A local diagnostic regression ceiling, not the game's eventual fairness envelope.
+      if (live) expect(report.maximumRttMs).toBeLessThan(500);
       expect(await page.evaluate(() => ({ ...localStorage }))).toEqual({ 'low-pass.records.v1': 'existing-local-records' });
     }
     if (!live) await guest.locator('#report').screenshot({ path: info.outputPath('redacted-report.png') });
