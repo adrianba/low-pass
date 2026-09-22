@@ -123,3 +123,80 @@ test('unavailable service, failed refresh and clipboard success are explicit and
     await expect(code).toBeFocused();
   } finally { await context.close(); await server.close(); }
 });
+
+test('guest controls consume a join link without auto-joining, follow decline/admission and preserve solo records', async ({ browser }, info) => {
+  const server = await roomService({ roomControls: true });
+  const hostContext = await browser.newContext(), guestContext = await browser.newContext();
+  const host = await hostContext.newPage(), guest = await guestContext.newPage();
+  try {
+    await load(host, server.origin);
+    await host.getByLabel('Hosting access code', { exact: true }).fill(server.code);
+    await host.getByRole('button', { name: 'CREATE ROOM', exact: true }).click();
+    const invitation = host.getByLabel('Room invitation', { exact: true }), link = host.getByLabel('Room join link');
+    await expect(invitation).toHaveValue(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    const first = await invitation.inputValue();
+    expect(await link.inputValue()).toBe(server.origin + '/room-controls.html#join=' + first);
+    await guest.addInitScript(() => localStorage.setItem('low-pass.records.v1', 'existing-guest-records'));
+    await guest.route('**/room-controls.js', route => route.fulfill({ contentType: 'text/javascript', body: script }));
+    await guest.goto(await link.inputValue());
+    const input = guest.getByLabel('Room invitation', { exact: true });
+    await expect(input).toHaveValue(first); await expect(input).toBeFocused();
+    expect(new URL(guest.url()).hash).toBe('');
+    expect(server.service.rooms!.store.counts.members).toBe(1);
+    await input.press('Enter');
+    await expect(guest.locator('#guest-status')).toContainText('Waiting for the host');
+    await expect(input).toHaveValue(''); await expect(guest.locator('#guest-status')).toBeFocused();
+    await host.getByRole('button', { name: 'DECLINE', exact: true }).click();
+    await expect(guest.locator('#guest-error')).toContainText('declined');
+    await expect(input).toBeVisible();
+    await host.getByRole('button', { name: 'NEW INVITATION', exact: true }).click();
+    await expect(invitation).toHaveValue(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    await input.fill(await invitation.inputValue()); await input.press('Enter');
+    await host.getByRole('button', { name: 'ADMIT PLAYER 2', exact: true }).click();
+    await expect(guest.locator('#guest-status')).toContainText('The host admitted you');
+    expect(await guest.evaluate(() => ({ ...localStorage }))).toEqual({ 'low-pass.records.v1': 'existing-guest-records' });
+    await guest.screenshot({ path: info.outputPath('guest-admitted.png') });
+    await guest.getByRole('button', { name: 'CANCEL / LEAVE ROOM', exact: true }).click();
+    await expect(input).toBeFocused();
+    await expect(host.locator('#host-error')).toContainText('closed this room');
+    expect(server.service.rooms!.store.counts.rooms).toBe(0);
+  } finally { await hostContext.close(); await guestContext.close(); await server.close(); }
+});
+
+test('guest invitation errors are explicit and a late canceled join frees its reserved slot', async ({ browser }) => {
+  const server = await roomService({ roomControls: true });
+  const context = await browser.newContext(), host = await context.newPage(), guest = await context.newPage();
+  let release = () => {};
+  try {
+    await load(host, server.origin); await load(guest, server.origin);
+    await guest.getByLabel('Room role').selectOption('guest');
+    const input = guest.getByLabel('Room invitation', { exact: true });
+    await expect(input).toBeFocused();
+    for (const error of ['invalid_invitation', 'invitation_expired', 'room_full'] as const) {
+      await guest.route('**/api/multiplayer/join', route => route.fulfill({
+        status: error === 'room_full' ? 409 : 410, contentType: 'application/json', body: JSON.stringify({ error }),
+      }));
+      await input.fill('ABCD-EFGH'); await input.press('Enter');
+      await expect(guest.locator('#guest-error')).toContainText(error === 'room_full' ? 'second player' : error === 'invitation_expired' ? 'expired' : 'invalid');
+      await expect(input).toBeFocused(); await expect(input).toHaveValue('');
+      await guest.unroute('**/api/multiplayer/join');
+    }
+    await host.getByLabel('Hosting access code', { exact: true }).fill(server.code);
+    await host.getByRole('button', { name: 'CREATE ROOM', exact: true }).click();
+    const invitation = host.getByLabel('Room invitation', { exact: true });
+    await expect(invitation).toHaveValue(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await guest.route('**/api/multiplayer/join', async route => {
+      const response = await route.fetch(); await held; await route.fulfill({ response });
+    });
+    await input.fill(await invitation.inputValue()); await input.press('Enter');
+    await expect.poll(() => server.service.rooms!.store.counts.members).toBe(2);
+    await guest.getByRole('button', { name: 'CANCEL / LEAVE ROOM', exact: true }).click();
+    await expect(guest.locator('#guest-status')).toContainText('Leaving the room');
+    release();
+    await expect(input).toBeEnabled();
+    await expect.poll(() => server.service.rooms!.store.counts.members).toBe(1);
+    await expect(invitation).toHaveValue('');
+    await host.getByRole('button', { name: 'CANCEL / CLOSE ROOM', exact: true }).click();
+  } finally { release(); await context.close(); await server.close(); }
+});

@@ -440,6 +440,15 @@ than claiming cleanup; server expiry remains the fallback. Polls are serialized,
 stale responses cannot undo admission, and a failed poll requires an explicit
 refresh instead of repeatedly consuming service limits.
 
+Guest controls now accept a typed invitation or a fragment-based join link.
+The fragment is removed from the address/history entry immediately; the guest
+still explicitly asks to join. Pending, declined, expired, replaced, full and
+closed-room states have clear messages. A canceled late successful join releases
+its reserved slot; an admitted guest leaving closes the room for both players.
+Host and guest reuse one role-checked membership lifecycle, and neither writes
+solo records or settings. Share links contain the invitation only, not query
+parameters, hosting codes or membership credentials.
+
 These controls are not yet integrated into the game menu or a playable lobby.
 To add their separate local preview to the existing diagnostic launcher:
 
@@ -453,6 +462,8 @@ at `/room-controls.html`. `ROOM_CONTROLS_DIR` can select a stable copy outside
 test output directories. Use the separate local hosting code, never the TURN key.
 The preview clearly labels its incomplete gameplay integration and does not
 change solo records, settings, terrain or the approved aircraft formation.
+Choose **Host** or **Join** in the preview. Both browser sessions must reach the
+same local service; a `localhost` link does not by itself connect another computer.
 
 ### Local formation preview (not networked)
 

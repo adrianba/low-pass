@@ -34,6 +34,7 @@ const messages = {
   network: 'The room service could not be reached. Check your connection and try again.',
   timeout: 'The room request timed out. Its outcome may be unknown; do not repeatedly create rooms.',
   creation_unknown: 'Room creation could not be confirmed. A room may remain open until it expires; wait before trying again.',
+  join_unknown: 'Joining could not be confirmed. Ask the host to cancel the pending invitation or close the room before trying again.',
   cancelled: 'The room request was canceled.',
   service_error: 'The room service could not complete the request. Try again later.',
   busy: 'Another room operation is still running.',
@@ -129,10 +130,16 @@ export class RoomClient {
       throw error;
     }
   }
-  join(invitation: string) {
+  async join(invitation: string) {
     const parsed = invitationRequest.safeParse({ invitation });
-    if (!parsed.success) return Promise.reject(new RoomClientError('invalid_request'));
-    return this.send('join', roomMembership, parsed.data);
+    if (!parsed.success) throw new RoomClientError('invalid_request');
+    try { return await this.send('join', roomMembership, parsed.data); }
+    catch (error) {
+      if (error instanceof RoomClientError && ['network', 'timeout', 'invalid_response', 'service_error'].includes(error.code)) {
+        throw new RoomClientError('join_unknown');
+      }
+      throw error;
+    }
   }
   status(credential: string, signal?: AbortSignal) { return this.send('room/status', roomStatus, {}, credential, signal); }
   admit(credential: string, participantId: string, admit: boolean) {

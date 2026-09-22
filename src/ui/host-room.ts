@@ -1,8 +1,9 @@
-import { HostRoom } from '../network/host-room.js';
-import type { HostRoomState } from '../network/host-room.js';
+import { RoomSession } from '../network/room-session.js';
+import type { RoomSessionState } from '../network/room-session.js';
+import { invitationLink } from '../network/invitation-link.js';
 
 export class HostRoomPanel {
-  readonly session: HostRoom;
+  readonly session: RoomSession;
   private disposed = false;
   constructor(private readonly root: HTMLElement) {
     root.classList.add('room-controls');
@@ -19,6 +20,9 @@ export class HostRoomPanel {
         <label for="host-invitation">Room invitation</label>
         <input id="host-invitation" readonly autocomplete="off" spellcheck="false">
         <button id="host-copy" type="button" class="secondary">COPY INVITATION</button>
+        <label for="host-link">Room join link</label>
+        <input id="host-link" readonly autocomplete="off" spellcheck="false">
+        <button id="host-copy-link" type="button" class="secondary">COPY JOIN LINK</button>
         <p id="host-expiry"></p>
         <button id="host-renew" type="button" class="secondary">NEW INVITATION</button>
         <div id="host-admission" hidden>
@@ -34,7 +38,7 @@ export class HostRoomPanel {
       <button id="host-recheck" type="button" class="secondary">CHECK SERVICE AGAIN</button>
       <button id="host-cancel" type="button" class="secondary">CANCEL / CLOSE ROOM</button>
     `;
-    this.session = new HostRoom(() => this.render());
+    this.session = new RoomSession('host', () => this.render());
     this.get<HTMLFormElement>('#host-create').onsubmit = event => {
       event.preventDefault();
       const input = this.get<HTMLInputElement>('#host-code'), code = input.value;
@@ -44,6 +48,7 @@ export class HostRoomPanel {
       });
     };
     this.get('#host-copy').onclick = () => { void this.copy(); };
+    this.get('#host-copy-link').onclick = () => { void this.copy(true); };
     this.get('#host-admit').onclick = () => { void this.session.admit(true); };
     this.get('#host-deny').onclick = () => { void this.session.admit(false); };
     this.get('#host-renew').onclick = () => { void this.session.renew(); };
@@ -75,17 +80,17 @@ export class HostRoomPanel {
     await this.session.leave();
     if (!this.disposed) this.get('#host-code').focus();
   }
-  private async copy() {
+  private async copy(link = false) {
     const invitation = this.session.state.invitation;
     if (!invitation) return;
     try {
-      await navigator.clipboard.writeText(invitation);
-      if (!this.disposed && this.session.state.invitation === invitation) this.text('#host-copy-status', 'Invitation copied.');
+      await navigator.clipboard.writeText(link ? invitationLink(invitation, location.href) : invitation);
+      if (!this.disposed && this.session.state.invitation === invitation) this.text('#host-copy-status', link ? 'Join link copied.' : 'Invitation copied.');
     } catch {
       if (!this.disposed && this.session.state.invitation === invitation) {
-        const input = this.get<HTMLInputElement>('#host-invitation');
+        const input = this.get<HTMLInputElement>(link ? '#host-link' : '#host-invitation');
         input.focus(); input.select();
-        this.text('#host-copy-status', 'Clipboard unavailable. The invitation is selected; copy it manually.');
+        this.text('#host-copy-status', `Clipboard unavailable. The ${link ? 'join link' : 'invitation'} is selected; copy it manually.`);
       }
     }
   }
@@ -100,6 +105,9 @@ export class HostRoomPanel {
     const input = this.get<HTMLInputElement>('#host-invitation');
     if (input.value !== (state.invitation ?? '')) { input.value = state.invitation ?? ''; this.text('#host-copy-status', ''); }
     this.get<HTMLButtonElement>('#host-copy').disabled = state.busy || !state.invitation;
+    const link = state.invitation ? invitationLink(state.invitation, location.href) : '';
+    if (this.get<HTMLInputElement>('#host-link').value !== link) this.get<HTMLInputElement>('#host-link').value = link;
+    this.get<HTMLButtonElement>('#host-copy-link').disabled = state.busy || !state.invitation;
     this.get<HTMLButtonElement>('#host-renew').disabled = state.busy || !room || room.state === 'admitted';
     this.get('#host-admission').hidden = room?.state !== 'pending';
     for (const selector of ['#host-admit', '#host-deny', '#host-refresh']) this.get<HTMLButtonElement>(selector).disabled = state.busy;
@@ -112,12 +120,12 @@ export class HostRoomPanel {
     this.text('#host-status', this.status(state));
     this.text('#host-error', state.error ?? '');
   }
-  private status(state: HostRoomState): string {
+  private status(state: RoomSessionState): string {
     if (state.closing) return 'Closing the room. Waiting for any outstanding request to finish.';
     if (state.busy) return 'Contacting the private-room service...';
     if (state.room?.state === 'admitted') return 'Both players admitted. Room controls are ready; network gameplay is not yet wired.';
     if (state.room?.state === 'pending') return 'Player 2 is waiting for your admission.';
-    if (state.room) return 'Waiting for your friend to enter the invitation.';
+    if (state.room) return state.invitation ? 'Waiting for your friend to enter the invitation.' : 'Create a new invitation for your friend.';
     return state.availability === 'available' ? 'Ready to create a private room.' : 'Private-room service unavailable. Solo play is unaffected.';
   }
   async dispose(): Promise<void> {

@@ -443,6 +443,15 @@ Node24 unit/real-service checks and real-browser controls pass. Guest controls,
 shared lobby, real manifest readiness and main-menu integration are separate
 increments; this is not a playable multiplayer release.
 
+The next increment adds guest controls using the same role-checked membership
+lifecycle. A join-link fragment is normalized and removed immediately, but joining
+still requires an explicit user action. Rejected/expired/revoked/full invitations,
+host admission, cancellation, late-response cleanup and either member closing
+an admitted room are exercised. Links never include hosting/member credentials
+or an existing query string. Guest settings and solo records are untouched.
+The separate `/room-controls.html` preview supports both roles; it is not yet a
+shared ready/terrain lobby or a networked game.
+
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
 the common transport interface. Candidates are generation-scoped, bounded and
 buffered until remote SDP; local candidates follow their description. Room-bound

@@ -1,14 +1,15 @@
 import type { RoomMembership, RoomView } from '../../shared/protocol/rooms.js';
+import type { Role } from '../../shared/protocol/limits.js';
 import { RoomClient, RoomClientError, roomClientError, roomEnded } from './room-client.js';
 
-type HostApi = Pick<RoomClient, 'capabilities' | 'authorize' | 'create' | 'status' | 'admit' | 'invitation' | 'leave'>;
-export interface HostRoomState {
+type RoomApi = Pick<RoomClient, 'capabilities' | 'authorize' | 'create' | 'join' | 'status' | 'admit' | 'invitation' | 'leave'>;
+export interface RoomSessionState {
   availability: 'checking' | 'available' | 'unavailable';
   busy: boolean; closing: boolean; room: RoomView | null; invitation: string | null; error: string | null;
 }
 
-export class HostRoom {
-  private availability: HostRoomState['availability'] = 'checking';
+export class RoomSession {
+  private availability: RoomSessionState['availability'] = 'checking';
   private member: RoomMembership | null = null;
   private invitationCode: string | null = null;
   private error: string | null = null;
@@ -18,8 +19,8 @@ export class HostRoom {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private pollAbort: AbortController | null = null;
   private revision = 0;
-  constructor(private readonly changed: () => void, private readonly api: HostApi = new RoomClient()) {}
-  get state(): HostRoomState {
+  constructor(readonly role: Role, private readonly changed: () => void, private readonly api: RoomApi = new RoomClient()) {}
+  get state(): RoomSessionState {
     return { availability: this.availability, busy: !!this.work || !!this.closing, closing: !!this.closing,
       room: this.closing || !this.member ? null : { ...this.member.room },
       invitation: this.closing ? null : this.invitationCode, error: this.error };
@@ -32,7 +33,7 @@ export class HostRoom {
   }
   private update(room: RoomView) {
     if (!this.member || room.roomId !== this.member.room.roomId || room.participantId !== this.member.room.participantId ||
-      room.role !== 'host') throw new RoomClientError('invalid_response');
+      room.role !== this.role) throw new RoomClientError('invalid_response');
     this.member = { ...this.member, room: { ...room } };
     if (room.state === 'admitted' || room.invitationExpiresInMs === 0) this.invitationCode = null;
   }
@@ -44,7 +45,7 @@ export class HostRoom {
     if (this.disposed) return Promise.resolve();
     if (this.work || this.closing) { this.error = new RoomClientError('busy').message; this.notify(); return Promise.resolve(); }
     this.stopPolling(); this.error = null;
-    this.work = Promise.resolve().then(work).catch(error => this.fail(error)).finally(() => {
+    this.work = Promise.resolve().then(() => this.closing || this.disposed ? undefined : work()).catch(error => this.fail(error)).finally(() => {
       this.work = null; this.notify();
       if (!this.error) this.schedulePoll();
     });
@@ -59,6 +60,7 @@ export class HostRoom {
   }
   create(accessCode: string): Promise<void> {
     return this.action(async () => {
+      if (this.role !== 'host') throw new RoomClientError('host_required');
       if (this.availability !== 'available') throw new RoomClientError('rooms_unavailable');
       if (this.member) throw new RoomClientError('busy');
       const grant = await this.api.authorize(accessCode);
@@ -69,14 +71,27 @@ export class HostRoom {
       this.invitationCode = created.invitation;
     });
   }
+  join(invitation: string): Promise<void> {
+    return this.action(async () => {
+      if (this.role !== 'guest') throw new RoomClientError('invalid_request');
+      if (this.availability !== 'available') throw new RoomClientError('rooms_unavailable');
+      if (this.member) throw new RoomClientError('busy');
+      const joined = await this.api.join(invitation);
+      if (joined.room.role !== 'guest' || joined.room.state !== 'pending' ||
+        joined.room.guestId !== joined.room.participantId) throw new RoomClientError('invalid_response');
+      this.member = { capability: joined.capability, room: { ...joined.room } };
+    });
+  }
   admit(admit: boolean): Promise<void> {
     return this.action(async () => {
+      if (this.role !== 'host') throw new RoomClientError('host_required');
       if (!this.member?.room.guestId || this.member.room.state !== 'pending') throw new RoomClientError('stale_admission');
       this.update((await this.api.admit(this.member.capability, this.member.room.guestId, admit)).room);
     });
   }
   renew(): Promise<void> {
     return this.action(async () => {
+      if (this.role !== 'host') throw new RoomClientError('host_required');
       if (!this.member) throw new RoomClientError('invalid_capability');
       const result = await this.api.invitation(this.member.capability);
       this.update(result.room); this.invitationCode = result.invitation;
