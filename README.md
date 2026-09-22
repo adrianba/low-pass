@@ -42,7 +42,8 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
-endpoints are preparation only: no rooms, signaling or relay credentials yet.
+endpoints are preparation only: opt-in private rooms exist, but there is no
+signaling, relay-credential issuance or playable multiplayer yet.
 Shared Zod protocol modules compile under `dist-server/shared`; the executable
 is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
@@ -62,7 +63,7 @@ with 503 while the HTTP service remains available. Intentionally disabled
 multiplayer returns 200 with `multiplayer: false`.
 `GET /api/multiplayer/capabilities` returns
 `{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
-unknown routes (including `/signal` and room endpoints) return 404 with no HTML
+unknown routes (including `/signal`, and room endpoints when disabled) return 404 with no HTML
 fallback. Static delivery supports HEAD, validators, ranges and compression;
 only hashed JS/CSS is immutable, while other assets revalidate. SIGTERM and
 SIGINT stop accepting connections, drain requests, then close remaining HTTP
@@ -74,17 +75,67 @@ connections at the shutdown deadline with a warning.
 | `LOW_PASS_SERVICE_HOST` | `127.0.0.1` | IP address; container explicitly uses `0.0.0.0` |
 | `LOW_PASS_STATIC_ROOT` | sibling `dist` | Absolute built-asset directory; symlinks are rejected |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
-| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | Only `false` in this build |
+| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | `false`, or `true` to enable the private-room preparation API with all settings below |
+| `LOW_PASS_PUBLIC_ORIGIN` | unset | Canonical HTTPS origin; HTTP loopback is allowed for local tests |
+| `LOW_PASS_TRUSTED_PROXY_CIDRS` | unset | Comma-separated explicit IP/CIDR ranges for the immediate proxy and trusted upstream proxies; universal `/0` ranges are rejected |
+| `LOW_PASS_HOSTING_CODE_FILE` | unset | Absolute private file outside the HTTP root; 32-256 printable ASCII characters, optionally followed by one newline |
 
 Invalid core listener/shutdown configuration exits with code 78. An unsupported
 multiplayer flag is logged explicitly without echoing its value; capabilities
 report `configuration_error` and multiplayer readiness becomes 503 without
-taking down the application service. No secrets are needed at this checkpoint.
+taking down the application service. No secrets are needed for default solo-only serving.
 The former private 8081 listener has been removed; this is a single listener.
 Missing/unreadable build output is fatal. Keep the build directory immutable
 while serving it; replace the container for releases rather than editing files.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
+
+### Private room service (preparation only)
+
+Deployment remains owned by the separate Ansible repository. The current
+deployment can keep `LOW_PASS_MULTIPLAYER_ENABLED=false`; nothing needs enabling
+for solo play or the local combat preview.
+
+The confirmed production path is Cloudflare -> Traefik -> Node, with Node
+unpublished on the `proxynet` Docker network. Traefik trusts Cloudflare's proxy
+addresses and has `forwardedHeaders.insecure=false`. Configure the application's
+allowlist with the actual trusted Traefik addresses/dedicated network and the
+trusted Cloudflare ranges; a Docker network name is not an IP range. Do not
+substitute all private networks or a fixed total hop count.
+
+Room requests require a trusted immediate peer and a valid `X-Forwarded-For`
+chain. The application walks from the proxy side to the nearest untrusted
+address, ignoring spoofed prefixes and `CF-Connecting-IP`. It does not enable
+unrestricted Express `trust proxy`. Direct Internet access to Node must remain
+blocked. Cloudflare does not need to be disabled.
+
+When explicitly enabled and configured, the following **POST-only** endpoints
+accept bounded JSON and the exact configured `Origin`. Credentials never belong
+in URLs; member operations use `Authorization: Bearer <capability>`.
+
+| Endpoint under `/api/multiplayer/` | Purpose |
+| --- | --- |
+| `host-authorizations` | Verify the separately shared hosting access code; issue a one-use, source-bound grant |
+| `rooms` | Consume that grant; create a room, host capability and separate `ABCD-EFGH` invitation |
+| `join` | Atomically reserve the guest slot using an invitation; issue a distinct guest capability |
+| `room/status` | Read the caller's own room and server-assigned role |
+| `room/admission` | Host approves or denies the identified pending guest |
+| `room/invitation` | Host revokes/rotates an invitation before admission |
+| `room/leave` | Cancel pending participation or close an admitted room; no replacement player or host migration |
+
+Default bounds: 16 rooms, two rooms per source, 64 host grants, one guest per
+room, 60-second grants/pending admissions, five-minute invitations, 15-minute
+authenticated idle leases and an eight-hour absolute room lifetime. These room
+cleanup leases do **not** replace the later 15-second connection-recovery rule.
+Authentication, joining, room creation, member operations and global traffic
+have bounded rate limits; capacity/rate/expiry failures are explicit. Credentials
+and access codes must be excluded from proxy request-body/header logs.
+
+Capabilities/readiness report `rooms: true` only for a healthy configured room
+service, while `multiplayer` remains `false`. Invalid optional settings or room
+maintenance failure leave static serving healthy. A declared secret file
+mistakenly placed in the static root is excluded from HTTP delivery, and room
+activation is rejected. No hosting code is supplied in the repository.
 
 ### Local formation preview (not networked)
 

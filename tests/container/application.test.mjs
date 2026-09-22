@@ -3,7 +3,9 @@ import { Buffer } from 'node:buffer';
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { performance } from 'node:perf_hooks';
@@ -264,4 +266,35 @@ test('unexpected container commands are rejected rather than silently ignored', 
   await assert.rejects(docker('run', '--rm', '--read-only', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges:true', image, 'unexpected-command'),
   error => error.code === 64 && error.stderr.includes('do not override its command'));
+});
+
+test('explicit private-room activation works with a read-only secret mount and trusted proxy chain', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'low-pass-room-container-'));
+  const path = join(directory, 'test-code'), code = 'container-only-dummy-code-never-production';
+  await writeFile(path, code, { mode: 0o444 });
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const gateway = await docker('network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}');
+  const container = await start(t, [
+    '-e', 'LOW_PASS_MULTIPLAYER_ENABLED=true', '-e', 'LOW_PASS_PUBLIC_ORIGIN=https://room-test.example',
+    '-e', `LOW_PASS_TRUSTED_PROXY_CIDRS=${gateway}/32,173.245.48.0/20`,
+    '-e', 'LOW_PASS_HOSTING_CODE_FILE=/run/low-pass-test-code',
+    '--mount', `type=bind,src=${path},dst=/run/low-pass-test-code,readonly`,
+  ]);
+  assert.deepEqual(await (await container.response('/api/multiplayer/capabilities')).json(),
+    { multiplayer: false, reason: 'not_implemented', rooms: true });
+  const headers = { 'Content-Type': 'application/json', Origin: 'https://room-test.example',
+    'X-Forwarded-For': '203.0.113.10,173.245.48.5' };
+  const authorized = await container.response('/api/multiplayer/host-authorizations',
+    { method: 'POST', headers, body: JSON.stringify({ accessCode: code }) });
+  assert.equal(authorized.status, 201);
+  const grant = await authorized.json();
+  const created = await container.response('/api/multiplayer/rooms',
+    { method: 'POST', headers: { ...headers, Authorization: `Bearer ${grant.capability}` }, body: '{}' });
+  assert.equal(created.status, 201);
+  const room = await created.json();
+  assert.match(room.invitation, /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+  const output = await logs(container.id);
+  for (const value of [code, grant.capability, room.capability, room.invitation]) assert.ok(!output.includes(value));
+  assert.equal((await container.response('/run/low-pass-test-code')).status, 404);
+  await docker('exec', container.id, 'node', '/opt/low-pass/dist-server/server/healthcheck.js');
 });

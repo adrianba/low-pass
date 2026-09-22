@@ -3,10 +3,12 @@ import type { Socket } from 'node:net';
 import express from 'express';
 import type { ServiceConfig } from './config.js';
 import { compress, httpErrors, securityHeaders, staticFiles, validateStaticRoot } from './static.js';
+import { RoomApi } from './room-api.js';
 
 export class ApplicationService {
   private closing: Promise<void> | null = null;
   private readonly sockets = new Set<Socket>();
+  readonly rooms: RoomApi | null;
   readonly server = createServer({
     maxHeaderSize: 8192,
     headersTimeout: 5000,
@@ -17,6 +19,7 @@ export class ApplicationService {
 
   constructor(private readonly config: ServiceConfig, private readonly warn: (message: string) => void) {
     const root = validateStaticRoot(config.staticRoot);
+    this.rooms = config.multiplayer.status === 'rooms' ? new RoomApi(config.multiplayer.config, warn) : null;
     const app = express();
     app.disable('x-powered-by');
     app.set('case sensitive routing', true);
@@ -35,6 +38,7 @@ export class ApplicationService {
         bodyLimit(request, response, next);
       } else next();
     });
+    if (this.rooms) app.use(this.rooms.handle);
     app.use((request, response, next) => {
       const path = decodeURIComponent(request.path);
       const known = ['/healthz', '/livez', '/readyz', '/api/multiplayer/readyz', '/api/multiplayer/capabilities'].includes(path);
@@ -50,13 +54,15 @@ export class ApplicationService {
         response.type('text/plain').send('ok\n');
       } else if (path === '/livez') {
         response.json({ status: 'ok' });
-      } else if (path === '/api/multiplayer/readyz' && config.multiplayer.status === 'unavailable') {
-        response.status(503).json({ error: 'multiplayer_unavailable', reason: config.multiplayer.reason });
+      } else if (path === '/api/multiplayer/readyz' && (config.multiplayer.status === 'unavailable' || this.rooms?.available === false)) {
+        response.status(503).json({ error: 'multiplayer_unavailable',
+          reason: this.rooms?.available === false ? 'service_error' : config.multiplayer.reason });
       } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
-        response.json({ status: 'ready', multiplayer: false });
-      } else response.json({ multiplayer: false, reason: config.multiplayer.reason });
+        response.json({ status: 'ready', multiplayer: false, ...(this.rooms ? { rooms: this.rooms.available } : {}) });
+      } else response.json({ multiplayer: false, reason: this.rooms?.available === false ? 'service_error' : config.multiplayer.reason,
+        ...(this.rooms ? { rooms: this.rooms.available } : {}) });
     });
-    app.use(...staticFiles(root));
+    app.use(...staticFiles(root, config.privateFiles));
     app.use(httpErrors(warn));
     this.server.on('request', app);
     this.server.on('connection', socket => {
@@ -84,6 +90,7 @@ export class ApplicationService {
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
+    this.rooms?.close();
     this.closing = new Promise<void>((resolve, reject) => {
       if (!this.server.listening) { resolve(); return; }
       const deadline = setTimeout(() => {

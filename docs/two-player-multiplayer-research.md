@@ -235,6 +235,36 @@ is deliberately held at release time: neither that test nor the fake network
 proves fair remote release settlement or actual Internet/ICE/TURN behavior.
 Those remain later milestones and the two-computer Edge gate.
 
+### Private room authorization checkpoint
+
+The operator confirmed Cloudflare -> Traefik -> Node, no Internet-published
+Node port, the shared `proxynet` Docker network, Cloudflare trusted proxy IPs
+in Traefik, and `forwardedHeaders.insecure=false`. This resolved the proxy
+integration question. The application requires explicit trusted CIDRs at
+activation; no Docker subnet is inferred from its name, and no infrastructure
+configuration is changed here.
+
+Opt-in POST APIs now authorize hosting through a private server-side access-code
+file, consume short-lived single-use/source-bound host grants, generate separate
+invitations and host/guest capabilities, reserve exactly one guest atomically,
+and require host admission. Rotation, denial, cancellation, expiry, capacity and
+rate-limit failures have explicit responses. Admitted members cannot replace a
+player; leaving closes the room and revokes both capabilities.
+
+The server stores hashes of credentials/invitations, not bearer values. Private
+operations require the configured Origin and a validated proxy chain and reject
+query-string credentials. Client addresses are determined right-to-left from
+explicitly trusted peers rather than trusting arbitrary forwarding headers or a
+fixed Cloudflare hop count. Generic, authorization, join, creation, room and
+member rate limits have bounded bookkeeping. The access-code file is outside the
+asset root; accidental placement under that root rejects activation and excludes
+the declared file from static serving.
+
+This is a tested room-service boundary, not a lobby or networked game. The
+capabilities endpoint remains truthful (`multiplayer: false`, with `rooms: true`
+only for the explicitly configured healthy service). Production stays disabled
+until an authorized future handoff. See the [application settings and room API](../README.md#private-room-service-preparation-only).
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user

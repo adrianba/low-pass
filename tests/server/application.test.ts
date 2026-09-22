@@ -122,9 +122,9 @@ describe('service configuration', () => {
     expect(() => readServiceConfig({ LOW_PASS_SERVICE_PORT: port })).toThrow(/LOW_PASS_SERVICE_PORT/);
   });
 
-  it('reports unsupported multiplayer activation but rejects invalid core configuration without echoing input', () => {
+  it('reports incomplete room activation but rejects invalid core configuration without echoing input', () => {
     expect(readServiceConfig({ LOW_PASS_MULTIPLAYER_ENABLED: 'true' }).multiplayer)
-      .toMatchObject({ status: 'unavailable', reason: 'configuration_error', message: expect.stringContaining('not implemented') });
+      .toMatchObject({ status: 'unavailable', reason: 'configuration_error', message: expect.stringContaining('LOW_PASS_PUBLIC_ORIGIN') });
     expect(() => readServiceConfig({ LOW_PASS_SHUTDOWN_TIMEOUT_MS: '30001' })).toThrow(/SHUTDOWN_TIMEOUT/);
     expect(() => readServiceConfig({ LOW_PASS_SERVICE_PORT: 'secret-value' })).toThrow(
       'LOW_PASS_SERVICE_PORT must be an integer from 1 to 65535.');

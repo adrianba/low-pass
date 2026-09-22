@@ -1,6 +1,6 @@
 import { accessSync, constants, readdirSync, realpathSync, statSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import express from 'express';
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import compression from 'compression';
@@ -46,7 +46,17 @@ export const compress = compression({
   filter: (request, response) => !request.headers.range && compression.filter(request, response),
 });
 
-export function staticFiles(root: string): RequestHandler[] {
+export function staticFiles(root: string, privateFiles: readonly string[] = []): RequestHandler[] {
+  const blocked = new Set(privateFiles.map(path => resolve(path)));
+  for (const path of privateFiles) {
+    try { blocked.add(realpathSync(path)); }
+    catch (error) {
+      if (!(error instanceof Error) || !('code' in error) ||
+        !['ENOENT', 'ENOTDIR', 'EACCES', 'ELOOP', 'ENAMETOOLONG'].includes(String(error.code))) {
+        throw new ServiceConfigurationError('Cannot establish private-file exclusions.');
+      }
+    }
+  }
   const guard: RequestHandler = async (request, response, next) => {
     let path: string;
     try { path = decodeURIComponent(request.path); }
@@ -67,6 +77,7 @@ export function staticFiles(root: string): RequestHandler[] {
     if (path === '/') { request.url = '/index.html'; path = '/index.html'; }
     try {
       const target = await realpath(join(root, path));
+      if (blocked.has(target)) { response.status(404).json({ error: 'not_found' }); return; }
       const local = relative(root, target);
       if (local === '..' || local.startsWith(`..${sep}`)) {
         response.status(403).json({ error: 'forbidden' });

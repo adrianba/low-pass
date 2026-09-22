@@ -1,11 +1,13 @@
 export type MultiplayerAvailability =
   | { status: 'disabled'; reason: 'not_implemented' }
-  | { status: 'unavailable'; reason: 'configuration_error'; message: string };
+  | { status: 'unavailable'; reason: 'configuration_error'; message: string }
+  | { status: 'rooms'; reason: 'not_implemented'; config: RoomConfig };
 
 export interface ServiceConfig {
   port: number;
   host: string;
   staticRoot: string;
+  privateFiles?: readonly string[];
   shutdownTimeoutMs: number;
   multiplayer: MultiplayerAvailability;
 }
@@ -29,18 +31,27 @@ export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig {
   if (!isAbsolute(staticRoot) || staticRoot.includes('\0')) {
     throw new ServiceConfigurationError('LOW_PASS_STATIC_ROOT must be an absolute build-directory path.');
   }
-  const disabled = env.LOW_PASS_MULTIPLAYER_ENABLED === undefined || env.LOW_PASS_MULTIPLAYER_ENABLED === 'false';
+  let multiplayer: MultiplayerAvailability = { status: 'disabled', reason: 'not_implemented' };
+  if (env.LOW_PASS_MULTIPLAYER_ENABLED === 'true') {
+    try { multiplayer = { status: 'rooms', reason: 'not_implemented', config: readRoomConfig(env, staticRoot) }; }
+    catch (error) {
+      if (!(error instanceof RoomConfigurationError)) throw error;
+      multiplayer = { status: 'unavailable', reason: 'configuration_error', message: error.message };
+    }
+  } else if (env.LOW_PASS_MULTIPLAYER_ENABLED !== undefined && env.LOW_PASS_MULTIPLAYER_ENABLED !== 'false') {
+    multiplayer = { status: 'unavailable', reason: 'configuration_error', message: 'LOW_PASS_MULTIPLAYER_ENABLED must be true or false.' };
+  }
   return {
     host,
     staticRoot,
+    privateFiles: env.LOW_PASS_HOSTING_CODE_FILE && isAbsolute(env.LOW_PASS_HOSTING_CODE_FILE) ? [env.LOW_PASS_HOSTING_CODE_FILE] : [],
     port: integer(env, 'LOW_PASS_SERVICE_PORT', 8080, 65535),
     shutdownTimeoutMs: integer(env, 'LOW_PASS_SHUTDOWN_TIMEOUT_MS', 5000, 30_000),
-    multiplayer: disabled ? { status: 'disabled', reason: 'not_implemented' } : {
-      status: 'unavailable', reason: 'configuration_error',
-      message: 'LOW_PASS_MULTIPLAYER_ENABLED must be false; multiplayer is not implemented in this build.',
-    },
+    multiplayer,
   };
 }
 import { isIP } from 'node:net';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readRoomConfig, RoomConfigurationError } from './room-config.js';
+import type { RoomConfig } from './room-config.js';
