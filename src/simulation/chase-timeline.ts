@@ -15,6 +15,21 @@ interface Sample {
   readonly position: Readonly<Vec3>;
   readonly target: Readonly<Vec3>;
 }
+export function sampleChase(samples: readonly Sample[], time: number): ChaseView {
+  if (samples.length < 2 || !Number.isFinite(time) || time < samples[0]!.time || time > samples.at(-1)!.time) {
+    throw new Error('Chase time exceeds authored coverage.');
+  }
+  let lo = 0, hi = samples.length - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (samples[mid]!.time < time) lo = mid; else hi = mid;
+  }
+  const a = samples[lo]!, b = samples[hi]!, alpha = (time - a.time) / (b.time - a.time);
+  const vector = (a: Vec3, b: Vec3): Vec3 => ({
+    x: mix(a.x, b.x, alpha), y: mix(a.y, b.y, alpha), z: mix(a.z, b.z, alpha),
+  });
+  return { position: vector(a.position, b.position), target: vector(a.target, b.target) };
+}
 export interface ViewportEnvelope { readonly minAspect: number; readonly maxAspect: number }
 export interface AcquisitionWindow {
   readonly target: Readonly<Vec3>;
@@ -77,17 +92,7 @@ export class ChaseTimeline {
     if (!Number.isFinite(time) || time < this.startTime || time > this.endTime) {
       throw new Error('Chase time exceeds authored coverage.');
     }
-    let lo = 0, hi = this.samples.length - 1;
-    while (lo + 1 < hi) {
-      const mid = (lo + hi) >> 1;
-      if (this.samples[mid]!.time < time) lo = mid; else hi = mid;
-    }
-    const a = this.samples[lo]!, b = this.samples[hi]!;
-    const alpha = (time - a.time) / (b.time - a.time);
-    const vector = (a: Vec3, b: Vec3): Vec3 => ({
-      x: mix(a.x, b.x, alpha), y: mix(a.y, b.y, alpha), z: mix(a.z, b.z, alpha),
-    });
-    return { position: vector(a.position, b.position), target: vector(a.target, b.target) };
+    return sampleChase(this.samples, time);
   }
 
   acquire(window: AcquisitionWindow): number {

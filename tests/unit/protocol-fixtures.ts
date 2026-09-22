@@ -9,10 +9,10 @@ export const base = { version: 1 as const, sessionId: 'test-session', epoch: 0, 
 export const reference = { id: 'encounter-0', digest: hash };
 export const snapshot = (): Snapshot => ({
   at: { tick: 0, fraction: 0 }, status: 'running', planRevision: 0, eventSequence: 0, lastInputs: [0, 0],
-  plans: [reference], effects: [], wrecks: [], winner: null,
+  plans: [reference], effects: [], wrecks: [], results: [], winner: null,
   players: [
-    { slot: 0, score: 0, misses: 0, assistance: false, assisted: false, eliminated: false, bomb: null },
-    { slot: 1, score: 0, misses: 0, assistance: false, assisted: false, eliminated: false, bomb: null },
+    { slot: 0, score: 0, misses: 0, lastResolved: null, assistance: false, assisted: false, eliminated: false, bomb: null },
+    { slot: 1, score: 0, misses: 0, lastResolved: null, assistance: false, assisted: false, eliminated: false, bomb: null },
   ],
 });
 export const hello = (): WireMessage => ({ ...base, type: 'hello', compatibility: { ...versions }, viewport: { aspect: 1.15 } });

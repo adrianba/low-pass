@@ -1029,8 +1029,30 @@ including third misses. Replayed contacts/results and eliminated poses retain
 their canonical historical times. Pause settlement uses a monotonic wall-clock
 deadline while simulation remains frozen, followed by an explicit epoch change.
 Core release IDs require mapping to the publishing controller's wire event
-sequence before acknowledgement. Guest reconciliation and native game wiring
-remain separate steps; this is not an accepted in-flight latency envelope.
+sequence before acknowledgement. Native game wiring remains separate; this is
+not an accepted in-flight latency envelope.
+
+**Guest replication checkpoint:** complete snapshots now include canonical bomb
+step counts, retained outcomes and monotonic result/input watermarks. Verified
+numeric tracks/cameras are evaluated without candidate selection. Reliable event
+and plan revisions gate unreliable snapshots; validated checkpoints can bypass
+missing history. Rejected state cannot advance delivery watermarks. Exact plan
+acknowledgements precede publication, with bounded staging and explicit gaps.
+Presentation uses a separate, at-most-32 complete-snapshot history, not partially
+applied result/combat events. Its references pin retired resources until no longer
+needed; equal-time samples coalesce. The cache still enforces its original byte
+and object limits, including pins.
+
+Clock estimation retains intervals rather than claiming exact synchronization:
+bounded probe/sample history, asymmetric RTT, 1000 ppm relative drift budget and
+1 ms timestamp uncertainty. Presentation has provisional 50 ms delay, 1% maximum
+slew, 100 ms correction/resync threshold and 500 ms freshness/extrapolation bound.
+Pause/resume preserves a monotonic displayed-time floor. Tests cover exact
+transferred motion, bomb checkpoints, payload/event reordering, combat dependency
+retention, outcome finality, rejected course discontinuity, and 10/20/30 Hz fault
+delivery. Browser WebCrypto/fault transport reproduces both real 100-point results.
+This is not native playable-game, finale-clock or recovery acceptance; those
+require the controller/presentation integration below.
 
 ### 7.1 Do not score by arrival time
 

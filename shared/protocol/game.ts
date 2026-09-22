@@ -29,6 +29,10 @@ export function stampAt(time: number): Stamp {
   return stamp.parse({ tick, fraction: scaled - tick });
 }
 export function secondsAt(time: Stamp): number { const value = stamp.parse(time); return (value.tick + value.fraction) / PHYSICS_HZ; }
+export function compareStamps(a: Stamp, b: Stamp): number {
+  const left = stamp.parse(a), right = stamp.parse(b);
+  return Math.sign(left.tick - right.tick) || Math.sign(left.fraction - right.fraction);
+}
 
 export const compatibility = z.strictObject({
   protocol: z.literal(PROTOCOL_VERSION), build: digest, assets: digest,
@@ -115,8 +119,10 @@ export const result = z.strictObject({
   v.misses <= v.sequence + 1 && (v.points === 0 ? v.misses > 0 : v.impact?.kind === 'ground' && v.misses < 3));
 const player = (id: 0 | 1) => z.strictObject({
   slot: z.literal(id), score, misses: z.number().int().min(0).max(3),
+  lastResolved: sequence.nullable(),
   assistance: z.boolean(), assisted: z.boolean(), eliminated: z.boolean(),
-  bomb: z.strictObject({ sequence, releasedAt: stamp, position: vector, velocity: vector }).nullable(),
+  bomb: z.strictObject({ sequence, releasedAt: stamp, steps: z.number().int().min(0).max(20 * PHYSICS_HZ),
+    position: vector, velocity: vector }).nullable(),
 }).refine(v => v.eliminated === (v.misses === 3) && (!v.assistance || v.assisted) && (!v.eliminated || v.bomb === null));
 export const snapshot = z.strictObject({
   at: stamp, status: z.enum(['running', 'paused', 'blocked', 'over']), planRevision: counter,
@@ -124,9 +130,13 @@ export const snapshot = z.strictObject({
   plans: z.array(reference).min(1).max(MAX_PLANS),
   effects: z.array(z.strictObject({ ...reference.shape, bornAt: seconds })).max(MAX_EFFECTS),
   wrecks: z.array(identifier).max(MAX_PLANS),
+  results: z.array(result).max(MAX_PLANS * 2),
   players: z.tuple([player(0), player(1)]), winner: z.union([slot, z.literal('draw')]).nullable(),
 }).refine(v => new Set(v.plans.map(p => p.id)).size === v.plans.length &&
   new Set(v.effects.map(e => e.id)).size === v.effects.length && new Set(v.wrecks).size === v.wrecks.length &&
+  new Set(v.results.map(r => r.id)).size === v.results.length &&
+  v.results.every(r => v.players[r.slot].lastResolved !== null && r.sequence <= v.players[r.slot].lastResolved! &&
+    compareStamps(stampAt(r.time), v.at) <= 0 && r.score <= v.players[r.slot].score && r.misses <= v.players[r.slot].misses) &&
   v.wrecks.every(id => v.plans.some(p => p.id === id)) &&
   (v.status === 'over' ? v.players.every(p => p.eliminated) &&
     v.winner === (v.players[0].score === v.players[1].score ? 'draw' : v.players[0].score > v.players[1].score ? 0 : 1) :

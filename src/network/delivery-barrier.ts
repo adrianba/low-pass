@@ -14,6 +14,11 @@ export class DeliveryBarrier {
   private snapshot = -1;
   constructor(private readonly sessionId: string, private readonly epoch: number) {}
   get watermarks() { return { planRevision: this.revision, eventSequence: this.event, snapshotSequence: this.snapshot }; }
+  copy(): DeliveryBarrier {
+    const copy = new DeliveryBarrier(this.sessionId, this.epoch);
+    copy.revision = this.revision; copy.event = this.event; copy.snapshot = this.snapshot;
+    return copy;
+  }
 
   consider(value: OrderedMessage, has: HasReference, checkpoint?: CompletedTransfer): DeliveryDecision {
     const message = decodeMessage(encodeMessage(value), { sessionId: this.sessionId, epoch: this.epoch,

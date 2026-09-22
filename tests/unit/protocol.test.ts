@@ -35,7 +35,7 @@ describe('bounded shared multiplayer protocol', () => {
       { ...base, type: 'ack', slot: 1, inputSequence: 1, decision: { accepted: false, reason: 'too_old' } },
       { ...base, type: 'event', eventSequence: 1, planRevision: 0, event: {
         action: 'released', slot: 1, sequence: 0, plan: reference, at: { tick: 120, fraction: 0.4 }, inputSequence: 1 } },
-      { ...base, type: 'snapshot', state: snapshot() },
+      { ...base, type: 'snapshot', sampledAt: 0, state: snapshot() },
       { ...base, type: 'transfer-offer', transfer: { id: 'plan', kind: 'formation', digest: hash, bytes: 5, chunks: 1 } },
       { ...base, type: 'transfer-chunk', transferId: 'plan', index: 0, data: 'aGVsbG8=' },
       { ...base, type: 'transfer-ready', transfer: reference },
@@ -70,8 +70,8 @@ describe('bounded shared multiplayer protocol', () => {
     rejected(() => decodeMessage(encoded, { ...context, epoch: 1 }), 'epoch');
     rejected(() => decodeMessage(encoded, { ...context, peer: 'guest' }), 'role');
     rejected(() => decodeMessage(encoded, { ...context, channel: 'state' }), 'channel');
-    rejected(() => encodeMessage({ ...base, sender: 'guest', type: 'snapshot', state: snapshot() }), 'role');
-    rejected(() => decodeMessage(JSON.stringify({ ...base, sender: 'guest', type: 'snapshot', state: snapshot() }),
+    rejected(() => encodeMessage({ ...base, sender: 'guest', type: 'snapshot', sampledAt: 0, state: snapshot() }), 'role');
+    rejected(() => decodeMessage(JSON.stringify({ ...base, sender: 'guest', type: 'snapshot', sampledAt: 0, state: snapshot() }),
       { ...context, peer: 'guest', channel: 'state' }), 'role');
     expect(() => assertCompatible(versions, { ...versions, generator: 'b'.repeat(64) })).toThrow('compatibility');
     expect(() => assertCompatible(versions, { ...versions })).not.toThrow();
@@ -88,10 +88,10 @@ describe('bounded shared multiplayer protocol', () => {
     }
     const state = snapshot();
     state.players[0].misses = 3;
-    rejected(() => encodeMessage({ ...base, type: 'snapshot', state }), 'invalid_message');
+    rejected(() => encodeMessage({ ...base, type: 'snapshot', sampledAt: 0, state }), 'invalid_message');
     state.players[0].eliminated = true;
     state.status = 'over';
-    rejected(() => encodeMessage({ ...base, type: 'snapshot', state }), 'invalid_message');
+    rejected(() => encodeMessage({ ...base, type: 'snapshot', sampledAt: 0, state }), 'invalid_message');
     for (const time of [0, 0.000001, 1 / 120, 8.314159265358, 450.00501, 1e8]) {
       expect(secondsAt(stampAt(time))).toBeCloseTo(time, 12);
     }

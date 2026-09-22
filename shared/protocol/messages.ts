@@ -52,7 +52,7 @@ export const wireMessage = z.discriminatedUnion('type', [
     ]) }),
   z.strictObject({ ...envelope, type: z.literal('event'), eventSequence: counter.min(1),
     planRevision: counter, event }),
-  z.strictObject({ ...envelope, type: z.literal('snapshot'), state: snapshot }),
+  z.strictObject({ ...envelope, type: z.literal('snapshot'), sampledAt: z.number().min(-1e12).max(1e12), state: snapshot }),
   z.strictObject({ ...envelope, type: z.literal('transfer-offer'), transfer }),
   z.strictObject({ ...envelope, type: z.literal('transfer-chunk'), ...transferChunk.shape }),
   z.strictObject({ ...envelope, type: z.literal('transfer-ready'), transfer: reference }),

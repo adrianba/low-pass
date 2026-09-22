@@ -587,6 +587,30 @@ Coverage includes both slots at passes 1, 13 and 15 in all terrains, delays thro
 replay, third-miss finality, duplicate traffic and different peer clocks. These
 are simulation/fault-harness results, not yet a playable native multiplayer match.
 
+### Guest replication (not yet wired to network gameplay)
+
+`GuestReplica` now applies verified plans, ordered reliable outcomes and complete
+snapshots without generating its own course or scoring results. Snapshots carry
+exact bomb integration steps, retained outcomes and monotonic input/result
+watermarks. Cross-channel arrivals wait for their event and payload dependencies;
+verified checkpoints can close a gap without resurrecting an eliminated player.
+Plan publication requires the guest's exact hash acknowledgement before commit.
+
+Logical outcomes and presentation snapshots are separate: an incomplete group of
+combat/result events cannot become a partially updated render state. Up to 32
+complete snapshots support delayed presentation, pinning their plan/effect data
+until retirement. Equal-time snapshots replace one another. Verified staging,
+pending controls and payload bytes remain bounded; exhaustion is an explicit
+resynchronization/error condition, not silent loss of outcomes.
+
+Peer-clock probes estimate an offset interval, including asymmetric latency,
+drift and timestamp uncertainty. The provisional display clock uses a 50 ms
+delay, at most 1% correction, a 100 ms resync threshold, and 500 ms freshness/
+extrapolation limits. It never rewinds or advances beyond committed coverage.
+These are development bounds, not latency guarantees. Application controllers,
+native match startup, rendering, speculative drops, finale timing and automatic
+recovery still need integration; the running lobby preview is unchanged.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

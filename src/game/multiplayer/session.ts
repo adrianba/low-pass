@@ -40,6 +40,7 @@ export type SessionEvent = EventPayload & { eventId: number };
 interface ActiveBomb { sequence: number; releasedAt: number; steps: number; value: Bomb }
 interface Player {
   score: number; misses: number; assistance: boolean; assisted: boolean;
+  lastResolved: number | null;
   bomb: ActiveBomb | null; completion: PlayerCompletion | null;
 }
 interface Attempt {
@@ -54,7 +55,7 @@ interface Encounter {
 }
 interface Failure { code: 'coverage' | 'events_full' | 'bomb_lifetime' | 'unsettled_attempt'; message: string }
 const slots = [0, 1] as const;
-const player = (): Player => ({ score: 0, misses: 0, assistance: false, assisted: false, bomb: null, completion: null });
+const player = (): Player => ({ score: 0, misses: 0, assistance: false, assisted: false, lastResolved: null, bomb: null, completion: null });
 function validSlot(slot: PlayerSlot): void {
   if (slot !== 0 && slot !== 1) throw new Error('Invalid player slot.');
 }
@@ -277,6 +278,7 @@ export class HostSession {
     const ended = eliminated && this.players[slot === 0 ? 1 : 0].completion !== null;
     this.reserveEvents(1 + Number(eliminated) + Number(ended));
     p.bomb = null;
+    p.lastResolved = sequence;
     p.score += points;
     if (!points) p.misses++;
     attempt.result = { id: sequence * 2 + slot + 1, sequence, slot, time, points, impact,
@@ -322,7 +324,7 @@ export class HostSession {
       time: this.clock, status: this.state, terrain: this.terrain, winner: this.winner, failure: this.failure,
       players: slots.map(slot => {
         const p = this.players[slot];
-        return { score: p.score, misses: p.misses, assistance: p.assistance,
+        return { score: p.score, misses: p.misses, lastResolved: p.lastResolved, assistance: p.assistance,
           assisted: p.assisted, bomb: p.bomb, completion: p.completion, pose: this.pose(slot) };
       }),
       encounters: [...this.encounters.values()].map(e => ({

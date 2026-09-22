@@ -104,7 +104,7 @@ describe('deterministic fault transport', () => {
     const event: WireMessage = { ...base, type: 'event', eventSequence: 1, planRevision: 0,
       event: { action: 'resolved', result: { id: 1, slot: 0, sequence: 0, time: 1, points: 0, score: 0, misses: 1, assisted: false, impact: null } } };
     const state = snapshot(); state.eventSequence = 1; state.players[0].misses = 1;
-    network.peers.host.send(event); network.peers.host.send({ ...base, sequence: 2, type: 'snapshot', state });
+    network.peers.host.send(event); network.peers.host.send({ ...base, sequence: 2, type: 'snapshot', sampledAt: 0, state });
     network.advanceTo(0);
     const incoming = network.peers.guest.drain()[0]!;
     if (incoming.type !== 'message' || incoming.message.type !== 'snapshot') throw new Error('Missing snapshot.');
@@ -116,7 +116,7 @@ describe('deterministic fault transport', () => {
     });
     expect(decisions).toEqual([{ ok: true }, { ok: false, reason: 'stale' }]);
     expect(gate.consider(incoming.message, has)).toEqual({ ok: true });
-    expect(gate.consider({ ...base, sequence: 3, type: 'snapshot', state: snapshot() }, has)).toEqual({ ok: false, reason: 'stale' });
+    expect(gate.consider({ ...base, sequence: 3, type: 'snapshot', sampledAt: 0, state: snapshot() }, has)).toEqual({ ok: false, reason: 'stale' });
     expect(gate.watermarks).toEqual({ planRevision: 0, eventSequence: 1, snapshotSequence: 2 });
   });
 
