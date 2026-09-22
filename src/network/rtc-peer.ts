@@ -1,4 +1,4 @@
-import { assertCompatible, byteLength, decodeMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
+import { assertCompatible, byteLength, decodeMessage, decodeTransportMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
 import { compatibility, counter, identifier } from '../../shared/protocol/game.js';
 import type { Compatibility } from '../../shared/protocol/game.js';
 import { MAX_WIRE_BYTES, PROTOCOL_VERSION } from '../../shared/protocol/limits.js';
@@ -29,7 +29,7 @@ function object(value: unknown): Record<string, unknown> | null {
 }
 function category(value: unknown, allowed: string[]): string | null { return typeof value === 'string' && allowed.includes(value) ? value : null; }
 
-/** One authenticated negotiation generation. Recovery creates a new peer/epoch. */
+/** One authenticated negotiation generation; host barriers advance game epochs without renegotiation. */
 export class RtcPeer implements PeerTransport {
   readonly role: Role;
   private readonly pc: RTCPeerConnection;
@@ -57,6 +57,9 @@ export class RtcPeer implements PeerTransport {
   private work: Promise<void> = Promise.resolve();
   private inbox: TransportEvent[] = [];
   private pending: TransportEvent[] = [];
+  private currentEpoch: number;
+  private readonly futureState = new Map<'snapshot' | 'ping' | 'pong', Extract<TransportEvent, { type: 'message' }>>();
+  private discardedEpochMessages = 0;
   private readonly timeout: ReturnType<typeof setTimeout>;
   constructor(options: RtcOptions) {
     identifier.parse(options.sessionId); counter.parse(options.epoch); compatibility.parse(options.compatibility);
@@ -65,6 +68,7 @@ export class RtcPeer implements PeerTransport {
       !Number.isInteger(options.timeoutMs ?? 30_000) || (options.timeoutMs ?? 30_000) < 1000 ||
       (options.timeoutMs ?? 30_000) > 30_000) throw new RtcError('negotiation');
     this.options = { ...options, compatibility: { ...options.compatibility }, iceServers: structuredClone(options.iceServers) };
+    this.currentEpoch = options.epoch;
     this.role = options.role;
     try { this.pc = new RTCPeerConnection({ iceServers: this.options.iceServers, iceTransportPolicy: options.relayOnly ? 'relay' : 'all' }); }
     catch { throw new RtcError('negotiation'); }
@@ -102,6 +106,7 @@ export class RtcPeer implements PeerTransport {
     }
   }
   get status(): TransportStatus { return this.state; }
+  get epoch(): number { return this.currentEpoch; }
   get failure(): RtcFailure | ProtocolError['code'] | null { return this.failureValue; }
   now(): number { return this.options.clock?.() ?? performance.now(); }
   bufferedAmount(channel: Channel): number { return this.channels[channel]?.bufferedAmount ?? 0; }
@@ -203,30 +208,50 @@ export class RtcPeer implements PeerTransport {
     const maximum = this.pc.sctp?.maxMessageSize;
     if (maximum !== undefined && maximum !== 0 && maximum < MAX_WIRE_BYTES) { this.fail('capacity'); return; }
     clearTimeout(this.timeout); this.state = 'open';
-    this.enqueue({ type: 'status', status: 'open', epoch: this.options.epoch });
+    this.enqueue({ type: 'status', status: 'open', epoch: this.currentEpoch });
     for (const event of this.pending.splice(0)) this.enqueue(event);
   }
   private receive(channel: Channel, data: unknown): void {
     if (this.disposed) return;
     try {
       if (typeof data !== 'string') throw new ProtocolError('invalid_message');
-      const message = decodeMessage(data, { channel, sessionId: this.options.sessionId, epoch: this.options.epoch,
+      const message = decodeTransportMessage(data, { channel, sessionId: this.options.sessionId, epoch: this.currentEpoch,
         peer: this.role === 'host' ? 'guest' : 'host' });
+      if (message.epoch < this.currentEpoch) {
+        this.discardedEpochMessages = Math.min(Number.MAX_SAFE_INTEGER, this.discardedEpochMessages + 1);
+        return;
+      }
+      const event: Extract<TransportEvent, { type: 'message' }> = { type: 'message', channel, message, receivedAt: this.now() };
+      if (message.epoch > this.currentEpoch) {
+        if (message.type !== 'snapshot' && message.type !== 'ping' && message.type !== 'pong') throw new ProtocolError('epoch');
+        const previous = this.futureState.get(message.type);
+        if (!previous || previous.message.sequence < message.sequence) this.futureState.set(message.type, event);
+        return;
+      }
       if (message.type === 'hello') {
         if (this.receivedHello || message.sequence !== 0) throw new ProtocolError('invalid_message');
         assertCompatible(this.options.compatibility, message.compatibility); this.receivedHello = true;
       } else if (channel === 'control' && !this.receivedHello) throw new ProtocolError('compatibility');
-      const event: TransportEvent = { type: 'message', channel, message, receivedAt: this.now() };
-      if (this.state === 'open') this.enqueue(event);
-      else if (this.pending.length < RTC_LIMITS.inbox - 1) this.pending.push(event);
-      else this.fail('capacity');
+      this.received(event);
+      if (message.type === 'barrier' && !this.disposed) {
+        this.currentEpoch = message.nextEpoch;
+        const waiting = [...this.futureState.values()].sort((a, b) => a.message.sequence - b.message.sequence);
+        this.futureState.clear();
+        for (const queued of waiting) this.received(queued);
+      }
       this.opened();
     } catch (error) {
       if (!(error instanceof ProtocolError)) { this.fail('channel'); return; }
       const code = error.code;
       this.failureValue = code; this.dispose();
-      this.inbox = [{ type: 'rejected', channel, code }, { type: 'status', status: 'closed', epoch: this.options.epoch }];
+      this.inbox = [{ type: 'rejected', channel, code }, { type: 'status', status: 'closed', epoch: this.currentEpoch }];
     }
+  }
+  private received(event: TransportEvent): void {
+    if (this.disposed) return;
+    if (this.state === 'open') this.enqueue(event);
+    else if (this.pending.length < RTC_LIMITS.inbox - 1) this.pending.push(event);
+    else this.fail('capacity');
   }
   private enqueue(event: TransportEvent): void {
     if (this.inbox.length >= RTC_LIMITS.inbox) { this.fail('capacity'); return; }
@@ -236,7 +261,7 @@ export class RtcPeer implements PeerTransport {
     if (this.state !== 'open') return { ok: false, reason: 'not_open' };
     if (message.sender !== this.role || message.type === 'hello') throw new ProtocolError('role');
     const text = encodeMessage(message), label = messageChannel(message);
-    decodeMessage(text, { channel: label, sessionId: this.options.sessionId, epoch: this.options.epoch, peer: this.role });
+    decodeMessage(text, { channel: label, sessionId: this.options.sessionId, epoch: this.currentEpoch, peer: this.role });
     const channel = this.channels[label]!;
     if (channel.readyState !== 'open') { this.fail('channel'); return { ok: false, reason: 'not_open' }; }
     const limit = message.type === 'transfer-chunk' ? RTC_LIMITS.bulkBytes : RTC_LIMITS.bufferedBytes;
@@ -258,19 +283,20 @@ export class RtcPeer implements PeerTransport {
       this.fail('channel'); return { ok: false, reason: 'not_open' };
     }
     if (message.type === 'transfer-chunk') this.bulkPacer.sent(bytes, now);
+    if (message.type === 'barrier') this.currentEpoch = message.nextEpoch;
     return { ok: true };
   }
   drain(): TransportEvent[] { const events = this.inbox; this.inbox = []; return events; }
   private fail(code: RtcFailure): void {
     if (this.disposed) return;
     this.failureValue = code; this.dispose();
-    this.inbox = [{ type: 'failed', code }, { type: 'status', status: 'closed', epoch: this.options.epoch }];
+    this.inbox = [{ type: 'failed', code }, { type: 'status', status: 'closed', epoch: this.currentEpoch }];
   }
   private dispose(): void {
     this.stoppedAt ??= this.linkState();
     this.disposed = true; this.state = 'closed'; clearTimeout(this.timeout);
     if (this.pacingTimer !== null) { clearTimeout(this.pacingTimer); this.pacingTimer = null; }
-    this.pending = []; this.localCandidates = []; this.remoteCandidates = [];
+    this.pending = []; this.futureState.clear(); this.localCandidates = []; this.remoteCandidates = [];
     this.pc.ondatachannel = this.pc.onicecandidate = this.pc.onconnectionstatechange = null;
     this.pc.onicecandidateerror = null;
     for (const channel of Object.values(this.channels)) {
@@ -280,12 +306,13 @@ export class RtcPeer implements PeerTransport {
   }
   close(): void {
     if (this.disposed) return;
-    this.dispose(); this.inbox = [{ type: 'status', status: 'closed', epoch: this.options.epoch }];
+    this.dispose(); this.inbox = [{ type: 'status', status: 'closed', epoch: this.currentEpoch }];
   }
   private linkState() {
     return { connection: this.pc.connectionState, ice: this.pc.iceConnectionState,
       control: this.channels.control?.readyState ?? 'missing', state: this.channels.state?.readyState ?? 'missing',
-      sentHello: this.sentHello, receivedHello: this.receivedHello };
+      sentHello: this.sentHello, receivedHello: this.receivedHello, epoch: this.currentEpoch,
+      pendingEpochMessages: this.futureState.size, discardedEpochMessages: this.discardedEpochMessages };
   }
   async diagnostics(): Promise<{ status: TransportStatus; failure: RtcPeer['failure']; candidateFailures: number;
     candidateErrorCodes: number[]; gathered: string[]; link: ReturnType<RtcPeer['linkState']>; selected: CandidateSummary | null }> {

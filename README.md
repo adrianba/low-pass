@@ -629,6 +629,14 @@ Transport backpressure does not advance publication watermarks. Controllers must
 still own the transport, initial handshake, transfer scheduling and plan retirement;
 this journal alone does not start a network match.
 
+Native peers now support host-authorized game-epoch barriers on the existing
+connection, independently of ICE/signaling generations. Only a successful
+barrier send advances the host epoch. The guest buffers at most one next-epoch
+snapshot, ping and pong until that barrier arrives; obsolete traffic is discarded
+and counted rather than closing a healthy connection. Application decoding remains
+strict. This is the transport prerequisite for startup/pause/recovery, not the
+completed shared-pause or reconnect workflow.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

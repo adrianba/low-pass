@@ -62,7 +62,14 @@ export class RtcFixture {
     this.timer = setInterval(() => { void this.pump(); }, 5);
   }
   private envelope() {
-    return { version: 1 as const, sessionId: this.options.roomId, sender: this.options.role, epoch: this.options.epoch, sequence: 0 };
+    return { version: 1 as const, sessionId: this.options.roomId, sender: this.options.role, epoch: this.peer?.epoch ?? this.options.epoch, sequence: 0 };
+  }
+  barrier() {
+    if (!this.peer || this.options.role !== 'host' || this.urgent.length || this.outgoing.length) throw new Error('Fixture barrier requires a drained host.');
+    const result = this.peer.send({ ...this.envelope(), sequence: this.sequence, type: 'barrier',
+      nextEpoch: this.peer.epoch + 1, reason: 'resume', at: { tick: 0, fraction: 0 } });
+    if (!result.ok) throw new Error(`Fixture barrier failed: ${result.reason}.`);
+    this.sequence++;
   }
   async plan() {
     const data = formationData(new FormationScheduler('river-canyon', 7).plan(), 0);

@@ -1081,6 +1081,16 @@ early lead release, without changing flight timing or settlement bounds.
 Application ownership, plan retirement, transfer priority and startup remain to
 be wired; completed module work is not a playable-game checkpoint.
 
+Native transport now applies explicit host barriers without creating a new ICE
+generation. The host changes epoch only after a successful send; the receiver
+delivers the barrier before coalesced next-epoch unreliable data. Old-epoch
+traffic is counted/discarded, future control/skipped epochs and guest-initiated
+advances are rejected, and gameplay decoding still requires the exact epoch.
+A replacement `PeerLink` can receive an explicit game epoch independently of
+signaling generation. A real two-context Chromium check advances epoch 7 to 8
+on the same authenticated connection and exchanges new-epoch commands. This
+does not yet implement game startup, shared pause or automatic recovery.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

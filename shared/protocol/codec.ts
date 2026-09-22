@@ -38,15 +38,19 @@ export function encodeMessage(value: unknown): string {
   authority(message);
   return stringify(wireMessage, message, MAX_WIRE_BYTES);
 }
-export function decodeMessage(text: string, context: ReceiveContext): WireMessage {
+function receiveMessage(text: string, context: ReceiveContext, transition: boolean): WireMessage {
   const message = read(wireMessage, text, MAX_WIRE_BYTES);
   if (message.sessionId !== context.sessionId) throw new ProtocolError('session');
-  if (message.epoch !== context.epoch) throw new ProtocolError('epoch');
+  if (message.epoch !== context.epoch && !(transition && (message.epoch < context.epoch ||
+    context.peer === 'host' && context.channel === 'state' && message.epoch === context.epoch + 1))) throw new ProtocolError('epoch');
   if (message.sender !== context.peer) throw new ProtocolError('role');
   authority(message);
   if (messageChannel(message) !== context.channel) throw new ProtocolError('channel');
   return message;
 }
+export function decodeMessage(text: string, context: ReceiveContext): WireMessage { return receiveMessage(text, context, false); }
+/** The native link must discard old traffic and gate next-epoch state on a host barrier. */
+export function decodeTransportMessage(text: string, context: ReceiveContext): WireMessage { return receiveMessage(text, context, true); }
 export function encodePayload(value: unknown): string { return stringify(payload, value, MAX_TRANSFER_BYTES); }
 export function decodePayload(text: string): Payload { return read(payload, text, MAX_TRANSFER_BYTES); }
 export function assertCompatible(local: Compatibility, remote: Compatibility): void {

@@ -82,6 +82,25 @@ test('native peers reject incompatible builds before exposing application messag
   } finally { await state.close(); }
 });
 
+test('native host barriers advance game epochs without replacing the authenticated peer connection', async ({ browser }) => {
+  const state = await pair(browser);
+  try {
+    await state.connect(1, 7); await Promise.all(state.pages.map(open));
+    await state.h.evaluate(() => window.rtcFixture.barrier());
+    await expect.poll(() => state.g.evaluate(() => window.rtcFixture.peer!.epoch)).toBe(8);
+    await state.h.evaluate(() => window.rtcFixture.command());
+    await state.g.evaluate(() => window.rtcFixture.command());
+    for (const page of state.pages) {
+      await expect.poll(() => page.evaluate(() => window.rtcFixture.messages.filter(message => message.type === 'command').map(message => message.epoch)))
+        .toEqual([8]);
+      expect(await page.evaluate(() => window.rtcFixture.peer!.status)).toBe('open');
+      expect(await page.evaluate(() => window.rtcFixture.errors)).toEqual([]);
+    }
+    expect(state.server.service.signaling!.counts.authenticated).toBe(2);
+    expect(state.errors).toEqual([]); expect(state.server.warnings).toEqual([]);
+  } finally { await state.close(); }
+});
+
 test('test-only relay policy cannot silently fall back to a direct path', async ({ browser }) => {
   const state = await pair(browser);
   try {

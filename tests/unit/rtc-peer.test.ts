@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RtcPeer, RTC_LIMITS } from '../../src/network/rtc-peer.js';
-import { encodeMessage } from '../../shared/protocol/codec.js';
-import { base, hello, release, versions } from './protocol-fixtures.js';
+import { decodeMessage, encodeMessage } from '../../shared/protocol/codec.js';
+import { base, hello, release, snapshot, versions } from './protocol-fixtures.js';
 import type { RtcOptions } from '../../src/network/rtc-peer.js';
 
 class Channel {
@@ -58,8 +58,13 @@ function setup(patch: Partial<RtcOptions> = {}) {
   peers.push(peer);
   const pc = Connection.instances.at(-1)!;
   const ready = () => {
+    if (peer.role === 'guest') {
+      pc.channels = [new Channel('control', { protocol: 'low-pass.v1', ordered: true }),
+        new Channel('state', { protocol: 'low-pass.v1', ordered: false, maxRetransmits: 0 })];
+      for (const channel of pc.channels) pc.ondatachannel!({ channel });
+    }
     for (const channel of pc.channels) channel.open();
-    pc.channels[0]!.receive(encodeMessage({ ...hello(), sender: 'guest', sequence: 0 }));
+    pc.channels[0]!.receive(encodeMessage({ ...hello(), epoch: patch.epoch ?? 0, sender: peer.role === 'host' ? 'guest' : 'host', sequence: 0 }));
     expect(peer.status).toBe('open'); peer.drain();
   };
   return { peer, pc, signal, ready };
@@ -174,7 +179,8 @@ describe('bounded native peer adapter', () => {
     pc.onicecandidateerror!({ errorCode: 701 });
     const diagnostic = await peer.diagnostics();
     expect(diagnostic).toEqual({ status: 'disconnected', failure: null, candidateFailures: 1, candidateErrorCodes: [701], gathered: [],
-      link: { connection: 'new', ice: 'new', control: 'connecting', state: 'connecting', sentHello: false, receivedHello: false },
+      link: { connection: 'new', ice: 'new', control: 'connecting', state: 'connecting', sentHello: false, receivedHello: false,
+        epoch: 0, pendingEpochMessages: 0, discardedEpochMessages: 0 },
       selected: { local: 'relay', remote: 'host', protocol: 'udp', relayProtocol: 'tls', rttMs: 25 } });
     expect(JSON.stringify(diagnostic)).not.toContain('private-');
     peer.close();
@@ -203,5 +209,51 @@ describe('bounded native peer adapter', () => {
     state.peer.close(); finish({ type: 'offer', sdp: 'late-offer' });
     await expect(starting).rejects.toThrow('connection');
     expect(local).not.toHaveBeenCalled(); expect(state.signal).not.toHaveBeenCalled();
+  });
+
+  it('advances game epochs only after a successfully sent host barrier, independently of ICE generation', () => {
+    const state = setup({ epoch: 7, generation: 2 }); state.ready();
+    const barrier = { ...base, epoch: 7, type: 'barrier' as const, nextEpoch: 8, reason: 'resume' as const,
+      at: { tick: 0, fraction: 0 } };
+    state.pc.channels[0]!.bufferedAmount = RTC_LIMITS.bufferedBytes;
+    expect(state.peer.send(barrier)).toEqual({ ok: false, reason: 'backpressure' });
+    expect(state.peer.epoch).toBe(7);
+    state.pc.channels[0]!.bufferedAmount = 0;
+    expect(state.peer.send(barrier).ok).toBe(true); expect(state.peer.epoch).toBe(8);
+    expect(() => state.peer.send({ ...release('host'), epoch: 7 })).toThrow('epoch');
+    expect(state.peer.send({ ...release('host'), epoch: 8 }).ok).toBe(true);
+    expect(state.peer.status).toBe('open'); expect(state.signal).not.toHaveBeenCalled();
+  });
+
+  it('coalesces overtaking next-epoch state until the host barrier and drops old traffic without closing', async () => {
+    const state = setup({ role: 'guest' }); state.ready();
+    const frame = { ...base, type: 'snapshot' as const, epoch: 1, sequence: 3, sampledAt: 0, state: snapshot() };
+    state.pc.channels[1]!.receive(encodeMessage(frame));
+    state.pc.channels[1]!.receive(encodeMessage({ ...frame, sequence: 4 }));
+    state.pc.channels[1]!.receive(encodeMessage({ ...base, epoch: 1, sequence: 5, type: 'ping', id: 1, sentAt: 0 }));
+    expect(state.peer.drain()).toEqual([]); expect(state.peer.epoch).toBe(0);
+    expect((await state.peer.diagnostics()).link.pendingEpochMessages).toBe(2);
+    state.pc.channels[0]!.receive(encodeMessage({ ...base, sequence: 2, type: 'barrier', nextEpoch: 1,
+      reason: 'resume', at: { tick: 0, fraction: 0 } }));
+    expect(state.peer.epoch).toBe(1);
+    const messages = state.peer.drain().filter(event => event.type === 'message');
+    expect(messages.map(event => event.message.sequence)).toEqual([2, 4, 5]);
+    state.pc.channels[1]!.receive(encodeMessage({ ...frame, epoch: 0 }));
+    state.pc.channels[0]!.receive(encodeMessage(release('host')));
+    expect(state.peer.drain()).toEqual([]); expect(state.peer.status).toBe('open');
+    expect((await state.peer.diagnostics()).link).toMatchObject({ pendingEpochMessages: 0, discardedEpochMessages: 2 });
+    state.pc.channels[0]!.receive(encodeMessage({ ...release('host'), epoch: 2 }));
+    expect(state.peer.failure).toBe('epoch');
+  });
+
+  it('rejects skipped epochs and unauthorized guest advances while preserving strict application decoding', () => {
+    expect(() => decodeMessage(encodeMessage({ ...base, epoch: 1, type: 'ping', id: 1, sentAt: 0 }),
+      { sessionId: base.sessionId, epoch: 0, peer: 'host', channel: 'state' })).toThrow('epoch');
+    const host = setup(); host.ready();
+    host.pc.channels[1]!.receive(encodeMessage({ ...base, sender: 'guest', epoch: 1, type: 'ping', id: 1, sentAt: 0 }));
+    expect(host.peer.failure).toBe('epoch');
+    const guest = setup({ role: 'guest' }); guest.ready();
+    guest.pc.channels[1]!.receive(encodeMessage({ ...base, epoch: 2, type: 'ping', id: 1, sentAt: 0 }));
+    expect(guest.peer.failure).toBe('epoch');
   });
 });

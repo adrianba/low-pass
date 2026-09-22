@@ -12,6 +12,7 @@ export class PeerLinkError extends Error { constructor(readonly code: string) { 
 export interface PeerLinkOptions {
   member: RoomMembership; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; relayOnly: boolean;
+  epoch?: number;
 }
 /** One admitted connection generation; higher-level recovery owns replacement. */
 export class PeerLink {
@@ -22,7 +23,6 @@ export class PeerLink {
   private disposed = false;
   private connecting = false;
   private sequence = 1;
-  private epoch = 0;
   private failureValue: string | null = null;
   private readonly authTimer: ReturnType<typeof setTimeout>;
   constructor(options: PeerLinkOptions) {
@@ -75,9 +75,8 @@ export class PeerLink {
   }
   private createPeer(generation: number) {
     this.connecting = true;
-    this.epoch = generation - 1;
     this.peer = new RtcPeer({ role: this.options.member.room.role, sessionId: this.options.member.room.roomId,
-      epoch: this.epoch, generation, compatibility: this.options.compatibility, aspect: this.options.aspect,
+      epoch: this.options.epoch ?? generation - 1, generation, compatibility: this.options.compatibility, aspect: this.options.aspect,
       iceServers: this.options.iceServers, relayOnly: this.options.relayOnly, signal: value => this.signal(value) });
   }
   get status(): 'signaling' | 'waiting' | 'connecting' | 'open' | 'closed' {
@@ -86,6 +85,8 @@ export class PeerLink {
     return this.connecting ? 'connecting' : this.authenticated ? 'waiting' : 'signaling';
   }
   get failure(): string | null { return this.failureValue; }
+  get epoch(): number { return this.peer?.epoch ?? this.options.epoch ?? 0; }
+  get sessionId(): string { return this.options.member.room.roomId; }
   send(body: MessageBody): SendResult {
     if (this.status !== 'open' || !this.peer) return { ok: false, reason: 'not_open' };
     const message: WireMessage = { version: PROTOCOL_VERSION, sessionId: this.options.member.room.roomId,
