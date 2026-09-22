@@ -26,6 +26,9 @@ export class FormationPlayback {
   get startAt(): number { return this.data.startAt; }
   get handoffAt(): number { return this.data.handoffAt; }
   get coverageEndAt(): number { return this.data.coverageEndAt; }
+  get target() { return { ...this.data.target }; }
+  get targetKind() { return this.data.targetKind; }
+  get sightDistance(): number { return Math.max(...this.data.attempts.map(attempt => attempt.acquisition.range)); }
   releaseWindow(slot: PlayerSlot) {
     const attempt = this.data.attempts[slot];
     return { acquireAt: attempt.acquireAt, cutoffAt: attempt.cutoffAt };

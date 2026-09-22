@@ -1,5 +1,5 @@
 import { decodeMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
-import { compareStamps, manifest, payload, reference, secondsAt, snapshot, stampAt } from '../../shared/protocol/game.js';
+import { compareStamps, manifest, payload, reference, snapshot, stampAt } from '../../shared/protocol/game.js';
 import type { Snapshot } from '../../shared/protocol/game.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
@@ -9,6 +9,7 @@ import type { DeliveryDecision } from './delivery-barrier.js';
 import { ReplicaPlans } from './replica-plans.js';
 import type { CompletedTransfer } from './transfer.js';
 import type { ClockAnchor } from './session-clock.js';
+import { releaseTime } from './release-time.js';
 
 type Incoming = Extract<WireMessage, { type: 'plan-commit' | 'event' | 'snapshot' | 'checkpoint-commit' }>;
 type Control = Exclude<Incoming, { type: 'snapshot' }>;
@@ -176,7 +177,7 @@ export class GuestReplica {
       const player = state.players[event.slot], plan = this.plans.formation(event.plan);
       if (plan.sequence !== event.sequence || player.eliminated || player.bomb ||
         event.sequence <= (player.lastResolved ?? -1)) throw new ReplicaError('event');
-      const time = secondsAt(event.at), window = plan.releaseWindow(event.slot);
+      const window = plan.releaseWindow(event.slot), time = releaseTime(event.at, window);
       if (compareStamps(event.at, stampAt(window.acquireAt)) < 0 || compareStamps(event.at, stampAt(window.cutoffAt)) > 0) {
         throw new ReplicaError('event');
       }

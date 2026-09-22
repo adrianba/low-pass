@@ -653,6 +653,14 @@ start time without counting the loading/countdown interval as gameplay.
 Native-browser startup is exercised separately; application loading/rendering and
 the gameplay controllers are not yet connected to this handshake.
 
+`replicaWorldFrame` now builds the shared renderer input from complete snapshots
+and verified tracks/cameras. It advances active bombs from their exact canonical
+step checkpoints within the bounded presentation window, without awarding scores
+or inventing impacts/wrecks. Paused frames cannot advance; eliminated aircraft
+require explicit frozen combat presentation. The all-terrain scene fixture
+compares host and guest aircraft, bombs, cameras and resource counts. This is
+renderer integration, not a playable native network match.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

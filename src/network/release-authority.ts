@@ -1,9 +1,9 @@
 import { decodeMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
-import { counter, identifier, reference, secondsAt, sequence as planSequence, stampAt } from '../../shared/protocol/game.js';
-import type { Stamp } from '../../shared/protocol/game.js';
+import { counter, identifier, reference, sequence as planSequence, stampAt } from '../../shared/protocol/game.js';
 import type { Role } from '../../shared/protocol/limits.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import type { HostSession, PlayerSlot } from '../game/multiplayer/session.js';
+import { releaseTime } from './release-time.js';
 
 // Development allowance above observed ~0.58s preflight stalls, not a latency guarantee.
 export const RELEASE_GRACE_SECONDS = 0.75;
@@ -18,14 +18,6 @@ interface Remembered { intent: string; decision: ReleaseDecision }
 /** Capture the actual displayed plan time, never a fresh arrival/input wall time. */
 export function releaseIntent(sequence: number, plan: Reference, displayedAt: number): ReleaseIntent {
   return { action: 'release', sequence: planSequence.parse(sequence), plan: reference.parse(plan), displayedAt: stampAt(displayedAt) };
-}
-
-function boundaryTime(stamp: Stamp, bounds: { acquireAt: number; cutoffAt: number }): number {
-  for (const time of [bounds.acquireAt, bounds.cutoffAt]) {
-    const encoded = stampAt(time);
-    if (stamp.tick === encoded.tick && stamp.fraction === encoded.fraction) return time;
-  }
-  return secondsAt(stamp);
 }
 
 /** Core-event IDs are mapped to wire event sequences by the publishing controller. */
@@ -77,7 +69,7 @@ export class ReleaseAuthority {
       plan.id !== message.command.plan.id || plan.digest !== message.command.plan.digest) {
       decision = { accepted: false, reason: 'plan' };
     } else {
-      const time = boundaryTime(message.command.displayedAt, this.session.releaseWindow(slot, message.command.sequence));
+      const time = releaseTime(message.command.displayedAt, this.session.releaseWindow(slot, message.command.sequence));
       if (time < this.epochStart) decision = { accepted: false, reason: 'epoch' };
       else {
         const releaseEventId = this.session.lastEventId + 1;

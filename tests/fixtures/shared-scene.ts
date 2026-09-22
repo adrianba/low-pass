@@ -1,6 +1,11 @@
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { World, MAX_SHARED_CHUNKS } from '../../src/rendering/world';
 import { hostWorldFrame } from '../../src/rendering/host-frame';
+import { replicaWorldFrame } from '../../src/rendering/replica-frame';
+import { ReplicaPlans } from '../../src/network/replica-plans';
+import { formationData } from '../../src/network/formation-data';
+import { sessionSnapshot } from '../../src/network/session-snapshot';
+import { snapshot } from '../../shared/protocol/game';
 import { snapshotSharedFrame } from '../../src/rendering/shared-frame';
 import { FormationScheduler } from '../../src/game/multiplayer/scheduler';
 import type { PlayerSlot } from '../../src/game/multiplayer/session';
@@ -30,9 +35,23 @@ async function prepare(terrain: TerrainTheme, count: number, quality: Quality) {
     scheduler.advanceTo(plan.handoffAt); scheduler.session.drainEvents();
   }
 }
-async function show(slot: PlayerSlot, simultaneous = false) {
+async function show(slot: PlayerSlot, simultaneous = false, replicated = false) {
   if (!scheduler) throw new Error('Missing shared session.');
-  const base = hostWorldFrame(scheduler, slot);
+  let base = hostWorldFrame(scheduler, slot);
+  if (replicated) {
+    const cache = new ReplicaPlans();
+    const references = new Map(scheduler.retainedSequences.map(sequence => {
+      const reference = { id: `flight-${sequence}`, digest: 'a'.repeat(64) };
+      cache.installVerified({ reference, payload: { kind: 'formation', data: formationData(scheduler!.plan(sequence), sequence) } });
+      return [sequence, reference] as const;
+    }));
+    cache.commit([...references.values()]);
+    const state = snapshot.parse(JSON.parse(JSON.stringify(sessionSnapshot(scheduler.session, {
+      plans: references, planRevision: 0, eventSequence: scheduler.session.lastEventId,
+      coreEventId: scheduler.session.lastEventId, lastInputs: [0, 0], effects: [],
+    }))));
+    base = replicaWorldFrame(state, cache, scheduler.seed, slot, scheduler.session.time);
+  }
   const target = base.targets.at(-1)!.position;
   const water = routePoint(projectRoute(target.x, target.z).along, 0);
   const frame = simultaneous ? snapshotSharedFrame({ ...base, impacts: [0, 1].map(i => ({
@@ -52,6 +71,7 @@ async function show(slot: PlayerSlot, simultaneous = false) {
   const covered = frame.aircraft.every(a => [-14, 14].every(dx => [-14, 14].every(dz =>
     keys.has(`${Math.floor((a.pose.position.x + dx) / CHUNK)},${Math.floor((a.pose.position.z + dz) / CHUNK)}`))));
   return {
+    replicated,
     origin, cameraError: Math.max(distance(camera.position, expected.position), distance(camera.target, expected.target)),
     aircraft: aircraft.map(a => ({ enabled: a.isEnabled(), position: a.position.asArray() })),
     expectedAircraft: frame.aircraft.map(a => [a.pose.position.x, a.pose.position.y, a.pose.position.z - origin]),
@@ -79,6 +99,7 @@ const api = {
     return show(1);
   },
   show,
+  replica(slot: PlayerSlot) { return show(slot, false, true); },
   async freshOrigin(slot: PlayerSlot) {
     if (!scheduler) throw new Error('Missing shared session.');
     world.reset();

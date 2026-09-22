@@ -1119,6 +1119,18 @@ No timing thresholds were relaxed. This is startup-protocol evidence, not WebGL
 asset-readiness, game-controller or full-match acceptance. Application wiring
 remains outstanding.
 
+Guest-frame integration now feeds the existing shared renderer from complete
+snapshots and verified numeric plans. Bomb extrapolation uses the supplied
+canonical step count and shared exact release-boundary decoding. Predicted contact
+hides a bomb but never awards a score, creates a wreck or publishes an impact.
+Paused/blocked time is frozen and eliminated actors require frozen combat poses,
+views and visibility. The interrupted validation was rerun after CLI recovery:
+30 affected Node 24 tests, lint, client/server builds and three all-terrain
+Chromium scene cases passed; screenshots were inspected. These are module/scene
+results, not Windows Edge or two-computer gameplay acceptance. The resume point
+remains step 29: connect startup, event publication and replica presentation into
+the actual lifecycle-owned application controllers.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

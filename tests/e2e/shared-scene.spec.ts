@@ -14,7 +14,7 @@ test.beforeAll(async () => {
   script = chunk.code;
 });
 for (const terrain of ['green-valley', 'desert', 'river-canyon'] as const) {
-  test(`${terrain}: shared actors, retained wrecks, water/ground attribution and repeatable rebasing`, async ({ page }) => {
+  test(`${terrain}: shared actors, retained wrecks, water/ground attribution and repeatable rebasing`, async ({ page }, info) => {
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -31,6 +31,12 @@ for (const terrain of ['green-valley', 'desert', 'river-canyon'] as const) {
     expect(first.sharedRings).toBe(true); expect(first.soloHidden).toBe(true);
     expect(first.cameraError).toBeLessThan(0.001); expect(first.covered).toBe(true);
     expect(first.chunks).toBeLessThanOrEqual(first.chunkBudget);
+    const replicated = await page.evaluate(() => window.sharedScene.replica(1));
+    expect(replicated.replicated).toBe(true);
+    expect(replicated.aircraft).toEqual(first.aircraft); expect(replicated.bombs).toEqual(first.bombs);
+    expect(replicated.targets).toEqual(first.targets); expect(replicated.counts).toEqual(first.counts);
+    expect(replicated.cameraError).toBeLessThan(0.001);
+    await page.screenshot({ path: info.outputPath('replica-flight.png') });
     const settled = await page.evaluate(() => window.sharedScene.settle(1));
     expect(settled.targets.length).toBeGreaterThanOrEqual(2);
     expect(settled.targetPositions).toEqual(expect.arrayContaining(settled.targets.map(t => t.position)));
@@ -52,7 +58,7 @@ for (const terrain of ['green-valley', 'desert', 'river-canyon'] as const) {
     expect(simultaneous.scars).toBe(terrain === 'river-canyon' ? 1 : 2);
     expect(simultaneous.ripples).toBe(terrain === 'river-canyon' ? 1 : 0);
     expect((await page.evaluate(() => window.sharedScene.show(1, true))).counts).toEqual(simultaneous.counts);
-    await page.screenshot({ path: `test-results/shared-${terrain}.png` });
+    await page.screenshot({ path: info.outputPath(`shared-${terrain}.png`) });
     expect(await page.evaluate(() => window.sharedScene.solo())).toEqual({ otherHidden: true, targetsHidden: true, impactsHidden: true });
     await page.setViewportSize({ width: 720, height: 960 });
     const high = await page.evaluate(terrain => window.sharedScene.configure(terrain, 1, 'high'), terrain);
