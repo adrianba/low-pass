@@ -1,5 +1,5 @@
-import { formation, payload, reference } from '../../shared/protocol/game.js';
-import type { Payload } from '../../shared/protocol/game.js';
+import { combat, formation, payload, reference } from '../../shared/protocol/game.js';
+import type { CombatData, Payload } from '../../shared/protocol/game.js';
 import { MAX_PLANS, MAX_EFFECTS, MAX_TRANSFER_BYTES } from '../../shared/protocol/limits.js';
 import { byteLength } from '../../shared/protocol/codec.js';
 import { FormationTrack } from '../game/formation/track.js';
@@ -7,6 +7,7 @@ import type { PlayerSlot } from '../game/multiplayer/session.js';
 import { FlightTrack } from '../simulation/flight-track.js';
 import { sampleChase } from '../simulation/chase-timeline.js';
 import type { CompletedTransfer } from './transfer.js';
+import { combatDependencies, expandCombat } from './combat-data.js';
 
 type Reference = CompletedTransfer['reference'];
 export type FormationData = Extract<Payload, { kind: 'formation' }>['data'];
@@ -46,7 +47,7 @@ export class FormationPlayback {
   }
 }
 
-interface Stored { reference: Reference; payload: Payload; bytes: number; playback: FormationPlayback | null }
+interface Stored { reference: Reference; payload: Payload; bytes: number; playback: FormationPlayback | null; combat: CombatData | null }
 /** Only hash-verified CompletedTransfers enter here; no candidate selection runs. */
 export class ReplicaPlans {
   private readonly values = new Map<string, Stored>();
@@ -55,7 +56,10 @@ export class ReplicaPlans {
   private pinned = new Set<string>();
   private retired = new Set<string>();
   get count(): number { return this.values.size; }
-  has(value: Reference): boolean { return this.values.get(value.id)?.reference.digest === value.digest; }
+  has(value: Reference): boolean {
+    const stored = this.values.get(value.id);
+    return stored?.reference.digest === value.digest && (stored.playback !== null || stored.combat !== null);
+  }
   installVerified(value: CompletedTransfer): void {
     const ref = reference.parse(value.reference), previous = this.values.get(ref.id);
     if (previous) {
@@ -71,17 +75,32 @@ export class ReplicaPlans {
       throw new Error('Replica verified-plan budget exhausted.');
     }
     const playback = owned.kind === 'formation' ? new FormationPlayback(owned.data) : null;
-    this.values.set(ref.id, { reference: ref, payload: owned, playback, bytes });
+    const resolved = owned.kind === 'combat' && owned.data.missile.motion.kind !== 'track-reference' ? combat.parse(owned.data) : null;
+    if (owned.kind === 'combat' && resolved) owned.data = resolved;
+    this.values.set(ref.id, { reference: ref, payload: owned, playback, bytes, combat: resolved });
+    this.resolveCombat();
+  }
+  private resolveCombat(): void {
+    for (const stored of this.values.values()) {
+      if (stored.payload.kind !== 'combat' || stored.combat ||
+        combatDependencies(stored.payload.data).some(ref => !this.has(ref))) continue;
+      const resolved = expandCombat(stored.payload.data, ref => this.formation(ref).toData());
+      const bytes = byteLength(JSON.stringify(resolved));
+      if (bytes + [...this.values.values()].reduce((sum, value) => sum + value.bytes, 0) > 2 * MAX_TRANSFER_BYTES) {
+        throw new Error('Replica expanded combat budget exhausted.');
+      }
+      stored.combat = resolved; stored.bytes += bytes;
+    }
   }
   formation(value: Reference): FormationPlayback {
     const stored = this.values.get(value.id);
     if (!stored || stored.reference.digest !== value.digest || !stored.playback) throw new Error('Missing verified formation.');
     return stored.playback;
   }
-  combat(value: Reference): Extract<Payload, { kind: 'combat' }>['data'] {
+  combat(value: Reference): CombatData {
     const stored = this.values.get(value.id);
-    if (!stored || stored.reference.digest !== value.digest || stored.payload.kind !== 'combat') throw new Error('Missing verified combat plan.');
-    return structuredClone(stored.payload.data);
+    if (!stored || stored.reference.digest !== value.digest || !stored.combat) throw new Error('Missing verified combat plan.');
+    return structuredClone(stored.combat);
   }
   commit(values: readonly Reference[]): void {
     if (!values.length || values.length > MAX_PLANS || new Set(values.map(value => value.id)).size !== values.length) {

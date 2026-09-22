@@ -1054,6 +1054,20 @@ delivery. Browser WebCrypto/fault transport reproduces both real 100-point resul
 This is not native playable-game, finale-clock or recovery acceptance; those
 require the controller/presentation integration below.
 
+**Controller integration prerequisite:** combat wire payloads may now carry
+hash-qualified references to already verified flight tracks. The receiver expands
+the original numeric knots and validates coverage/continuity; neither peer changes
+the approved geometry, camera, launch selection or floating-point precision.
+First-three-pass Node 24 maxima were 64,258 bytes full / 1,116 referenced in
+Valley/Desert and 61,849 / 1,216 in Canyon; largest encoded chunk envelopes were
+1,781 and 1,917 bytes. These are payload measurements, not live RTT guarantees.
+Both-slot damage/flyby handoffs across 15 sequential passes per terrain preserve
+full data identity, and the browser verifies/reconstructs a genuine Canyon miss
+after its flight dependency arrives. Complete standalone combat payloads remain
+supported. The eventual publisher must prioritize small combat transfers and
+retain frozen-finale formation dependencies for checkpoints; compact references
+do not permit reauthoring missing history.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

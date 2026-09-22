@@ -6,19 +6,37 @@ import { authorCombatPlan } from '../../src/game/multiplayer/combat-plan';
 import { MissileFlight } from '../../src/game/missile';
 import { distance } from '../../src/simulation/math';
 import { surfaceFor } from '../../src/terrain/surface';
+import { combat } from '../../shared/protocol/game';
+import { combatTransferData, expandCombat } from '../../src/network/combat-data';
+import { formationData } from '../../src/network/formation-data';
 
 describe('combat through shared course handoffs', () => {
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('meets the actual next %s track for both surviving aircraft', terrain => {
     const scheduler = new FormationScheduler(terrain, 7);
     for (let sequence = 0; sequence < 15; sequence++) {
       const plan = scheduler.plan(), next = scheduler.plan(sequence + 1), bornAt = plan.handoffAt - 0.75;
+      const verified = [plan, next].map((source, index) => ({
+        reference: { id: `formation-${sequence + index}`, digest: 'a'.repeat(64) },
+        data: formationData(source, sequence + index),
+      }));
+      const referenced = (value: unknown) => {
+        const compact = combatTransferData(value, verified);
+        expect(JSON.stringify(compact).length).toBeLessThan(4096);
+        const expanded = expandCombat(compact, ref => {
+          const source = verified.find(source => source.reference.id === ref.id && source.reference.digest === ref.digest);
+          if (!source) throw new Error('Missing handoff dependency.');
+          return source.data;
+        });
+        expect(expanded).toEqual(combat.parse(value));
+        return expanded;
+      };
       for (const slot of [0, 1] as const) {
         const result = { id: sequence * 2 + slot + 1, slot, sequence, time: bornAt,
           points: 0, score: sequence * 100, misses: 1, assisted: false, impact: null };
         const view = { ...plan.attempts[slot].camera.at(bornAt - plan.attempts[slot].releaseAt), aspect: 16 / 9, range: 2200 };
         expect(() => authorCombatPlan(result, plan, 7, view)).toThrow('next scheduled');
         const event = authorCombatPlan(result, plan, 7, view, undefined, next)!;
-        const motion = AircraftMotion.fromData(JSON.parse(JSON.stringify(event.missile.motion)));
+        const motion = AircraftMotion.fromData(referenced(event).missile.motion);
         for (const age of [0, 0.1, 0.749, 0.75, 0.751, MISSILE_INTERCEPT_TIME, FLYBY_DURATION]) {
           const source = bornAt + age >= next.startAt ? next : plan;
           const expected = source.attempts[slot].track.at(bornAt + age - source.attempts[slot].releaseAt);
@@ -33,6 +51,7 @@ describe('combat through shared course handoffs', () => {
         expect(distance(flight.intercept, actualAircraft.position)).toBeLessThan(1e-7);
         const flyby = new MissileFlight('flyby', motion.at(0), motion.at(MISSILE_INTERCEPT_TIME).position,
           slot ? -1 : 1, surfaceFor(terrain), motion, view);
+        referenced({ ...event, missile: flyby.toData() });
         for (let i = 0; i <= 28; i++) {
           const age = i / 10, aircraft = motion.at(age).position;
           expect(distance(flyby.positionAt(age, aircraft), aircraft)).toBeGreaterThanOrEqual(18 - 1e-8);

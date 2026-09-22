@@ -27,5 +27,7 @@ test('browser schemas, WebCrypto and bounded transport deliver a real Canyon pla
   expect(outcome.replicaScores).toEqual([100, 100]);
   expect(outcome.replicaPending).toBe(0);
   expect(outcome.deferredOutcome).toBe(true);
+  expect(outcome.combatBytes).toBeLessThan(4096); expect(outcome.combatChunks).toBe(1);
+  expect(outcome.combatVerified).toBe(true);
   expect(errors).toEqual([]);
 });

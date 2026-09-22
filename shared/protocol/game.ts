@@ -94,7 +94,7 @@ const canyonCurve = z.strictObject({
   lateral: component, targetLateral: component, forward: z.number().min(0).max(MAX_TRACK_COMPONENT),
   power: z.union([z.literal(2), z.literal(3), z.literal(4)]), arrival: z.literal(1.7), duration: z.literal(2.8),
 });
-export const combat = z.strictObject({
+const combatObject = z.strictObject({
   version: z.literal(1), id: counter, slot, sequence, bornAt: seconds,
   damageLevel: z.union([z.literal(0), z.literal(1), z.literal(2)]), view,
   missile: z.strictObject({
@@ -105,9 +105,26 @@ export const combat = z.strictObject({
       z.strictObject({ kind: z.literal('canyon'), plan: canyonCurve }),
     ]),
   }),
-}).refine(v => v.id === v.sequence * 2 + v.slot + 1 &&
+});
+const validCombat = (v: { id: number; sequence: number; slot: number; damageLevel: number;
+  missile: { kind: string; motion: { kind: string; style?: string }; curve: { kind: string } } }) =>
+  v.id === v.sequence * 2 + v.slot + 1 &&
   (v.missile.kind !== 'finale' || v.damageLevel === 2) && (v.missile.kind !== 'damage' || v.damageLevel > 0) &&
-  ((v.missile.motion.kind === 'track' && v.missile.motion.style === 'canyon') === (v.missile.curve.kind === 'canyon')));
+  ((v.missile.motion.kind !== 'tangent' && v.missile.motion.style === 'canyon') === (v.missile.curve.kind === 'canyon'));
+export const combat = combatObject.refine(validCombat);
+export const referencedCombat = z.strictObject({
+  ...combatObject.shape,
+  missile: z.strictObject({
+    ...combatObject.shape.missile.shape,
+    motion: z.strictObject({
+      version: z.literal(1), kind: z.literal('track-reference'), start: pose, style: z.enum(['canyon', 'formation']),
+      offset: localTime, track: reference, entry: z.null(),
+      next: z.strictObject({ age: z.number().min(0).max(2.8), from: localTime, offset: localTime, track: reference }).nullable().optional(),
+    }),
+  }),
+}).refine(validCombat);
+export type CombatData = z.infer<typeof combat>;
+export type ReferencedCombat = z.infer<typeof referencedCombat>;
 
 export const contact = z.strictObject({ x: component, y: component, z: component,
   kind: z.enum(['ground', 'water']), normal: vector });
@@ -143,7 +160,7 @@ export const snapshot = z.strictObject({
     v.winner === null && !v.players.every(p => p.eliminated)));
 export const payload = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('formation'), data: formation }),
-  z.strictObject({ kind: z.literal('combat'), data: combat }),
+  z.strictObject({ kind: z.literal('combat'), data: z.union([combat, referencedCombat]) }),
   z.strictObject({ kind: z.literal('checkpoint'), data: z.strictObject({
     version: z.literal(1), sessionId: identifier, epoch: counter, snapshotSequence: counter, manifest, state: snapshot,
   }) }),

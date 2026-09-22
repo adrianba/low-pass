@@ -611,6 +611,15 @@ These are development bounds, not latency guarantees. Application controllers,
 native match startup, rendering, speculative drops, finale timing and automatic
 recovery still need integration; the running lobby preview is unchanged.
 
+Combat transfers can reference the exact verified flight tracks instead of
+resending their knots. In the first three passes, complete damage/finale payloads
+were about 62-64 KB; referenced payloads were 1.1-1.2 KB, each in one chunk.
+All-terrain, both-slot handoffs through pass 15 preserve exact numeric data
+without quantization or rerunning missile selection. Missing dependencies block
+application; expanded data still counts against the cache's byte budget.
+Recovery publication must retain the original formation dependencies of frozen
+finales, even after those formations leave the active course.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

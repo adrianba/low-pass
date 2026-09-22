@@ -2,6 +2,11 @@ import { FaultNetwork } from '../helpers/fault-transport';
 import { FormationScheduler } from '../../src/game/multiplayer/scheduler';
 import { formationData } from '../../src/network/formation-data';
 import { createTransfer, sha256, TransferReceiver } from '../../src/network/transfer';
+import type { CompletedTransfer } from '../../src/network/transfer';
+import { combatTransferData } from '../../src/network/combat-data';
+import { ReplicaPlans } from '../../src/network/replica-plans';
+import { authorCombatPlan } from '../../src/game/multiplayer/combat-plan';
+import { MissileFlight } from '../../src/game/missile';
 import { DeliveryBarrier } from '../../src/network/delivery-barrier';
 import { GuestReplica } from '../../src/network/replica';
 import { sessionSnapshot } from '../../src/network/session-snapshot';
@@ -35,6 +40,7 @@ async function exercise() {
     ...outgoing.chunks.map(chunk => ({ ...base, sequence: nextSequence++, type: 'transfer-chunk' as const, ...chunk })),
   ];
   let sent = 0, completedDigest = '';
+  let verifiedFormation: CompletedTransfer | null = null;
   for (let step = 0; step < 1200; step++) {
     while (sent < messages.length) {
       const message = messages[sent]!;
@@ -61,6 +67,7 @@ async function exercise() {
           if (completed.payload.kind !== 'formation') throw new Error('Unexpected transfer kind.');
           if (JSON.stringify(completed.payload.data) !== JSON.stringify(data)) throw new Error('Numeric plan changed in transit.');
           ready = true; completedDigest = completed.reference.digest;
+          verifiedFormation = completed;
           replica.installVerified(completed);
         }
       }
@@ -106,7 +113,34 @@ async function exercise() {
     }
   }
   if (network.pendingPackets || replica.waitReason) throw new Error('Browser replica failed to converge.');
+  if (!verifiedFormation) throw new Error('Missing verified browser flight.');
+  const missed = new HostSession(plan);
+  missed.advanceTo(plan.attempts[0].acquireAt);
+  if (!missed.release(0, 0).ok) throw new Error('Browser early release failed.');
+  missed.advanceTo(plan.handoffAt);
+  const miss = missed.drainEvents().find(event => event.type === 'resolved' && event.result.slot === 0);
+  if (!miss || miss.type !== 'resolved' || miss.result.points) throw new Error('Expected a genuine early miss.');
+  const full = authorCombatPlan(miss.result, plan, 7, {
+    ...plan.attempts[0].camera.at(miss.result.time - plan.attempts[0].releaseAt), aspect: 1.15, range: 2500,
+  }, undefined, scheduler.plan(1));
+  if (!full) throw new Error('Expected browser damage motion.');
+  const compact = combatTransferData(full, [{ reference, data }]);
+  const effect = await createTransfer({ kind: 'combat', data: compact }, 'browser-damage');
+  const playback = new ReplicaPlans();
+  receiver.offer(effect.offer);
+  let effectReference: CompletedTransfer['reference'] | null = null;
+  for (const chunk of effect.chunks) {
+    const complete = await receiver.accept(chunk);
+    if (complete) { playback.installVerified(complete); effectReference = complete.reference; }
+  }
+  if (!effectReference || playback.has(effectReference)) throw new Error('Browser combat skipped its missing flight dependency.');
+  playback.installVerified(verifiedFormation);
+  const imported = MissileFlight.fromData(playback.combat(effectReference).missile), original = MissileFlight.fromData(full.missile);
+  for (const age of [0, 0.123, 1.7, 2.799]) if (JSON.stringify(imported.positionAt(age)) !== JSON.stringify(original.positionAt(age))) {
+    throw new Error('Referenced browser combat changed its exact motion.');
+  }
   return { ready, deferred, backpressure, largestMessage, completedDigest, expectedDigest: outgoing.offer.digest,
+    combatBytes: effect.offer.bytes, combatChunks: effect.chunks.length, combatVerified: playback.has(effectReference),
     replicaScores: replica.state!.players.map(player => player.score), replicaPending: replica.pendingCount, deferredOutcome,
     stats: network.stats, watermarks: barrier.watermarks, knownHash: await sha256(new TextEncoder().encode('abc')) };
 }
