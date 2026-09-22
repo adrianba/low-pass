@@ -1,5 +1,5 @@
 import { decodeMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
-import { counter, identifier, reference, sequence as planSequence, stampAt } from '../../shared/protocol/game.js';
+import { compareStamps, counter, identifier, reference, sequence as planSequence, stampAt } from '../../shared/protocol/game.js';
 import type { Role } from '../../shared/protocol/limits.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import type { HostSession, PlayerSlot } from '../game/multiplayer/session.js';
@@ -69,7 +69,10 @@ export class ReleaseAuthority {
       plan.id !== message.command.plan.id || plan.digest !== message.command.plan.digest) {
       decision = { accepted: false, reason: 'plan' };
     } else {
-      const time = releaseTime(message.command.displayedAt, this.session.releaseWindow(slot, message.command.sequence));
+      const decoded = releaseTime(message.command.displayedAt, this.session.releaseWindow(slot, message.command.sequence));
+      // Fractional-tick round trips can land one ULP beyond the exact sampled host time.
+      const time = decoded > this.session.time && compareStamps(message.command.displayedAt, stampAt(this.session.time)) === 0
+        ? this.session.time : decoded;
       if (time < this.epochStart) decision = { accepted: false, reason: 'epoch' };
       else {
         const releaseEventId = this.session.lastEventId + 1;

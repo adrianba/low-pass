@@ -16,6 +16,7 @@ export class FormationScheduler {
   private current = 0;
   private highest = 0;
   private error: string | null = null;
+  private external = false;
 
   constructor(readonly terrain: TerrainTheme, readonly seed: number, private readonly author: FormationAuthor = planFormation,
     options: SessionOptions = {}) {
@@ -30,6 +31,17 @@ export class FormationScheduler {
   get sequence(): number { return this.current; }
   get failure(): string | null { return this.error; }
   get retainedSequences(): number[] { return [...this.plans.keys()]; }
+  useExternalLookahead(): void { this.external = true; }
+  nextRequest(): FormationRequest | null {
+    if (!this.external || this.highest > this.current + 1 || this.session.status === 'over') return null;
+    return this.request(this.highest + 1, this.plan(this.highest));
+  }
+  installLookahead(sequence: number, plan: FormationPlan): void {
+    if (!this.external || sequence !== this.highest + 1 || this.highest > this.current + 1 ||
+      plan.encounterId !== `formation-${sequence}`) throw new Error('Unexpected external lookahead.');
+    assertScheduleBounds(plan, this.plan(this.highest), this.session.releaseGraceSeconds);
+    this.session.installPlan(sequence, plan); this.plans.set(sequence, plan); this.highest = sequence;
+  }
 
   plan(sequence = this.current): FormationPlan {
     const plan = this.plans.get(sequence);
@@ -37,7 +49,7 @@ export class FormationScheduler {
     return plan;
   }
 
-  advanceTo(target: number): CommandResult {
+  advanceTo(target: number, canRetire: () => boolean = () => true): CommandResult {
     if (this.error) return { ok: false, reason: 'blocked' };
     if (!Number.isFinite(target) || target < this.session.time || target - this.session.time > MAX_SESSION_ADVANCE) {
       throw new Error('Invalid bounded schedule advance.');
@@ -49,11 +61,11 @@ export class FormationScheduler {
       const end = Math.min(target, this.plan().handoffAt);
       const result = this.session.advanceTo(end);
       if (!result.ok || this.session.status !== 'running') return result;
-      this.retire();
+      if (canRetire()) this.retire();
       if (this.session.time === this.plan().handoffAt) {
         this.current++;
         if (++work > MAX_SCHEDULE_WORK) this.fail('Schedule advance exceeded its planning work bound.');
-        this.lookAhead();
+        if (!this.external) this.lookAhead();
       }
     }
     return { ok: true };
@@ -78,9 +90,9 @@ export class FormationScheduler {
     if (wasRunning) this.session.resume();
   }
 
-  private authorPlan(sequence: number, previous?: FormationPlan): FormationPlan {
+  private request(sequence: number, previous?: FormationPlan): FormationRequest {
     const startAt = previous?.handoffAt ?? 0;
-    const result = this.author({
+    return {
       encounterId: `formation-${sequence}`, count: sequence, seed: this.seed, terrain: this.terrain, startAt,
       previous: previous ? [
         previous.attempts[0].track.at(startAt - previous.attempts[0].releaseAt),
@@ -90,7 +102,10 @@ export class FormationScheduler {
         previous.attempts[0].camera.at(startAt - previous.attempts[0].releaseAt),
         previous.attempts[1].camera.at(startAt - previous.attempts[1].releaseAt),
       ] : [null, null],
-    });
+    };
+  }
+  private authorPlan(sequence: number, previous?: FormationPlan): FormationPlan {
+    const result = this.author(this.request(sequence, previous));
     if (!result.ok) this.fail(`Could not author encounter ${sequence}: ${JSON.stringify(result.failures)}`);
     return result.plan;
   }

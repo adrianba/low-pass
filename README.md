@@ -661,6 +661,20 @@ require explicit frozen combat presentation. The all-terrain scene fixture
 compares host and guest aircraft, bombs, cameras and resource counts. This is
 renderer integration, not a playable native network match.
 
+The lifecycle-owned `MatchController`, `HostGame` and `GuestGame` now connect
+prepared lobby ownership, acknowledged countdown, reliable initial checkpoints,
+rolling plan publication, release settlement and complete guest presentation.
+Native Chromium fixtures run Valley and Canyon matches through both finales.
+They supply prepared camera views rather than a live WebGL application; the
+normal menu, HUD, shared resume/recovery and multiplayer records remain unwired.
+This is not the two-computer Edge gameplay review checkpoint.
+
+Rolling course selection and transfer encoding run in a bounded dedicated Web
+Worker. Imported tracks and camera samples preserve the authored numbers; the
+main thread never reruns candidate selection during a handoff. An unavailable
+worker, missing acknowledged coverage or lost clock synchronization explicitly
+holds the match rather than silently skipping simulation time.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

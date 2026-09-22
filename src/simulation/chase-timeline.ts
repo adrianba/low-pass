@@ -57,11 +57,23 @@ function copyView(value: ChaseView): ChaseView {
 export class ChaseTimeline {
   readonly samples: readonly Sample[];
 
-  constructor(poseAt: (time: number) => Pose, readonly surface: Surface,
+  constructor(poseAt: ((time: number) => Pose) | readonly Sample[], readonly surface: Surface,
     readonly startTime: number, readonly endTime: number, previous: ChaseView | null = null) {
     const count = Math.ceil((endTime - startTime) / STEP);
     if (![startTime, endTime].every(Number.isFinite) || count < 1 || count + 1 > MAX_CHASE_SAMPLES) {
       throw new Error('Invalid bounded chase timeline coverage.');
+    }
+    if (typeof poseAt !== 'function') {
+      if (poseAt.length < 2 || poseAt.length > MAX_CHASE_SAMPLES || poseAt[0]!.time !== startTime ||
+        poseAt.at(-1)!.time !== endTime || poseAt.some((sample, index) =>
+          !Number.isFinite(sample.time) || index > 0 && sample.time <= poseAt[index - 1]!.time ||
+          !finiteVector(sample.position) || !finiteVector(sample.target) || distance(sample.position, sample.target) === 0)) {
+        throw new Error('Invalid imported chase samples.');
+      }
+      this.samples = Object.freeze(poseAt.map(sample => Object.freeze({
+        time: sample.time, position: Object.freeze({ ...sample.position }), target: Object.freeze({ ...sample.target }),
+      })));
+      return;
     }
     if (previous && (!finiteVector(previous.position) || !finiteVector(previous.target))) {
       throw new Error('Invalid initial chase view.');

@@ -1131,6 +1131,27 @@ results, not Windows Edge or two-computer gameplay acceptance. The resume point
 remains step 29: connect startup, event publication and replica presentation into
 the actual lifecycle-owned application controllers.
 
+The first controller integration now owns that pipeline: `MatchController`
+accepts the prepared connection, prewarms host/guest state before the countdown,
+then runs `HostGame` publication and `GuestGame` presentation. A reliable initial
+checkpoint prevents first-snapshot loss from deadlocking subsequent events.
+Acknowledgements gate flight commits and complete outcome groups; pending
+outcomes prevent scheduler retirement. Small combat payloads take priority over
+bulk flight data, with self-contained combat when a referenced track is not yet
+verified. Explicit holds remain terminal in this slice; shared resume and
+15-second recovery are still pending, as are normal-menu/WebGL/HUD wiring.
+
+Native execution exposed synchronous next-course authoring blocking the flight
+clock at the first handoff. A dedicated, single-job Web Worker now performs
+approved planning, serialization and hashing ahead of time. The host imports
+owned numeric tracks/camera samples without reauthoring, retains bounded
+lookahead, and cancels pending worker work on exit. Full Valley/Canyon native
+controller fixtures now reach both finales; all-terrain unit fixtures cover
+both death orders and survivor continuation. No geometry or scoring limits
+were changed. Tests also exposed fractional-tick rounding at an exactly sampled
+Canyon release; only identical encoded host-time stamps normalize to the exact
+sample, while truly future input remains rejected.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

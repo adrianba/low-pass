@@ -19,7 +19,7 @@ export function replicaWorldFrame(state: Snapshot, plans: ReplicaPlans, seed: nu
   time: number, presentation: SharedPresentation = {}): SharedWorldFrame {
   const at = stampAt(time), sampledAt = secondsAt(state.at);
   const maximum = state.status === 'over' ? FINALE_DURATION : REPLICA_CLOCK_LIMITS.futureSeconds;
-  if (!Number.isSafeInteger(seed) || compareStamps(at, state.at) < 0 || time - sampledAt > maximum ||
+  if (!Number.isSafeInteger(seed) || compareStamps(at, state.at) < 0 || compareStamps(at, stampAt(sampledAt + maximum)) > 0 ||
     (state.status === 'paused' || state.status === 'blocked') && compareStamps(at, state.at) !== 0) {
     throw new Error('Replica frame exceeds its authoritative presentation window.');
   }
