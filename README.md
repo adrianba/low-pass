@@ -242,8 +242,8 @@ Key rotation requires coordinated operator updates/restart; this process reads
 its key at startup and does not watch or rewrite secret files.
 
 Local tests use dummy keys and verify issuance, refresh and browser configuration
-acceptance. Subsequent opt-in diagnostics established deployed UDP/TCP relay use,
-but TLS and two-computer Windows Edge acceptance remain incomplete as noted below.
+acceptance. Subsequent opt-in diagnostics established deployed UDP/TCP/TLS relay
+use; two-computer Windows Edge and long-match acceptance remain incomplete.
 Ansible owns preparing and mounting the separate
 application secret file; coturn's existing `/run/secrets/turnserver.conf` mount
 does not supply it to Low Pass.
@@ -312,8 +312,8 @@ read-only/non-root hardening and healthcheck. `/healthz` proves application
 health; `turn: true` in capabilities proves issuer configuration, **not coturn
 reachability**. Multiplayer still reports `false` until later UI/game integration.
 Ansible must supply the private key file described above; no secret value is
-needed in chat. The known TURN TLS certificate problem below blocks full
-transport acceptance.
+needed in chat. The certificate blocker described below is now resolved;
+latency, recovery and browser acceptance remain separate gates.
 
 ### Local connectivity diagnostic
 
@@ -382,11 +382,19 @@ so repeatability is not yet established. During bulk transfer, probes still
 experienced substantial delays after prioritization and send-time stamping;
 this is not gameplay latency acceptance or a performance benchmark.
 
-**TLS is blocked:** the public 5349 listener presents a Let's Encrypt **staging**
-certificate chain. Normal OpenSSL verification fails, and Chromium's forced-TLS
-test gathers no relay candidate and times out. Replace it through the
-operator-owned deployment with a publicly trusted certificate/full chain for
-`turn.low-pass.biggsea.us` and retest. Certificate checks were not bypassed.
+**Certificate retest, 2026-09-22:** the operator replaced the staging certificate.
+Normal OpenSSL chain/hostname verification now succeeds for
+`turn.low-pass.biggsea.us`, negotiating TLS 1.3. All four mounted Chromium cases
+passed: automatic mode selected direct, and forced UDP, TCP and TLS selected
+relay candidates at both ends with the expected relay transport. Each transferred
+the verified Canyon payload and exchanged commands/probes both ways. Certificate
+checks were not bypassed. No TCP connection timeout occurred in this batch; the
+earlier intermittent failure remains part of the record.
+
+Bulk-load application-probe maxima in this retest were approximately 2.31 seconds
+(UDP), 1.18 seconds (TCP) and 1.57 seconds (TLS), despite selected ICE-pair RTTs
+around 17-19 ms. Connectivity is established, but bulk scheduling/pacing still
+needs work before gameplay latency acceptance.
 Two-computer Edge, long-match refresh and full-match acceptance remain outstanding.
 
 ### Local formation preview (not networked)

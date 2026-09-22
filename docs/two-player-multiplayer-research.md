@@ -23,8 +23,8 @@ Ansible code. Relay deployment instructions/examples have been removed here;
 the remaining TURN material describes application integration and acceptance only.
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
 allocation and forced-relay connectivity were unverified at that checkpoint.
-The later 2026-09-22 diagnostic below establishes UDP/TCP relay use, but not
-complete TLS, two-computer Edge or long-match acceptance.
+The later 2026-09-22 diagnostic and certificate retest below establish UDP/TCP/TLS
+relay use, but not two-computer Edge or long-match acceptance.
 
 ### Host simulation checkpoint (not yet connected to the game UI)
 
@@ -358,12 +358,12 @@ which is not evidence of a working relay. TCP also had one connection timeout
 between successful runs; three follow-up attempts succeeded. This intermittent
 result remains disclosed rather than treated as reliable network acceptance.
 
-The TLS listener presents a Let's Encrypt staging chain (including the staging
+The initial TLS listener presented a Let's Encrypt staging chain (including the staging
 Bogus Broccoli X2 issuer). Normal hostname/chain verification failed; forced TLS
 in Chromium collected no relay candidates and timed out with numeric ICE error
-701. The required next operator action is a publicly trusted certificate/full
-chain for the TURN hostname, not disabling verification or changing the site's
-HTTP proxy. Secret contents, SDP, ICE addresses and credential responses were not
+701. The operator subsequently replaced that certificate with a trusted chain,
+without disabling verification or changing the site's HTTP proxy. Secret
+contents, SDP, ICE addresses and credential responses were not
 logged or placed in traces. Only redacted summaries are retained.
 
 Initial diagnostic probes queued behind bulk data and therefore included time
@@ -375,6 +375,18 @@ gameplay integration. It is not a formal latency benchmark, and no flight timing
 scoring windows or formation spacing were changed to mask it.
 Two-computer Windows Edge, allocation/credential refresh beyond ten minutes,
 recovery pressure and complete multiplayer-game acceptance remain open.
+
+The requested post-replacement retest passed all four actual mounted Chromium
+cases: automatic/direct, forced relay/UDP, forced relay/TCP and forced relay/TLS.
+Normal OpenSSL verification of chain and hostname also passed with TLS 1.3.
+Each relay case confirmed both selected candidates were relays, identified the
+expected client-to-relay transport, transferred the same hash-verified
+1,191,173-byte Canyon payload and exchanged commands/probes both ways. This
+resolves the certificate blocker, not the remaining gameplay/Edge gates.
+No TCP timeout recurred in this batch, but the earlier failure is not erased.
+Maximum application-probe RTT during bulk transfer was about 2.31 seconds on UDP,
+1.18 seconds on TCP and 1.57 seconds on TLS, with selected ICE-pair RTTs about
+17-19 ms. Bounded bulk pacing/scheduling remains the next network-quality task.
 
 ### Native peer transport checkpoint
 
