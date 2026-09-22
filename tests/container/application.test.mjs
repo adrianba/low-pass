@@ -281,7 +281,7 @@ test('explicit private-room activation works with a read-only secret mount and t
     '--mount', `type=bind,src=${path},dst=/run/low-pass-test-code,readonly`,
   ]);
   assert.deepEqual(await (await container.response('/api/multiplayer/capabilities')).json(),
-    { multiplayer: false, reason: 'not_implemented', rooms: true });
+    { multiplayer: false, reason: 'not_implemented', rooms: true, signaling: true });
   const headers = { 'Content-Type': 'application/json', Origin: 'https://room-test.example',
     'X-Forwarded-For': '203.0.113.10,173.245.48.5' };
   const authorized = await container.response('/api/multiplayer/host-authorizations',

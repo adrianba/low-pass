@@ -136,7 +136,7 @@ describe('bounded private room state', () => {
 describe('real private room HTTP boundary', () => {
   it('authorizes, atomically reserves a guest, admits, and revokes both capabilities on leave', async () => {
     const { post, origin, service, warnings } = await start();
-    expect(await (await fetch(origin + '/api/multiplayer/capabilities')).json()).toEqual({ multiplayer: false, reason: 'not_implemented', rooms: true });
+    expect(await (await fetch(origin + '/api/multiplayer/capabilities')).json()).toEqual({ multiplayer: false, reason: 'not_implemented', rooms: true, signaling: true });
     const authorization = await post('host-authorizations', { accessCode });
     expect(authorization.status).toBe(201);
     const grant = await authorization.json();

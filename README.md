@@ -42,8 +42,8 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
-endpoints are preparation only: opt-in private rooms exist, but there is no
-signaling, relay-credential issuance or playable multiplayer yet.
+endpoints are preparation only: opt-in private rooms and authenticated signaling
+exist, but there is no relay-credential issuance or playable multiplayer yet.
 Shared Zod protocol modules compile under `dist-server/shared`; the executable
 is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
@@ -126,16 +126,44 @@ in URLs; member operations use `Authorization: Bearer <capability>`.
 Default bounds: 16 rooms, two rooms per source, 64 host grants, one guest per
 room, 60-second grants/pending admissions, five-minute invitations, 15-minute
 authenticated idle leases and an eight-hour absolute room lifetime. These room
-cleanup leases do **not** replace the later 15-second connection-recovery rule.
+cleanup leases do **not** replace signaling's 15-second connection-recovery rule.
 Authentication, joining, room creation, member operations and global traffic
 have bounded rate limits; capacity/rate/expiry failures are explicit. Credentials
 and access codes must be excluded from proxy request-body/header logs.
 
-Capabilities/readiness report `rooms: true` only for a healthy configured room
-service, while `multiplayer` remains `false`. Invalid optional settings or room
+Capabilities report `rooms: true` and `signaling: true` only for healthy configured
+services, while `multiplayer` remains `false`. Invalid optional settings or room
 maintenance failure leave static serving healthy. A declared secret file
 mistakenly placed in the static root is excluded from HTTP delivery, and room
 activation is rejected. No hosting code is supplied in the repository.
+
+### Authenticated signaling (preparation only)
+
+The same listener accepts WebSocket upgrades at `/signal` when rooms are enabled.
+The upgrade requires the exact configured Origin and validated proxy chain.
+Authenticate within five seconds using a first JSON frame
+`{ "type": "auth", "version": 1, "capability": "<member capability>" }`;
+never put capabilities in the URL or a WebSocket subprotocol.
+
+Only admitted members can negotiate. Roles and the destination are derived from
+room membership: the host sends offers, the guest answers, and either can send
+ICE candidates to the other member of that room. Strict schemas reject additional
+routing/role fields. Generations start at one, increase with each host offer, and
+must match on answers/candidates. A pending offer cannot be overwritten.
+Reconnection retains the generation counter but requires a fresh offer.
+
+Bounds include 48 sockets, 16 awaiting authentication, 16 KiB wire frames, 64 KiB
+outgoing buffering and 128 candidates per participant/generation. Compression is
+disabled; upgrade and message traffic have global/source/member/room rate limits.
+Server heartbeats run every five seconds. After a detected disconnection, the
+same capability can reconnect for 15 seconds; expiry closes an admitted room.
+Pending guests that are denied or revoked cannot reconnect. Closure, overload,
+authentication and negotiation failures are explicit. Logs contain no SDP, ICE
+addresses or credentials. Service shutdown also closes upgraded sockets.
+
+Server and native-browser checks cover signaling messages, not actual peer data
+channels or relay allocations. Native WebRTC, connection UI, fair remote release
+settlement and two-computer Edge/TURN acceptance remain subsequent milestones.
 
 ### Local formation preview (not networked)
 

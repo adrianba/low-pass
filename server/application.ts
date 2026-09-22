@@ -4,11 +4,13 @@ import express from 'express';
 import type { ServiceConfig } from './config.js';
 import { compress, httpErrors, securityHeaders, staticFiles, validateStaticRoot } from './static.js';
 import { RoomApi } from './room-api.js';
+import { SignalingService } from './signaling.js';
 
 export class ApplicationService {
   private closing: Promise<void> | null = null;
   private readonly sockets = new Set<Socket>();
   readonly rooms: RoomApi | null;
+  readonly signaling: SignalingService | null;
   readonly server = createServer({
     maxHeaderSize: 8192,
     headersTimeout: 5000,
@@ -20,6 +22,7 @@ export class ApplicationService {
   constructor(private readonly config: ServiceConfig, private readonly warn: (message: string) => void) {
     const root = validateStaticRoot(config.staticRoot);
     this.rooms = config.multiplayer.status === 'rooms' ? new RoomApi(config.multiplayer.config, warn) : null;
+    this.signaling = this.rooms ? new SignalingService(this.server, this.rooms, warn) : null;
     const app = express();
     app.disable('x-powered-by');
     app.set('case sensitive routing', true);
@@ -54,13 +57,15 @@ export class ApplicationService {
         response.type('text/plain').send('ok\n');
       } else if (path === '/livez') {
         response.json({ status: 'ok' });
-      } else if (path === '/api/multiplayer/readyz' && (config.multiplayer.status === 'unavailable' || this.rooms?.available === false)) {
+      } else if (path === '/api/multiplayer/readyz' && (config.multiplayer.status === 'unavailable' ||
+        this.rooms?.available === false || this.signaling?.available === false)) {
         response.status(503).json({ error: 'multiplayer_unavailable',
-          reason: this.rooms?.available === false ? 'service_error' : config.multiplayer.reason });
+          reason: this.rooms?.available === false || this.signaling?.available === false ? 'service_error' : config.multiplayer.reason });
       } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
         response.json({ status: 'ready', multiplayer: false, ...(this.rooms ? { rooms: this.rooms.available } : {}) });
-      } else response.json({ multiplayer: false, reason: this.rooms?.available === false ? 'service_error' : config.multiplayer.reason,
-        ...(this.rooms ? { rooms: this.rooms.available } : {}) });
+      } else response.json({ multiplayer: false,
+        reason: this.rooms?.available === false || this.signaling?.available === false ? 'service_error' : config.multiplayer.reason,
+        ...(this.rooms ? { rooms: this.rooms.available, signaling: this.signaling!.available } : {}) });
     });
     app.use(...staticFiles(root, config.privateFiles));
     app.use(httpErrors(warn));
@@ -90,6 +95,7 @@ export class ApplicationService {
 
   close(): Promise<void> {
     if (this.closing) return this.closing;
+    this.signaling?.close();
     this.rooms?.close();
     this.closing = new Promise<void>((resolve, reject) => {
       if (!this.server.listening) { resolve(); return; }

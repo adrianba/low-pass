@@ -113,18 +113,38 @@ export class RoomStore {
     return this.view(room, member);
   }
   authenticate(credential: string, requireAdmission = false): Membership {
-    const { room, member } = this.member(credential);
+    return this.authenticateDigest(hashSecret(credential), requireAdmission);
+  }
+  authenticateDigest(digest: string, requireAdmission = false): Membership {
+    const { room, member } = this.memberDigest(digest);
     if (requireAdmission && room.state !== 'admitted') throw new RoomError('admission_required', 403);
     return { roomId: room.id, participantId: member.id, role: member.role, admitted: room.state === 'admitted' };
   }
   leave(credential: string): void {
-    const { room, member } = this.member(credential);
-    if (member.role === 'host' || room.state === 'admitted') this.closeRoom(room, 'room_closed');
-    else { this.removeGuest(room, 'room_closed'); this.notify(room, 'changed'); }
+    this.leaveDigest(hashSecret(credential));
+  }
+  leaveDigest(digest: string, reason = 'room_closed'): void {
+    const { room, member } = this.memberDigest(digest);
+    if (member.role === 'host' || room.state === 'admitted') this.closeRoom(room, reason);
+    else { this.removeGuest(room, reason); this.notify(room, 'changed', reason); }
   }
   private member(credential: string): { room: Room; member: Member } {
+    return this.memberDigest(hashSecret(credential));
+  }
+  statusDigest(digest: string): RoomView {
+    const { room, member } = this.memberDigest(digest);
+    return this.view(room, member);
+  }
+  peekDigest(digest: string): RoomView | null {
+    const roomId = this.members.get(digest), room = roomId ? this.rooms.get(roomId) : undefined;
+    if (!room) return null;
+    const member = room.host.hash === digest ? room.host : room.guest;
+    return member?.hash === digest ? this.view(room, member) : null;
+  }
+  hasDigest(digest: string): boolean { return this.members.has(digest); }
+  private memberDigest(hash: string): { room: Room; member: Member } {
     this.sweep();
-    const hash = hashSecret(credential), roomId = this.members.get(hash), room = roomId ? this.rooms.get(roomId) : null;
+    const roomId = this.members.get(hash), room = roomId ? this.rooms.get(roomId) : null;
     if (!room) throw new RoomError(this.revoked.get(hash)?.reason ?? 'invalid_capability', 401);
     const member = room.host.hash === hash ? room.host : room.guest;
     if (!member || member.hash !== hash) throw new Error('Invalid room membership index.');

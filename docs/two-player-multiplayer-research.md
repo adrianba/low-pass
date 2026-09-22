@@ -181,8 +181,8 @@ use declared, content-hashed transfers, with 8192-byte raw chunks encoded as
 base64 and at most 16 MiB per logical payload. These are bounded implementation
 limits, not measured Internet bandwidth/latency promises. Checkpoints reference
 the required plan/effect digests; consumers must not apply one before those
-dependencies and its content hash are verified. No public signaling endpoint,
-credentials, real WebRTC connection or TURN allocation is enabled here.
+dependencies and its content hash are verified. This protocol foundation alone
+enables no public endpoint, real WebRTC connection or TURN allocation.
 
 Node24 measurements across 15 sequential seed-7 passes found largest complete
 JSON formation payloads of 1,044,618 bytes (Valley), 1,044,612 (Desert) and
@@ -264,6 +264,32 @@ This is a tested room-service boundary, not a lobby or networked game. The
 capabilities endpoint remains truthful (`multiplayer: false`, with `rooms: true`
 only for the explicitly configured healthy service). Production stays disabled
 until an authorized future handoff. See the [application settings and room API](../README.md#private-room-service-preparation-only).
+
+### Authenticated signaling checkpoint
+
+The optional service now uses pinned `ws` on the existing application listener.
+Upgrades require the configured Origin/proxy contract, then a first-frame member
+capability within five seconds. The server derives both role and destination;
+pending participants cannot negotiate and traffic cannot address another room.
+Host-only offers, guest-only answers and trickled ICE use bounded, increasing
+negotiation generations. Stale/overlapping negotiations and duplicate sockets
+are rejected explicitly.
+
+The service bounds sockets, unauthenticated clients, frame sizes, candidate
+counts, outgoing buffers and rate-limit state. Heartbeats detect loss; a
+15-second same-capability recovery lease retains the generation counter and
+requires a fresh negotiation. Revocation/expiry removes leases and closes
+affected sockets. Ordinary room expiry during heartbeat refresh is not a global
+service failure. Graceful shutdown has a bounded termination path for upgraded
+sockets. Credential values, SDP and ICE addresses are never logged.
+
+Real local WebSocket tests cover isolation, role/admission checks, malformed and
+oversized traffic, backpressure, capacity, heartbeat, reconnect, revocation and
+shutdown. Two isolated Chromium contexts also exchange an offer through the
+authenticated service without changing existing browser records. That browser
+check does **not** create an RTCPeerConnection or establish actual relay use.
+Capabilities expose healthy signaling separately while `multiplayer` stays
+false; the approved combat preview and production deployment are unchanged.
 
 ### Local formation measurements and G1 approval
 

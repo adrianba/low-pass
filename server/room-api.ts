@@ -1,4 +1,5 @@
 import type { Request, RequestHandler } from 'express';
+import type { IncomingMessage } from 'node:http';
 import { admissionRequest, capability, emptyRequest, hostRequest, invitationRequest } from '../shared/protocol/rooms.js';
 import type { RoomConfig } from './room-config.js';
 import { ClientAddresses } from './client-address.js';
@@ -27,6 +28,23 @@ export class RoomApi {
   private readonly sweep: ReturnType<typeof setInterval>;
   private failed = false;
   get available(): boolean { return !this.failed; }
+  signalingSource(request: IncomingMessage): string {
+    if (!this.available) throw new RoomError('rooms_unavailable', 503);
+    this.limits.take('upgrade-global', 120);
+    if (request.headers.origin !== this.config.origin) throw new RoomError('origin_rejected', 403);
+    let source: string;
+    try { source = this.addresses.read(request); }
+    catch { throw new RoomError('invalid_proxy_chain', 403); }
+    this.limits.take(`upgrade:${source}`, 30);
+    return source;
+  }
+  signalingMessage(source: string, member?: { roomId: string; participantId: string }): void {
+    this.limits.take('signal-global', 8192); this.limits.take(`signal-source:${source}`, 1024);
+    if (member) {
+      this.limits.take(`signal-room:${member.roomId}`, 512);
+      this.limits.take(`signal-member:${member.participantId}`, 256);
+    }
+  }
   constructor(private readonly config: RoomConfig, warn: (message: string) => void) {
     this.store = new RoomStore(config.hostingDigest);
     this.addresses = new ClientAddresses(config.trustedProxyCidrs);
