@@ -465,6 +465,16 @@ change solo records, settings, terrain or the approved aircraft formation.
 Choose **Host** or **Join** in the preview. Both browser sessions must reach the
 same local service; a `localhost` link does not by itself connect another computer.
 
+The shared lobby model/panel now has host-only course selection, independent
+assistance, graphics, mute and volume, and acknowledged participant readiness.
+Course/assistance changes clear both ready flags; graphics/audio stay local.
+Guest intents are bounded to one awaiting acknowledgement, unsent host state is
+coalesced, and stale ready requests cannot approve a newer configuration.
+Readiness starts disabled until the connection/loading owner explicitly permits
+it. The UI-only fault harness verifies these rules with delay, loss and replay;
+real manifest/plan readiness is the next integration step, not simulated proof
+that a multiplayer game can start.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

@@ -452,6 +452,17 @@ or an existing query string. Guest settings and solo records are untouched.
 The separate `/room-controls.html` preview supports both roles; it is not yet a
 shared ready/terrain lobby or a networked game.
 
+The shared lobby model and panel are now separately exercised through the
+deterministic transport harness. Only the host authors terrain and shared state;
+the guest supplies its own assistance/ready intents with explicit acknowledgement.
+Configuration revisions invalidate stale ready requests. Both ready flags reset
+for terrain/assistance changes; graphics/audio remain local and no solo settings
+are written. Pending guest choices remain visibly pending, not falsely confirmed.
+One outstanding guest intent and one coalesced host state bound queue growth.
+The initial readiness gate remains closed until the connection/loading owner
+verifies its prerequisites. This increment is UI/state coverage, not real
+build-manifest or course-loading acceptance.
+
 `RtcPeer` now provides host-offerer negotiation and native SCTP channels behind
 the common transport interface. Candidates are generation-scoped, bounded and
 buffered until remote SDP; local candidates follow their description. Room-bound
