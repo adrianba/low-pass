@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertCompatible, byteLength, decodeMessage, decodePayload, encodeMessage, encodePayload, ProtocolError } from '../../shared/protocol/codec.js';
-import { MAX_TRANSFER_BYTES, MAX_WIRE_BYTES, CHANNELS } from '../../shared/protocol/limits.js';
+import { MAX_TRANSFER_BYTES, MAX_WIRE_BYTES, CHANNELS, PHYSICS_HZ } from '../../shared/protocol/limits.js';
 import { payload, secondsAt, stampAt } from '../../shared/protocol/game.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
 import type { WireMessage } from '../../shared/protocol/messages.js';
@@ -11,6 +11,7 @@ import { authorCombatPlan } from '../../src/game/multiplayer/combat-plan';
 import { MissileFlight } from '../../src/game/missile';
 import { FlightTrack } from '../../src/simulation/flight-track';
 import { FormationTrack } from '../../src/game/formation/track';
+import { STEP } from '../../src/config/game';
 
 const context = { sessionId: base.sessionId, epoch: 0, peer: 'host' as const, channel: 'control' as const };
 function rejected(callback: () => unknown, code: ProtocolError['code']) {
@@ -30,6 +31,7 @@ describe('bounded shared multiplayer protocol', () => {
       { ...base, type: 'transfer-offer', transfer: { id: 'plan', kind: 'formation', digest: hash, bytes: 5, chunks: 1 } },
       { ...base, type: 'transfer-chunk', transferId: 'plan', index: 0, data: 'aGVsbG8=' },
       { ...base, type: 'transfer-ready', transfer: reference },
+      { ...base, type: 'plan-commit', planRevision: 0, plans: [reference] },
       { ...base, type: 'checkpoint-commit', checkpoint: reference, planRevision: 0, eventSequence: 0, snapshotSequence: 0 },
       { ...base, type: 'barrier', nextEpoch: 1, reason: 'pause', at: { tick: 0, fraction: 0 } },
       { ...base, type: 'resync', reason: 'gap' },
@@ -43,6 +45,7 @@ describe('bounded shared multiplayer protocol', () => {
       expect(decoded).toEqual(message); expect(decoded).not.toBe(message);
     }
     expect(CHANNELS).toEqual({ control: { ordered: true }, state: { ordered: false, maxRetransmits: 0 } });
+    expect(PHYSICS_HZ).toBe(1 / STEP);
   });
 
   it('rejects malformed, non-finite, oversized and authority-confused messages without echoing input', () => {

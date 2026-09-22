@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { compatibility, counter, digest, identifier, reference, result, sequence, slot, snapshot, stamp } from './game.js';
-import { MAX_TRANSFER_BYTES, MAX_TRANSFER_CHUNKS, PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES } from './limits.js';
+import { MAX_PLANS, MAX_TRANSFER_BYTES, MAX_TRANSFER_CHUNKS, PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES } from './limits.js';
 
 export const command = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('release'), sequence, plan: reference, displayedAt: stamp }),
@@ -14,6 +14,14 @@ export const transfer = z.strictObject({
   bytes: z.number().int().min(1).max(MAX_TRANSFER_BYTES),
   chunks: z.number().int().min(1).max(MAX_TRANSFER_CHUNKS),
 }).refine(v => v.chunks === Math.ceil(v.bytes / TRANSFER_CHUNK_BYTES));
+export const transferChunk = z.strictObject({
+  transferId: identifier, index: z.number().int().min(0).lt(MAX_TRANSFER_CHUNKS),
+  data: z.string().min(4).max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4)
+    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+    .refine(v => v.length / 4 * 3 - (v.endsWith('==') ? 2 : v.endsWith('=') ? 1 : 0) <= TRANSFER_CHUNK_BYTES),
+});
+export type TransferOffer = z.infer<typeof transfer>;
+export type TransferChunk = z.infer<typeof transferChunk>;
 export const rejection = z.enum(['paused', 'blocked', 'over', 'eliminated', 'stale_encounter', 'unknown_encounter',
   'resolved', 'already_released', 'not_acquired', 'cutoff', 'active_bomb', 'too_old', 'future', 'epoch', 'plan', 'duplicate']);
 export const event = z.discriminatedUnion('action', [
@@ -40,12 +48,10 @@ export const wireMessage = z.discriminatedUnion('type', [
     planRevision: counter, event }),
   z.strictObject({ ...envelope, type: z.literal('snapshot'), state: snapshot }),
   z.strictObject({ ...envelope, type: z.literal('transfer-offer'), transfer }),
-  z.strictObject({ ...envelope, type: z.literal('transfer-chunk'), transferId: identifier,
-    index: z.number().int().min(0).lt(MAX_TRANSFER_CHUNKS),
-    data: z.string().min(4).max(Math.ceil(TRANSFER_CHUNK_BYTES / 3) * 4)
-      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
-      .refine(v => v.length / 4 * 3 - (v.endsWith('==') ? 2 : v.endsWith('=') ? 1 : 0) <= TRANSFER_CHUNK_BYTES) }),
+  z.strictObject({ ...envelope, type: z.literal('transfer-chunk'), ...transferChunk.shape }),
   z.strictObject({ ...envelope, type: z.literal('transfer-ready'), transfer: reference }),
+  z.strictObject({ ...envelope, type: z.literal('plan-commit'), planRevision: counter,
+    plans: z.array(reference).min(1).max(MAX_PLANS) }).refine(v => new Set(v.plans.map(p => p.id)).size === v.plans.length),
   z.strictObject({ ...envelope, type: z.literal('checkpoint-commit'), checkpoint: reference,
     planRevision: counter, eventSequence: counter, snapshotSequence: counter }),
   z.strictObject({ ...envelope, type: z.literal('barrier'), nextEpoch: counter,
@@ -59,7 +65,7 @@ export const wireMessage = z.discriminatedUnion('type', [
 export type WireMessage = z.infer<typeof wireMessage>;
 
 export const HOST_ONLY = new Set<WireMessage['type']>([
-  'ack', 'event', 'snapshot', 'transfer-offer', 'transfer-chunk', 'checkpoint-commit', 'barrier',
+  'ack', 'event', 'snapshot', 'transfer-offer', 'transfer-chunk', 'plan-commit', 'checkpoint-commit', 'barrier',
 ]);
 export function messageChannel(message: WireMessage): 'control' | 'state' {
   return message.type === 'snapshot' || message.type === 'ping' || message.type === 'pong' ? 'state' : 'control';

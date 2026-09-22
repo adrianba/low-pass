@@ -196,6 +196,45 @@ The shared modules have no DOM/Babylon/game imports. Container entrypoint,
 healthcheck and compiled service tests follow this layout; serving port, public
 origin, optional-feature failure handling and solo records are unchanged.
 
+### Deterministic transport and recovery-ordering foundation
+
+`PeerTransport` is the common send/receive/status/clock/buffer interface for the
+future RTC adapter. The test-only `FaultNetwork` runs on explicitly advanced
+virtual milliseconds: no sleeps, firewall changes or external services. Seeded
+profiles exercise delay, jitter, loss, application replay, cross-channel reorder,
+partitions, disconnection, queue pressure, clock offset and drift. Reliable
+control retries and preserves per-sender head-of-line order; disposable state
+can be lost or reordered. Application replay injection is **not** a claim that
+SCTP delivers duplicate frames. Packet/byte/inbox and processing-work limits
+fail explicitly rather than creating unbounded queues.
+
+Large payloads now have an actual producer and bounded reassembler using native
+WebCrypto SHA-256. Offers reserve declared bytes; chunks must have the exact
+declared sizes and canonical base64. Only matching hashes, valid UTF-8 and fully
+validated typed payloads can complete. Conflicting chunks, missing offers,
+capacity exhaustion and expiry are explicit failures. Identical partial chunk
+replay is idempotent. Reassembly budgets and TTL are supplied by the caller;
+they are not a substitute for the agreed 15-second connection-recovery policy.
+Reset invalidates old work, but uncancellable hash operations remain counted
+against capacity until they settle.
+
+`DeliveryBarrier` checks ordering before future replica application. Explicit
+plan commits wait for verified dependencies. Snapshots that overtake their
+reliable events wait; stale snapshots cannot move the event watermark backward.
+Checkpoint commits require the matching verified payload, matching session/epoch
+and watermarks, and all referenced plans/effects. Duplicate or older checkpoints
+cannot overwrite newer delivery state, including when hashing completes after
+a reset. Consumers still need bounded deferred-message handling and the actual
+game-state replica; this helper is not that complete integration.
+
+The browser fixture transfers a full real Canyon plan with retry, duplication
+and backpressure, verifies its digest and exact numeric contents, then releases
+the deferred plan/snapshot. A separate test feeds duplicate guest release commands
+to the real local session and observes only one bomb/result. Its simulation clock
+is deliberately held at release time: neither that test nor the fake network
+proves fair remote release settlement or actual Internet/ICE/TURN behavior.
+Those remain later milestones and the two-computer Edge gate.
+
 ### Local formation measurements and G1 approval
 
 Both opt-in paired planners are implemented on the local branch. The user
