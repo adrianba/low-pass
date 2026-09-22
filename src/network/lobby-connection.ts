@@ -3,9 +3,7 @@ import type { Compatibility } from '../../shared/protocol/game.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { assertCompatible, ProtocolError } from '../../shared/protocol/codec.js';
 import type { Settings } from '../storage/records.js';
-import { FormationScheduler } from '../game/multiplayer/scheduler.js';
-import { formationData } from './formation-data.js';
-import { createTransfer, TransferReceiver, TransferError } from './transfer.js';
+import { TransferReceiver, TransferError } from './transfer.js';
 import type { CompletedTransfer } from './transfer.js';
 import { BUILD_IDENTITY } from './build-identity.js';
 import { RoomClient } from './room-client.js';
@@ -13,20 +11,23 @@ import { PeerLink } from './peer-link.js';
 import { Lobby } from './lobby.js';
 import { icePolicy } from './ice-policy.js';
 import type { IceMode } from './ice-policy.js';
+import { prepareHostCourse } from './prepared-course.js';
+import type { PreparedHostCourse, OutgoingTransfer } from './prepared-course.js';
+import type { TransportEvent } from './transport.js';
 
 type ManifestMessage = Extract<MessageBody, { type: 'course-manifest' }>;
-type Transfer = Awaited<ReturnType<typeof createTransfer>>;
 class CourseError extends Error {
   constructor(readonly code: string) { super(`Course setup failed: ${code}.`); }
 }
-type LinkPort = Pick<PeerLink, 'status' | 'failure' | 'send' | 'drain' | 'diagnostics' | 'close'>;
-type CourseAuthor = (terrain: Settings['terrain'], seed: number, revision: number) => Promise<[Transfer, Transfer]>;
-const authorCourse: CourseAuthor = async (terrain, seed, revision) => {
-  const scheduler = new FormationScheduler(terrain, seed);
-  const first = formationData(scheduler.plan(0), 0), next = formationData(scheduler.plan(1), 1);
-  return Promise.all([createTransfer({ kind: 'formation', data: first }, `course-${revision}-${first.encounterId}`),
-    createTransfer({ kind: 'formation', data: next }, `course-${revision}-${next.encounterId}`)]);
-};
+export type MatchLink = Pick<PeerLink, 'status' | 'failure' | 'send' | 'drain' | 'diagnostics' | 'close' | 'epoch' | 'sessionId'>;
+type CourseAuthor = typeof prepareHostCourse;
+interface PreparedBase {
+  link: MatchLink; lobby: Lobby; course: ManifestMessage; epoch: number; inbox: TransportEvent[];
+}
+export type PreparedConnection = PreparedBase & (
+  { role: 'host'; authored: PreparedHostCourse } |
+  { role: 'guest'; formations: [CompletedTransfer, CompletedTransfer] }
+);
 
 /** Connection/course readiness only. No match clock, scores or gameplay inputs. */
 export class LobbyConnection {
@@ -34,7 +35,9 @@ export class LobbyConnection {
   private readonly receiver = new TransferReceiver(() => performance.now(), { maxTransfers: 2, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
   private readonly received = new Map<string, CompletedTransfer>();
   private current: ManifestMessage | null = null;
-  private outgoing: Array<{ transfer: Transfer; index: number }> = [];
+  private courseEpoch = 0;
+  private authored: PreparedHostCourse | null = null;
+  private outgoing: Array<{ transfer: OutgoingTransfer; index: number }> = [];
   private urgent: MessageBody[] = [];
   private busy = false;
   private disposed = false;
@@ -50,21 +53,22 @@ export class LobbyConnection {
   private rtts: number[] = [];
   private readonly identity: Compatibility;
   private readonly timer: ReturnType<typeof setInterval>;
-  constructor(private readonly link: LinkPort, settings: Settings,
+  constructor(private readonly link: MatchLink, settings: Settings,
     identity: Compatibility, private readonly seed: number, role: RoomMembership['room']['role'],
-    private readonly author: CourseAuthor = authorCourse) {
+    private readonly author: CourseAuthor = prepareHostCourse,
+    private readonly onPrepared?: (connection: PreparedConnection) => void) {
     this.identity = Object.freeze({ ...identity });
     this.lobby = new Lobby(role, settings);
     this.timer = setInterval(() => { void this.pump(); }, 20);
   }
   static async connect(member: RoomMembership, settings: Settings, mode: IceMode, seed = 7,
-    identity: Compatibility = BUILD_IDENTITY): Promise<LobbyConnection> {
+    identity: Compatibility = BUILD_IDENTITY, onPrepared?: (connection: PreparedConnection) => void): Promise<LobbyConnection> {
     const aspect = innerWidth / innerHeight;
     if (aspect < 0.75 || aspect > 2) throw new Error('Resize this window to an aspect ratio between 0.75 and 2 before connecting.');
     if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error('Invalid course seed.');
     const config = mode === 'direct' ? null : await new RoomClient().ice(member.capability);
     const link = new PeerLink({ member, compatibility: identity, aspect, ...icePolicy(mode, config) });
-    return new LobbyConnection(link, settings, identity, seed, member.room.role);
+    return new LobbyConnection(link, settings, identity, seed, member.room.role, undefined, onPrepared);
   }
   private queue(message: MessageBody) {
     if (this.urgent.length >= 32) throw new CourseError('control_capacity');
@@ -72,10 +76,14 @@ export class LobbyConnection {
   }
   private async prepare() {
     const terrain = this.lobby.state!.terrain, revision = this.nextRevision++;
-    this.needsPreparation = true; this.complete = false; this.lobby.allowReady(false); this.outgoing = [];
+    this.needsPreparation = true; this.complete = false; this.lobby.allowReady(false); this.outgoing = []; this.authored = null;
     this.urgent = this.urgent.filter(message => message.type !== 'course-ready' && message.type !== 'course-manifest');
-    const transfers = await this.author(terrain, this.seed, revision);
+    const authored = await this.author(terrain, this.seed, revision);
     if (this.disposed || this.lobby.state!.terrain !== terrain) return;
+    if (authored.scheduler.terrain !== terrain || authored.scheduler.seed !== this.seed ||
+      authored.scheduler.session.time !== 0 || authored.scheduler.session.lastEventId !== 0) throw new CourseError('authored_course_state');
+    this.authored = authored; this.courseEpoch = this.link.epoch;
+    const transfers = authored.transfers;
     const a = transfers[0]!, b = transfers[1]!;
     this.current = { type: 'course-manifest', revision,
       manifest: { compatibility: this.identity, terrain, seed: this.seed, grid: terrain === 'river-canyon' ? 8 : 16, triangle: 'shared-diagonal-v1' },
@@ -105,6 +113,7 @@ export class LobbyConnection {
       }
       if (message.manifest.terrain !== this.lobby.state?.terrain) throw new CourseError('manifest_terrain');
       this.current = { type: message.type, revision: message.revision, manifest: message.manifest, plans: message.plans };
+      this.courseEpoch = message.epoch;
       this.complete = false; this.lobby.allowReady(false); this.receiver.reset(); this.received.clear();
       this.deadline = performance.now() + 45_000; return;
     }
@@ -148,8 +157,13 @@ export class LobbyConnection {
     this.busy = true;
     let phase = 'receiving';
     try {
-      for (const event of this.link.drain()) if (event.type === 'message') {
-        phase = `receiving:${event.message.type}`; await this.receive(event.message);
+      const incoming = this.link.drain();
+      for (let index = 0; index < incoming.length; index++) {
+        const event = incoming[index]!;
+        if (event.type === 'message') {
+          phase = `receiving:${event.message.type}`; await this.receive(event.message);
+          if (this.handoff(incoming.slice(index + 1))) return;
+        }
       }
       if (this.link.status === 'closed') throw new Error('Peer connection closed.');
       if (this.link.status !== 'open') return;
@@ -180,6 +194,7 @@ export class LobbyConnection {
         if (priority) this.urgent.shift();
         else if (pending && ++pending.index >= pending.transfer.chunks.length) this.outgoing.shift();
       }
+      this.handoff([]);
     } catch (error) {
       if (this.disposed) return;
       this.failure = this.link.failure ?? (error instanceof TransferError || error instanceof CourseError ? `course_${error.code}`
@@ -189,6 +204,32 @@ export class LobbyConnection {
       console.error(`Private connection check failed: ${this.failure}.`);
       this.close();
     } finally { this.busy = false; }
+  }
+  private handoff(inbox: TransportEvent[]): boolean {
+    if (!this.onPrepared || this.disposed || this.link.status !== 'open' || !this.current || !this.complete ||
+      !this.lobby.state?.ready.every(Boolean) || this.outgoing.length ||
+      this.urgent.some(message => message.type !== 'ping' && message.type !== 'pong') ||
+      !this.lobby.flush(message => this.link.send(message))) return false;
+    const common: PreparedBase = { link: this.link, lobby: this.lobby, course: structuredClone(this.current),
+      epoch: this.courseEpoch, inbox };
+    let prepared: PreparedConnection;
+    if (this.lobby.role === 'host') {
+      if (!this.authored) throw new CourseError('missing_authored_course');
+      prepared = { ...common, role: 'host', authored: this.authored };
+    } else {
+      const [first, next] = this.current.plans.map(ref => this.received.get(ref.id));
+      if (!first || !next) throw new CourseError('missing_verified_course');
+      prepared = { ...common, role: 'guest', formations: [first, next] };
+    }
+    // The controller owns readiness revalidation/countdown, including late lobby intents.
+    clearInterval(this.timer); this.disposed = true; this.receiver.reset();
+    this.authored = null; this.received.clear(); this.outgoing = []; this.urgent = [];
+    try { this.onPrepared(prepared); }
+    catch {
+      this.failure = 'controller_handoff_failed'; this.failurePhase = 'handoff';
+      this.link.close(); console.error('Private match controller handoff failed.');
+    }
+    return true;
   }
   private progress() { return { outgoingPlans: this.outgoing.length, receivedVerifiedPlans: this.received.size, pendingTransfers: this.receiver.pendingCount }; }
   async report() {
@@ -202,6 +243,6 @@ export class LobbyConnection {
   close() {
     if (this.disposed) return;
     this.disposed = true; this.complete = false; clearInterval(this.timer); this.lobby.allowReady(false);
-    this.link.close(); this.receiver.reset(); this.received.clear(); this.outgoing = []; this.urgent = [];
+    this.link.close(); this.receiver.reset(); this.authored = null; this.received.clear(); this.outgoing = []; this.urgent = [];
   }
 }

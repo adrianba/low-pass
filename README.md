@@ -637,6 +637,13 @@ and counted rather than closing a healthy connection. Application decoding remai
 strict. This is the transport prerequisite for startup/pause/recovery, not the
 completed shared-pause or reconnect workflow.
 
+An optional lobby handoff now transfers exclusive ownership of the existing
+connection, unread messages, original host scheduler and hash-verified guest
+plans to a match controller. It does not reroll the course or start the clock.
+The controller must revalidate readiness and complete loading/countdown; a late
+unready intent is preserved. The connection-check preview does not install that
+handoff and therefore retains its existing behavior.
+
 ### Local formation preview (not networked)
 
 The test-only two-aircraft preview exercises both real flight paths, cameras,

@@ -1091,6 +1091,16 @@ signaling generation. A real two-context Chromium check advances epoch 7 to 8
 on the same authenticated connection and exchanges new-epoch commands. This
 does not yet implement game startup, shared pause or automatic recovery.
 
+Course preparation now retains its original host scheduler with the configured
+release allowance. Optional lobby-to-controller handoff transfers that exact
+scheduler, both outgoing identities, verified guest formations and any unread
+messages from the current drain. The old timer/receiver stop without closing the
+new owner's link. The lobby epoch is retained separately from a transport epoch
+whose barrier may already have arrived. Late readiness changes stay in the shared
+lobby model/outgoing stream: handoff is not permission to launch. The ordinary
+connection-check preview does not install a match owner, so remains a lobby-only
+check; real startup/countdown and application wiring are still outstanding.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world
