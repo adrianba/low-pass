@@ -178,6 +178,7 @@ export class MatchController {
       const now = this.now();
       if (this.started && (this.phaseValue === 'playing' || this.phaseValue === 'ending') &&
         now - this.lastPeerAt > REPLICA_CLOCK_LIMITS.freshnessMs && this.reconnect) {
+        console.warn('Private match recovering:', this.prepared.role, this.phaseValue, `peer silent for ${Math.round(now - this.lastPeerAt)}ms`);
         this.beginRecovery(); return;
       }
       this.probe();

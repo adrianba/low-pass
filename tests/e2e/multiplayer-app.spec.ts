@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { roomService } from '../helpers/room-service.js';
 
-declare global { interface Window { interruptTestSignaling: () => void; interruptTestPeer: () => void } }
+declare global { interface Window {
+  interruptTestSignaling: () => void; interruptTestPeer: () => void;
+  readTestPhases: () => Array<{ phase: string; time: string; at: number }>;
+} }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 test('multiplayer storage failure warns without blocking room controls or changing solo data', async ({ browser }) => {
   const server = await roomService({ multiplayerApp: true });
@@ -23,6 +26,11 @@ test('multiplayer storage failure warns without blocking room controls or changi
     await page.goto(server.origin + '/multiplayer.html');
     await page.getByRole('button', { name: 'PRIVATE FLIGHT PREVIEW', exact: true }).click();
     await expect(page.locator('#notification')).toContainText('Multiplayer records unavailable');
+    await page.locator('#match-setup-records summary').focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('#match-setup-records [data-records="scores"]')).toBeVisible();
+    await expect(page.locator('#match-setup-records [data-records="scores"]')).toHaveText('No completed multiplayer scores yet.');
+    await page.keyboard.press('Space');
     await page.getByLabel('Hosting access code', { exact: true }).fill(server.code);
     await page.getByRole('button', { name: 'CREATE ROOM', exact: true }).click();
     await expect(page.locator('#host-link')).toHaveValue(/multiplayer\.html#join=/);
@@ -49,9 +57,19 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => {
         if (message.type() === 'error') errors.push(message.text());
-        if (message.type() === 'warning' && message.text().startsWith('Private match paused:')) warnings.push(message.text());
+        if (message.type() === 'warning' && message.text().startsWith('Private match ')) warnings.push(message.text());
       });
       await page.addInitScript(value => {
+        const phases: ReturnType<Window['readTestPhases']> = [];
+        window.readTestPhases = () => structuredClone(phases);
+        document.addEventListener('DOMContentLoaded', () => new MutationObserver(changes => {
+          for (const change of changes) {
+            const root = change.target;
+            if (!(root instanceof HTMLElement) || root.id !== 'multiplayer-app' || phases.at(-1)?.phase === root.dataset.phase) continue;
+            phases.push({ phase: root.dataset.phase ?? '', time: root.dataset.time ?? '', at: Date.now() });
+            if (phases.length > 64) phases.shift();
+          }
+        }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['data-phase'] }));
         const sockets: WebSocket[] = [], NativeSocket = WebSocket;
         const peers: RTCPeerConnection[] = [], NativePeer = RTCPeerConnection;
         globalThis.RTCPeerConnection = class extends NativePeer {
@@ -213,7 +231,9 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
     await guest.screenshot({ path: info.outputPath('guest-native-canvas.png') });
     for (const page of pages) {
       await expect(page.locator('#match-reticle')).toBeHidden();
-      for (const selector of ['.score-card', '.miss-card', '#match-pause', '#match-exit']) {
+      const selectors = await page.locator('#match-results').isVisible()
+        ? ['#match-results', '#match-exit'] : ['.score-card', '.miss-card', '#match-pause', '#match-exit'];
+      for (const selector of selectors) {
         await expect(page.locator(`#multiplayer-app ${selector}`)).toBeInViewport({ ratio: 1 });
       }
     }
@@ -241,8 +261,28 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       await guest.screenshot({ path: info.outputPath('guest-compact-instruments.png'), scale: 'css' });
       for (const page of pages) await page.locator('#match-ready').click();
       for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 10_000 });
-      await expect(guest.locator('#match-reticle.on-target')).toBeVisible({ timeout: 45_000 });
-      await guest.keyboard.press('Space');
+      await guest.locator('#scene').focus();
+      // Release in the indicated HUD frame, not after a cross-process assertion/input round trip.
+      await guest.evaluate(() => new Promise<void>((resolve, reject) => {
+        let frame = 0;
+        const timeout = setTimeout(() => {
+          cancelAnimationFrame(frame); reject(new Error('No on-target guest release frame.'));
+        }, 45_000);
+        const check = () => {
+          const phase = document.querySelector<HTMLElement>('#multiplayer-app')?.dataset.phase;
+          if (phase !== 'playing') {
+            clearTimeout(timeout); reject(new Error(`Flight stopped before the guest release: ${phase}`)); return;
+          }
+          const reticle = document.querySelector<HTMLElement>('#match-reticle');
+          if (reticle && !reticle.hidden && reticle.classList.contains('on-target')) {
+            const canvas = document.querySelector('#scene')!;
+            for (const type of ['keydown', 'keyup']) canvas.dispatchEvent(new KeyboardEvent(type, { code: 'Space', key: ' ', bubbles: true }));
+            clearTimeout(timeout); resolve();
+          } else frame = requestAnimationFrame(check);
+        };
+        frame = requestAnimationFrame(check);
+      }));
+      await expect(guest.locator('#match-release')).toHaveText('BOMB IN FLIGHT');
       await expect.poll(async () => Number(await guest.locator('#match-score-1').innerText()), { timeout: 10_000 }).toBeGreaterThan(0);
       await expect.poll(async () => {
         const phase = await host.locator('#multiplayer-app').getAttribute('data-phase');
@@ -283,8 +323,29 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         }
       }
     }
+    for (const page of interrupted ? [host] : pages) {
+      await expect(page.locator('#match-results')).toBeVisible();
+      await expect(page.locator('#match-results')).toBeInViewport({ ratio: 1 });
+      await expect(page.getByRole('table', { name: 'Private match player results' })).toBeVisible();
+      await expect(page.locator('#match-result-players tr')).toHaveCount(2);
+      if (interrupted) {
+        await expect(page.locator('#match-result-title')).toHaveText('MATCH INCOMPLETE');
+        await expect(page.locator('#match-result-description')).toContainText('No winner.');
+        await expect(page.locator('#match-result-players tr[data-slot="1"]')).toContainText('UNFINISHED');
+      } else {
+        await expect(page.locator('#match-result-title')).toHaveText(terrain === 'green-valley' ? 'PLAYER 2 WINS' : /MATCH DRAW|PLAYER [12] WINS/);
+      }
+      await page.locator('#match-result-records summary').focus();
+      await page.keyboard.press('Space');
+      await expect(page.locator('#match-result-records [data-records="scores"] li')).toHaveCount(interrupted ? 1 : 2);
+      await expect(page.locator('#match-result-records [data-records="matches"] li')).toHaveCount(1);
+      await page.keyboard.press('Space');
+      await expect(page.getByRole('button', { name: 'RETURN TO MENU', exact: true })).toBeInViewport({ ratio: 1 });
+    }
+    await (interrupted ? host : guest).screenshot({ path: info.outputPath('multiplayer-results.png'), scale: 'css' });
     expect(errors.filter(error => !error.startsWith('Private match held:'))).toEqual([]);
-    await host.getByRole('button', { name: 'LEAVE PRIVATE FLIGHT', exact: true }).click();
+    await host.getByRole('button', { name: 'RETURN TO MENU', exact: true }).focus();
+    await host.keyboard.press('Space');
     await expect(host.locator('#multiplayer-app')).toHaveCount(0);
     await expect(host.locator('#start')).toBeVisible();
     await expect(host.locator('#session-name')).toHaveText('SOLO TRAINING RANGE');
@@ -296,8 +357,12 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
     const states = await Promise.all(pages.map(page => page.isClosed() ? null : page.evaluate(() => {
       const root = document.querySelector<HTMLElement>('#multiplayer-app');
       return { phase: root?.dataset.phase, time: root?.dataset.time,
+        phases: window.readTestPhases?.() ?? [],
         pause: document.querySelector('#match-pause-reason')?.textContent,
-        issue: document.querySelector('#match-message')?.textContent };
+        release: document.querySelector('#match-release')?.textContent,
+        input: document.querySelector('#match-input')?.textContent,
+        scores: [0, 1].map(slot => document.querySelector(`#match-score-${slot}`)?.textContent),
+        issue: document.querySelector('#match-result-error')?.textContent || document.querySelector('#match-message')?.textContent };
     })));
     const report = info.outputPath('redacted-match-status.json');
     await writeFile(report, JSON.stringify({ states, warnings, errors }, null, 2));

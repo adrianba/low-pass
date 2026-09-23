@@ -1198,8 +1198,7 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-In-flight assistance changes, audio, records/results screens
-and rematch are not complete. The local
+In-flight assistance changes, audio and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
 
@@ -1658,10 +1657,19 @@ replica supply the same bounded shape. Stable match/slot identities survive paus
 and connection epochs; completion is idempotent. Ten top individual records and
 ten recent summaries are retained. Reload marks saved active summaries interrupted,
 and unavailable/invalid storage warns without replacing the saved bytes or blocking
-room/gameplay controls. Separate results/records screens remain the next step.
+room/gameplay controls. Separate results/records screens now display both totals,
+final versus unfinished flights, assistance and winner/draw/incomplete status.
+Keyboard-accessible bounded history disclosures are available from setup and
+results, with safe text insertion and an always-accessible return-to-menu action.
 Real-canvas checks cover complete and interrupted matches, saving during the first
 finale, keeping only the eliminated player's leaderboard entry after the survivor
 leaves, and unchanged solo data. Storage-unavailable room controls also remain usable.
+The actual incomplete-results screen and compact isolated completed/draw/empty
+views pass browser checks. A subsequent full real-canvas completed run entered
+automatic peer recovery during its late finale rather than reaching results;
+this remains part of sustained lifecycle/render acceptance, not a completed-game
+acceptance claim. Redacted bounded phase histories and stale-peer diagnostics now
+support that investigation without loosening any fairness or recovery limits.
 
 Introduce a separately versioned key, for example
 `low-pass.multiplayer-records.v1`, and a dedicated validated store. Do not insert

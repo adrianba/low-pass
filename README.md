@@ -736,7 +736,7 @@ so the host's wider window cannot hide a guest missile launch. Resizing requires
 fresh readiness; unsupported sizes disable it until corrected.
 
 **Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes,
-audio, results/records screens and rematch UI are subsequent steps.
+audio and rematch UI are subsequent steps.
 This is not the full two-computer Windows Edge review checkpoint.
 
 Confirmed eliminations are saved immediately, before their visual finales, under
@@ -749,6 +749,12 @@ active saved summary incomplete; it does not recover gameplay. Invalid stored
 bytes are not overwritten, and storage failures warn while retaining session data.
 The solo key and settings are never changed by this store. There is no account
 synchronization or guarantee of recovering a final result that a peer never received.
+At the end, a separate results panel shows both totals, completion and assistance,
+and a winner/draw or explicit incomplete reason. Open **MULTIPLAYER RECORDS** in
+the setup or results panel to browse the bounded local lists. Unfinished totals
+are labelled and never ranked. Keyboard focus moves to the results heading;
+Space still activates focused buttons/disclosures rather than releasing a bomb.
+**RETURN TO MENU** remains outside the scrolling results panel.
 
 A signaling-only interruption no longer destroys a healthy peer connection.
 The existing flight continues with a degraded-service warning while the same

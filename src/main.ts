@@ -137,7 +137,8 @@ for (const message of warnings) ui.warn(message);
 document.addEventListener('keydown', event => {
   const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement;
   if (multiplayer) {
-    if (event.code === 'Space' && !editing) {
+    const control = event.target instanceof Element && event.target.closest('button, summary, a, textarea, [contenteditable="true"]');
+    if (event.code === 'Space' && !editing && !control) {
       event.preventDefault();
       if (key.down(event.repeat)) multiplayer.release();
     }

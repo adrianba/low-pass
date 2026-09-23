@@ -20,6 +20,7 @@ import { speedOf } from '../simulation/flight-track.js';
 import { FORMATION_PROFILE } from '../config/multiplayer.js';
 import { connectPeer } from '../network/connect-peer.js';
 import { MultiplayerRecordStore } from '../storage/multiplayer-records.js';
+import { MultiplayerRecordsPanel, MultiplayerResultsPanel } from '../ui/multiplayer-results.js';
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -40,6 +41,7 @@ export class MultiplayerApp {
   private redraw = false;
   private renderedDisplay: MatchDisplay | null = null;
   private readonly records: MultiplayerRecordStore;
+  private readonly results: MultiplayerResultsPanel;
   private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
   private animation = 0;
@@ -60,7 +62,8 @@ export class MultiplayerApp {
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration with shared pause and 15-second connection recovery. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes, audio and the results/records screens are not available yet.</p>
+        <p>Network gameplay integration with shared pause and 15-second connection recovery. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes, audio and rematches are not available yet.</p>
+        <div id="match-setup-records"></div>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
         <div id="match-connect">
@@ -91,10 +94,13 @@ export class MultiplayerApp {
         <button id="match-ready" class="primary" disabled>I AM READY</button>
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
+      <section id="match-results" class="panel" hidden></section>
       <div id="match-network" role="status" hidden></div>
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
     app.append(this.root);
+    new MultiplayerRecordsPanel(this.get('#match-setup-records'), this.records);
+    this.results = new MultiplayerResultsPanel(this.get('#match-results'), this.records);
     this.panel = invitation ? new GuestRoomPanel(this.get('#match-room'), invitation) : new HostRoomPanel(this.get('#match-room'));
     this.get<HTMLSelectElement>('#match-role').value = invitation ? 'guest' : 'host';
     this.get('#match-role').onchange = () => { void this.changeRole(); };
@@ -285,7 +291,10 @@ export class MultiplayerApp {
       }
       if (!frame) this.text('#match-lobby', match.phase === 'countdown'
         ? `Both ready. Starting in ${Math.ceil((match.startup.remainingMs ?? 0) / 1000)}...` : 'Preparing the shared flight...');
-      if (match.issue) this.error(match.issue + ' Leave this preview and create a new room to continue.');
+      if (match.phase === 'over' || match.phase === 'held') {
+        this.recordMatch();
+        if (!this.showResults() && match.issue) this.error(match.issue + ' Leave this preview and create a new room to continue.');
+      } else if (match.issue) this.error(match.issue);
       return;
     }
     const admitted = this.panel.session.state.room?.state === 'admitted';
@@ -317,6 +326,16 @@ export class MultiplayerApp {
       throw error;
     }
   }
+  private showResults(): boolean {
+    const result = this.records.current;
+    if (!result || result.status === 'active') return false;
+    this.results.render(result, this.match?.issue ?? null);
+    this.get('#match-instruments').hidden = true;
+    this.get('#match-pause-card').hidden = true;
+    this.get('#match-message').hidden = true;
+    this.text('#match-exit', 'RETURN TO MENU');
+    return true;
+  }
   availability(): void {
     const valid = this.viewportValid(), available = valid && !document.hidden && document.hasFocus();
     if (!available) this.clearInput();
@@ -340,7 +359,7 @@ export class MultiplayerApp {
     this.match?.hold(message);
     this.recordMatch();
     this.get<HTMLButtonElement>('#match-connect-button').disabled = true;
-    this.error(message);
+    if (!this.showResults()) this.error(message);
     this.get('#match-reticle').hidden = true;
     console.error('Multiplayer application failed:', error);
   }
