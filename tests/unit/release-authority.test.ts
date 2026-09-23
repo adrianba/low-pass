@@ -223,6 +223,21 @@ describe('timestamped release settlement', () => {
 });
 
 describe('pause-aware session clock', () => {
+  it('freezes at the authoritative simulated boundary and starts after the pause epoch without counting frozen wall time', () => {
+    let wall = 1000;
+    const clock = new SessionClock(() => wall);
+    clock.start(1); wall += 370;
+    const frozen = clock.freezeAt(0.3, 2);
+    expect(frozen).toMatchObject({ epoch: 2, running: false, monotonicMs: 1370 });
+    expect(secondsAt(frozen.at)).toBe(0.3);
+    wall += 30_000;
+    expect(secondsAt(clock.sample().at)).toBe(0.3);
+    expect(() => clock.freezeAt(0.2, 3)).toThrow('freeze');
+    expect(() => clock.freezeAt(0.4, 3)).toThrow('freeze');
+    expect(() => clock.freezeAt(0.3, 4)).toThrow('freeze');
+    clock.start(3); wall += 100;
+    expect(secondsAt(clock.sample().at)).toBeCloseTo(0.4, 12);
+  });
   it('maps only monotonic elapsed time, keeps sub-ticks, and rebases every resume without a clock jump', () => {
     let wall = 1000;
     const clock = new SessionClock(() => wall);

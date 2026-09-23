@@ -32,6 +32,15 @@ export class SessionClock {
     this.at = secondsAt(sample.at); this.wall = sample.monotonicMs; this.running = false;
     return { ...sample, running: false };
   }
+  freezeAt(time: number, epoch: number): ClockAnchor {
+    counter.parse(epoch);
+    const at = stampAt(time), sample = this.sample(), sampled = secondsAt(sample.at);
+    if (epoch !== this.epoch && epoch !== this.epoch + 1 || time < this.at || time > sampled) {
+      throw new Error('Invalid authoritative clock freeze.');
+    }
+    this.at = time; this.wall = sample.monotonicMs; this.epoch = epoch; this.running = false;
+    return { epoch, at, monotonicMs: this.wall, running: false };
+  }
   start(epoch: number, startedAt?: number): ClockAnchor {
     counter.parse(epoch);
     if (this.running || epoch !== this.epoch + 1) throw new Error('Clock start requires a new paused epoch.');

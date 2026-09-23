@@ -25,9 +25,9 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
   const outgoing: WireMessage[] = [], acknowledgements: WireMessage[] = [], sent: WireMessage[] = [];
   const manifest = { compatibility: versions, terrain, seed: 7, grid: terrain === 'river-canyon' ? 8 as const : 16 as const,
     triangle: 'shared-diagonal-v1' as const };
-  const host = new HostGame(prepared, base.sessionId, 0, () => wall, body => {
+  const host: HostGame = new HostGame(prepared, base.sessionId, 0, () => wall, body => {
     if (blocked) return { ok: false, reason: 'backpressure' };
-    const message = { ...base, sequence: wire + 1, ...body };
+    const message = { ...base, epoch: host.epoch, sequence: wire + 1, ...body };
     const bytes = byteLength(encodeMessage(message));
     if ((body.type === 'transfer-offer' || body.type === 'transfer-chunk') && bytes > budget) return { ok: false, reason: 'backpressure' };
     if (body.type === 'transfer-offer' || body.type === 'transfer-chunk') budget -= bytes;
@@ -35,10 +35,10 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
     sent.push(message); wire++;
     return { ok: true };
   }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), [false, true], manifest, undefined, sampledAt);
-  const guest = new GuestGame({ formations: [verified[0]!, verified[1]!], course: { type: 'course-manifest', revision: 0,
+  const guest: GuestGame = new GuestGame({ formations: [verified[0]!, verified[1]!], course: { type: 'course-manifest', revision: 0,
     manifest,
     plans: [verified[0]!.reference, verified[1]!.reference] } }, base.sessionId, 0, () => wall, body => {
-    const message = { ...base, sender: 'guest' as const, sequence: ++input, ...body };
+    const message = { ...base, epoch: guest.epoch, sender: 'guest' as const, sequence: ++input, ...body };
     if (message.type === 'transfer-ready') {
       if (holdAcks) acknowledgements.push(message); else host.receive(message);
     } else if (message.type === 'command') host.receive(message);
@@ -76,6 +76,7 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
     expect(ack, JSON.stringify(ack)).toMatchObject({ decision: { accepted: true } });
   };
   return { host, guest, sent, pump, advance, release, drain,
+    elapse(ms: number) { wall += ms; },
     dropSnapshots(value: boolean) { dropSnapshots = value; },
     block(value: boolean) { blocked = value; },
     hold(value: boolean) {
@@ -88,6 +89,78 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
 }
 
 describe('host/guest gameplay stream ownership', () => {
+  it('publishes a rejected in-transit command before constructing the new paused checkpoint', async () => {
+    const state = await setup();
+    try {
+      await state.pump(); await state.pump();
+      await state.advance(state.host.scheduler.plan().attempts[1].releaseAt);
+      const drawn = state.guest.frame(state.host.scheduler.session.time, 7);
+      state.host.journal.authority.beginPause();
+      state.elapse(751); state.host.journal.authority.sealPause();
+      state.host.advanceEpoch(1, false); state.guest.advanceEpoch(1);
+      expect(state.guest.release(drawn)).toBe(true);
+      state.guest.pump();
+      expect(state.host.journal.canSnapshot).toBe(false);
+      for (let work = 0; work < 20 && !state.host.ready; work++) await state.pump();
+      expect(state.host.ready).toBe(true);
+      expect(state.sent.find(message => message.type === 'ack' && message.epoch === 1))
+        .toMatchObject({ decision: { accepted: false, reason: 'paused' } });
+      expect(state.guest.replica.presentationState).toMatchObject({ status: 'paused', lastInputs: [0, 1] });
+      expect(state.guest.replica.presentationState!.players[1]).toMatchObject({ score: 0, bomb: null });
+    } finally { state.host.close(); state.guest.close(); }
+  });
+  it.each(['bomb', 'handoff', 'over'] as const)('restores a paused and resumed %s checkpoint without resetting the game', async boundary => {
+    const state = await setup();
+    try {
+      await state.pump(); await state.pump();
+      if (boundary === 'over') {
+        for (let index = 0; index < 3; index++) await state.advance(state.host.scheduler.plan().handoffAt);
+        expect(state.host.scheduler.session.status).toBe('over');
+      } else {
+        await state.release(1);
+        await state.advance(boundary === 'bomb' ? state.host.scheduler.session.time + 0.2 : state.host.scheduler.plan().handoffAt + 0.1);
+      }
+      const scheduler = state.host.scheduler, journal = state.host.journal, frozen = scheduler.session.snapshot();
+      const events = journal.eventSequence, published = state.sent.filter(message => message.type === 'event').length;
+      state.guest.frame(frozen.time + 0.1, 7);
+      const displayedTime = state.guest.combat.time;
+      journal.authority.beginPause();
+      await state.pump();
+      expect(() => state.host.advanceEpoch(1, false)).toThrow('sealed');
+      state.elapse(751); journal.authority.sealPause();
+      state.host.advanceEpoch(1, false); state.guest.advanceEpoch(1);
+      expect(state.guest.replica.presentationState).toBeNull();
+      expect(state.guest.combat.time).toBe(displayedTime);
+      expect(state.guest.replica.state!.players[1].score).toBe(frozen.players[1]!.score);
+      expect(() => state.guest.advanceEpoch(2)).toThrow('restored');
+      for (let work = 0; work < 200 && (!state.host.ready || boundary === 'handoff' &&
+        state.guest.replica.plans.references().length < 3); work++) await state.pump();
+      expect(state.host.ready).toBe(true);
+      const paused = state.guest.replica.presentationState!;
+      expect(paused.status).toBe(boundary === 'over' ? 'over' : 'paused');
+      expect(secondsAt(paused.at)).toBeCloseTo(frozen.time, 10);
+      expect(paused.players.map(player => [player.score, player.misses, player.assisted]))
+        .toEqual(frozen.players.map(player => [player.score, player.misses, player.assisted]));
+      expect(paused.eventSequence).toBe(events);
+      if (boundary === 'bomb') expect(paused.players[1].bomb!.position).toEqual(frozen.players[1]!.bomb!.value.position);
+      if (boundary === 'handoff') expect(paused.planRevision).toBeGreaterThan(0);
+      const frozenFrame = state.guest.frame(frozen.time, 7);
+      state.elapse(5000); await state.pump();
+      expect(state.guest.frame(frozen.time, 7)).toEqual(frozenFrame);
+      expect(scheduler.session.time).toBe(frozen.time);
+      state.host.advanceEpoch(2, true); state.guest.advanceEpoch(2);
+      for (let work = 0; work < 20 && !state.host.ready; work++) await state.pump();
+      expect(state.host.ready).toBe(true);
+      expect(state.host.scheduler).toBe(scheduler); expect(state.host.journal).toBe(journal);
+      expect(state.guest.replica.presentationState!.status).toBe(boundary === 'over' ? 'over' : 'running');
+      expect(state.sent.filter(message => message.type === 'event')).toHaveLength(published);
+      expect(state.guest.replica.watermarks.eventSequence).toBe(events);
+      if (boundary === 'over') expect(state.guest.frame(frozen.time + 0.5, 7).time).toBe(frozen.time + 0.5);
+      else await state.advance(frozen.time + 0.2);
+      const oldSnapshot = state.sent.find(message => message.type === 'snapshot' && message.epoch === 0)!;
+      await expect(state.guest.receive(oldSnapshot)).rejects.toThrow('epoch');
+    } finally { state.host.close(); state.guest.close(); }
+  }, 30_000);
   it('permits a new keypress after a rejected local drop and rejects conflicting acknowledgements', async () => {
     const state = await setup();
     try {

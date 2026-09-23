@@ -23,14 +23,22 @@ export class GuestGame {
   private releasedSequence = -1;
   private lastDecision: Extract<WireMessage, { type: 'ack' }>['decision'] | null = null;
   private closed = false;
+  private resetPresentation = false;
   private displayed: { time: number; sequence: number; ready: boolean; reference: { id: string; digest: string } } | null = null;
   get lastInputSequence(): number { return this.lastInput; }
+  get epoch(): number { return this.replica.epoch; }
   constructor(prepared: Pick<Extract<PreparedConnection, { role: 'guest' }>, 'formations' | 'course'>,
-    readonly sessionId: string, readonly epoch: number, now: () => number,
+    readonly sessionId: string, epoch: number, now: () => number,
     private readonly send: (body: MessageBody) => SendResult) {
     this.replica = new GuestReplica(sessionId, epoch, prepared.course.manifest);
     this.receiver = new TransferReceiver(now, { maxTransfers: 4, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
     for (const formation of prepared.formations) this.replica.installVerified(formation);
+  }
+  advanceEpoch(nextEpoch: number): void {
+    if (this.closed) throw new Error('Guest game is closed.');
+    this.replica.advanceEpoch(nextEpoch);
+    this.receiver.reset(); this.outgoing.length = 0; this.verifiedWaiting.length = 0;
+    this.displayed = null; this.releasedSequence = -1; this.lastDecision = null; this.resetPresentation = true;
   }
   async receive(value: WireMessage): Promise<void> {
     if (this.closed) throw new Error('Guest game is closed.');
@@ -81,6 +89,7 @@ export class GuestGame {
   }
   frame(time: number, seed: number) {
     const state = this.replica.presentationAt(time);
+    if (this.resetPresentation) { this.combat.reset(); this.resetPresentation = false; }
     const plans = state.plans.map(ref => ({ ref, flight: this.replica.plans.formation(ref) }));
     const at = (time: number) => {
       const plan = [...plans].reverse().find(({ flight }) => flight.startAt <= time && time <= flight.handoffAt);

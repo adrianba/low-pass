@@ -1,5 +1,5 @@
 import { decodeMessage, encodeMessage, ProtocolError } from '../../shared/protocol/codec.js';
-import { compareStamps, manifest, payload, reference, snapshot, stampAt } from '../../shared/protocol/game.js';
+import { compareStamps, counter, manifest, payload, reference, snapshot, stampAt } from '../../shared/protocol/game.js';
 import type { Snapshot } from '../../shared/protocol/game.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
@@ -33,9 +33,21 @@ export class GuestReplica {
   private readonly history: Snapshot[] = [];
   private anchor: ClockAnchor | null = null;
   private waiting: ReplicaWait = 'initial_state';
-  constructor(private readonly sessionId: string, private readonly epoch: number, course: Manifest, readonly plans = new ReplicaPlans()) {
-    this.gate = new DeliveryBarrier(sessionId, epoch);
+  private needsCheckpoint = false;
+  constructor(private readonly sessionId: string, private epochValue: number, course: Manifest, readonly plans = new ReplicaPlans()) {
+    this.gate = new DeliveryBarrier(sessionId, epochValue);
     this.manifest = manifest.parse(course);
+  }
+  get epoch(): number { return this.epochValue; }
+  advanceEpoch(nextEpoch: number): void {
+    counter.parse(nextEpoch);
+    if (nextEpoch !== this.epoch + 1 || !this.stateValue || this.needsCheckpoint) throw new Error('Replica epoch requires a restored prior state.');
+    this.epochValue = nextEpoch; this.gate = new DeliveryBarrier(this.sessionId, nextEpoch);
+    this.controls.length = 0; this.pendingSnapshot = null; this.checkpoint = undefined;
+    // A verified pause may rewind presentation, never authoritative scores or completed outcomes.
+    this.history.length = 0; this.presentationValue = null; this.anchor = null;
+    this.needsCheckpoint = true; this.waiting = 'initial_state';
+    this.plans.pin([...this.stateValue.plans, ...this.stateValue.effects]);
   }
   get state(): Snapshot | null { return this.stateValue ? structuredClone(this.stateValue) : null; }
   get presentationState(): Snapshot | null { return this.presentationValue ? structuredClone(this.presentationValue) : null; }
@@ -82,7 +94,7 @@ export class GuestReplica {
     this.flush();
   }
   private flush(): void {
-    this.waiting = this.stateValue ? null : 'initial_state';
+    this.waiting = this.stateValue && !this.needsCheckpoint ? null : 'initial_state';
     const checkpointIndex = this.controls.findIndex(message => message.type === 'checkpoint-commit' &&
       message.checkpoint.id === this.checkpoint?.reference.id);
     if (checkpointIndex >= 0) {
@@ -94,6 +106,7 @@ export class GuestReplica {
         this.gate = nextGate; this.controls.splice(checkpointIndex, 1); this.checkpoint = undefined;
       }
     }
+    if (this.needsCheckpoint) return;
     while (this.controls.length) {
       const message = this.controls[0]!;
       // Result events need a complete starting state; plan commits and checkpoints do not.
@@ -163,6 +176,7 @@ export class GuestReplica {
     if (!anchor) this.plans.commit(next.plans);
     this.plans.retainEffects(next.effects);
     this.stateValue = next; this.presentationValue = structuredClone(next);
+    this.needsCheckpoint = false;
     if (this.history.length && compareStamps(this.history.at(-1)!.at, next.at) === 0) this.history.pop();
     this.history.push(this.presentationValue);
     if (this.history.length > 32) this.history.shift();

@@ -95,7 +95,9 @@ export class ReleaseAuthority {
     return structuredClone(decision);
   }
   beginPause(): void {
-    if (this.phase !== 'running' || this.session.status !== 'running') throw new Error('Pause requires a running authority.');
+    if (this.phase !== 'running' || this.session.status !== 'running' && this.session.status !== 'over') {
+      throw new Error('Pause requires a running authority.');
+    }
     this.pauseDeadline = this.readNow() + this.session.releaseGraceSeconds * 1000;
     this.session.pause(); this.phase = 'settling';
   }
@@ -104,11 +106,19 @@ export class ReleaseAuthority {
     this.phase = 'paused';
   }
   resume(nextEpoch: number): void {
+    this.advanceEpoch(nextEpoch, true);
+  }
+  advancePausedEpoch(nextEpoch: number): void {
+    this.advanceEpoch(nextEpoch, false);
+  }
+  private advanceEpoch(nextEpoch: number, running: boolean): void {
     counter.parse(nextEpoch);
     if (this.phase !== 'paused' || nextEpoch !== this.currentEpoch + 1) throw new Error('Resume requires a sealed new epoch.');
-    const result = this.session.resume();
-    if (!result.ok) throw new Error(`Cannot resume release authority: ${result.reason}.`);
-    this.currentEpoch = nextEpoch; this.epochStart = this.session.time; this.phase = 'running';
+    if (running && this.session.status !== 'over') {
+      const result = this.session.resume();
+      if (!result.ok) throw new Error(`Cannot resume release authority: ${result.reason}.`);
+    }
+    this.currentEpoch = nextEpoch; this.epochStart = this.session.time; this.phase = running ? 'running' : 'paused';
     for (const decisions of this.decisions) decisions.clear();
   }
 }

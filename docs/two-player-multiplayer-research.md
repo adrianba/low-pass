@@ -1203,6 +1203,16 @@ and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
 
+The pause foundation can now rotate a sealed host journal into a new paused
+checkpoint and then a resumed epoch without recreating the scheduler or seeded
+course. Checkpoints carry the actual event/plan watermarks; unfinished transfers
+restart when the receiver resets. A guest retains verified plans and logical
+outcomes, requires the new verified checkpoint, and only then resets presentation
+for correction to the authoritative boundary. Regressed scores remain invalid.
+In-flight bombs and frozen final effects survive; resuming an ended session
+does not revive its simulation. These core APIs are not yet connected to pause
+controls, readiness, countdown, focus handling or automatic recovery.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

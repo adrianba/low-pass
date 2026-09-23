@@ -1,4 +1,5 @@
 import { combat, counter, identifier } from '../../shared/protocol/game.js';
+import type { Snapshot } from '../../shared/protocol/game.js';
 import { PROTOCOL_VERSION } from '../../shared/protocol/limits.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { formationSampler, HostCombat, spectatorSlot } from '../game/multiplayer/host-combat.js';
@@ -35,6 +36,7 @@ export class HostGame {
   private readonly effects = new Map<string, Pending>();
   private commit: Extract<MessageBody, { type: 'plan-commit' }> | null;
   private checkpoint: Pending | null = null;
+  private checkpointState: Snapshot | null = null;
   private checkpointCommitted = false;
   private initialized = false;
   private lastSnapshot = -Infinity;
@@ -46,7 +48,7 @@ export class HostGame {
   private planning = false;
   private authored: AuthoredFlight | null = null;
   private planningError: Error | null = null;
-  constructor(prepared: PreparedHostCourse, readonly sessionId: string, readonly epoch: number,
+  constructor(prepared: PreparedHostCourse, readonly sessionId: string, epoch: number,
     private readonly now: () => number, private readonly send: (body: MessageBody) => SendResult,
     view: CombatViewProvider, assistance: readonly [boolean, boolean],
     private readonly manifest: Extract<MessageBody, { type: 'course-manifest' }>['manifest'],
@@ -69,8 +71,21 @@ export class HostGame {
     if (author) { this.scheduler.useExternalLookahead(); this.prefetch(); }
   }
   get waitReason(): HostGameWait { return this.wait; }
+  get epoch(): number { return this.journal.authority.epoch; }
   get ready(): boolean { return this.initialized && !this.closed; }
   get counts() { return { flights: this.flights.size, effects: this.effects.size, pendingEvents: this.journal.pendingCount }; }
+  advanceEpoch(nextEpoch: number, resume: boolean): void {
+    if (this.closed || this.busy || !this.ready || !this.journal.canSnapshot || this.commit) {
+      throw new Error('Publish and settle the current host epoch before replacing its checkpoint.');
+    }
+    if (resume) this.journal.authority.resume(nextEpoch);
+    else this.journal.authority.advancePausedEpoch(nextEpoch);
+    this.checkpoint = null; this.checkpointState = null; this.checkpointCommitted = false;
+    this.initialized = false; this.lastSnapshot = -Infinity; this.wait = null;
+    for (const pending of [...this.flights.values(), ...this.effects.values()]) if (!pending.acknowledged) {
+      pending.index = -1; pending.sent = false;
+    }
+  }
   private readNow() {
     const time = this.now();
     if (!Number.isFinite(time) || time < this.lastWall) throw new Error('Invalid host game clock.');
@@ -113,15 +128,18 @@ export class HostGame {
     try {
       this.wait = null;
       this.installAuthored();
-      if (!this.checkpoint) {
-        const transfer = await createTransfer({ kind: 'checkpoint', data: { version: 1, sessionId: this.sessionId, epoch: this.epoch,
-          snapshotSequence: 0, manifest: this.manifest, state: this.journal.snapshot(this.readNow()).state } }, 'initial-state');
-        if (this.closed) return 'not_open';
-        this.checkpoint = { transfer, index: -1, sent: false, acknowledged: false };
-      }
       await this.collect();
       this.prefetch();
       if (this.closed) return 'not_open';
+      if (!this.checkpoint && !this.journal.canSnapshot) return this.wait = this.publish(false) ?? 'publication';
+      if (!this.checkpoint) {
+        const state = this.journal.snapshot(this.readNow()).state;
+        const transfer = await createTransfer({ kind: 'checkpoint', data: { version: 1, sessionId: this.sessionId, epoch: this.epoch,
+          snapshotSequence: 0, manifest: this.manifest, state } }, `state-${this.epoch}`);
+        if (this.closed) return 'not_open';
+        this.checkpoint = { transfer, index: -1, sent: false, acknowledged: false };
+        this.checkpointState = state;
+      }
       let result = this.publish(false);
       if (result || !this.initialized) return this.wait = result ?? 'publication';
       if (target > session.time && session.status === 'running') {
@@ -207,7 +225,7 @@ export class HostGame {
     if (publication.blocked === 'not_open') return publication.blocked;
     // Small outcome payloads precede large rolling flights on the paced reliable channel.
     for (let work = 0; work < GAME_STREAM_LIMITS.work; work++) {
-      const pending = [this.checkpoint!, ...this.effects.values(), ...this.flights.values()].find(value => !value.sent);
+      const pending = [...(this.checkpoint ? [this.checkpoint] : []), ...this.effects.values(), ...this.flights.values()].find(value => !value.sent);
       if (!pending) break;
       const body: MessageBody = pending.index < 0 ? { type: 'transfer-offer', transfer: pending.transfer.offer }
         : { type: 'transfer-chunk', ...pending.transfer.chunks[pending.index]! };
@@ -215,11 +233,13 @@ export class HostGame {
       if (!result.ok) { held = result.reason; break; }
       if (++pending.index === pending.transfer.chunks.length) pending.sent = true;
     }
+    if (!this.checkpoint) return held ?? 'publication';
     if (!this.checkpointCommitted) {
       if (!this.checkpoint!.acknowledged) return held ?? 'publication';
       const offer = this.checkpoint!.transfer.offer;
+      const state = this.checkpointState!;
       const result = this.send({ type: 'checkpoint-commit', checkpoint: { id: offer.id, digest: offer.digest },
-        planRevision: 0, eventSequence: 0, snapshotSequence: 0 });
+        planRevision: state.planRevision, eventSequence: state.eventSequence, snapshotSequence: 0 });
       if (!result.ok) return result.reason;
       this.checkpointCommitted = true;
     }

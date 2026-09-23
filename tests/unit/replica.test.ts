@@ -84,6 +84,45 @@ function finishFirst(state: ReturnType<typeof setup>) {
 }
 
 describe('verified plan-driven replicas', () => {
+  it('requires a verified new-epoch checkpoint while preserving the previous authoritative totals', async () => {
+    const state = setup(), emitted = finishFirst(state), final = state.take(emitted.length);
+    for (const event of emitted) state.replica.receive(event);
+    state.replica.receive({ ...base, sequence: 30, type: 'snapshot', sampledAt: 20_000, state: final });
+    const plans = state.replica.plans;
+    state.replica.advanceEpoch(1);
+    const paused: Snapshot = { ...final, status: 'paused' };
+    state.replica.receive({ ...base, epoch: 1, sequence: 1, type: 'snapshot', sampledAt: 21_000, state: paused });
+    expect(state.replica.presentationState).toBeNull();
+    expect(state.replica.waitReason).toBe('initial_state');
+    expect(state.replica.state).toEqual(final);
+    const checkpoint = await verified({ kind: 'checkpoint', data: { version: 1, sessionId: base.sessionId,
+      epoch: 1, snapshotSequence: 0, manifest: manifest('green-valley'), state: paused } }, 'paused-state');
+    state.replica.installVerified(checkpoint);
+    expect(state.replica.presentationState).toBeNull();
+    state.replica.receive({ ...base, epoch: 1, sequence: 2, type: 'checkpoint-commit', checkpoint: checkpoint.reference,
+      planRevision: paused.planRevision, eventSequence: paused.eventSequence, snapshotSequence: 0 });
+    expect(state.replica.presentationState).toEqual(paused);
+    expect(state.replica.plans).toBe(plans);
+    expect(state.replica.watermarks).toEqual({ planRevision: paused.planRevision, eventSequence: paused.eventSequence, snapshotSequence: 1 });
+  });
+
+  it('rejects a score reset inside an otherwise valid new-epoch checkpoint', async () => {
+    const state = setup(), emitted = finishFirst(state), final = state.take(emitted.length);
+    for (const event of emitted) state.replica.receive(event);
+    state.replica.receive({ ...base, sequence: 30, type: 'snapshot', sampledAt: 20_000, state: final });
+    state.replica.advanceEpoch(1);
+    const reset = structuredClone(final);
+    reset.status = 'paused'; reset.results = []; reset.wrecks = [];
+    reset.players[0].score = 0; reset.players[0].lastResolved = null;
+    const checkpoint = await verified({ kind: 'checkpoint', data: { version: 1, sessionId: base.sessionId,
+      epoch: 1, snapshotSequence: 0, manifest: manifest('green-valley'), state: reset } }, 'invalid-reset');
+    state.replica.installVerified(checkpoint);
+    expect(() => state.replica.receive({ ...base, epoch: 1, sequence: 1, type: 'checkpoint-commit', checkpoint: checkpoint.reference,
+      planRevision: reset.planRevision, eventSequence: reset.eventSequence, snapshotSequence: 0 })).toThrow('regression');
+    expect(state.replica.state).toEqual(final);
+    expect(state.replica.presentationState).toBeNull();
+  });
+
   it.each(terrains)('reconstructs exact %s motion and camera data without running encounter selection', terrain => {
     const { plans, transfers } = courses.get(terrain)!;
     for (let index = 0; index < plans.length; index++) {
