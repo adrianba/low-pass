@@ -10,6 +10,8 @@ import type { TransportEvent } from '../../src/network/transport.js';
 import { TransferReceiver } from '../../src/network/transfer.js';
 import type { CompletedTransfer } from '../../src/network/transfer.js';
 import { base, versions } from './protocol-fixtures.js';
+import type { MatchLink } from '../../src/network/lobby-connection.js';
+import { encodeMessage } from '../../shared/protocol/codec.js';
 
 vi.mock('../../src/network/formation-worker-client.js', () => ({
   FormationWorker: class {
@@ -18,9 +20,10 @@ vi.mock('../../src/network/formation-worker-client.js', () => ({
   },
 }));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-async function host() {
+type Reconnect = (signal: AbortSignal) => Promise<MatchLink>;
+async function host(reconnect?: Reconnect, deferStart = false) {
   const authored = await prepareHostCourse('green-valley', 7, 0);
   const ref = (index: 0 | 1) => ({ id: authored.transfers[index].offer.id, digest: authored.transfers[index].offer.digest });
   let wall = 1000;
@@ -41,7 +44,9 @@ async function host() {
       manifest: { compatibility: versions, terrain: 'green-valley', seed: 7, grid: 16, triangle: 'shared-diagonal-v1' },
       plans: [ref(0), ref(1)],
     },
-  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), () => wall);
+  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), () => wall, reconnect);
+  const fixture = { match, sent, wireSent, incoming, now: () => wall, elapsed(ms: number) { wall += ms; } };
+  if (deferStart) { match.assetsLoaded(); return fixture; }
   vi.spyOn(match.startup, 'pump').mockReturnValue({ ok: true });
   vi.spyOn(match.startup, 'takeStart').mockReturnValueOnce({ epoch: 1, at: stampAt(0), hostStartsAt: wall, requiresPause: false });
   match.assetsLoaded();
@@ -52,11 +57,11 @@ async function host() {
     transfer: { id: offer.transfer.id, digest: offer.transfer.digest } } });
   await match.update();
   await match.update();
-  return { match, sent, wireSent, incoming, now: () => wall, elapsed(ms: number) { wall += ms; } };
+  return fixture;
 }
 
-async function paired() {
-  const state = await host(), prepared = state.match.prepared;
+async function paired(reconnect?: { host: Reconnect; guest: Reconnect }, deferStart = false) {
+  const state = await host(reconnect?.host, deferStart), prepared = state.match.prepared;
   if (prepared.role !== 'host') throw new Error('Expected host fixture.');
   const receiver = new TransferReceiver(state.now, { maxTransfers: 2, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
   const formations: CompletedTransfer[] = [];
@@ -87,9 +92,9 @@ async function paired() {
       },
       drain: () => incoming.splice(0),
     },
-  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), state.now);
+  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), state.now, reconnect?.guest);
   vi.spyOn(guest.startup, 'pump').mockReturnValue({ ok: true });
-  vi.spyOn(guest.startup, 'takeStart').mockReturnValueOnce({
+  if (!deferStart) vi.spyOn(guest.startup, 'takeStart').mockReturnValueOnce({
     epoch: 1, at: stampAt(0), hostStartsAt: state.now(), requiresPause: false,
   });
   guest.assetsLoaded(); await guest.update();
@@ -101,8 +106,189 @@ async function paired() {
     if (guest.phase === 'held' || state.match.phase === 'held') throw new Error(guest.issue ?? state.match.issue ?? 'Unexpected hold.');
   };
   await advance();
-  return { ...state, guest, commands, advance, close() { guest.close(); state.match.close(); } };
+  return { ...state, guest, commands, advance,
+    disconnect() {
+      state.incoming.push({ type: 'failed', code: 'connection' });
+      incoming.push({ type: 'failed', code: 'connection' });
+    },
+    close() { guest.close(); state.match.close(); } };
 }
+
+async function recoverable(drop: (body: MessageBody) => boolean = () => false, deferStart = false) {
+  type Endpoint = MatchLink & { accept(message: WireMessage): void; fail(): void };
+  const rounds: Array<Partial<Record<'host' | 'guest', Endpoint>>> = [];
+  const counts = { host: 0, guest: 0 };
+  const factory = (role: 'host' | 'guest'): Reconnect => async () => {
+    const index = counts[role]++, round = rounds[index] ??= {};
+    const peer = () => round[role === 'host' ? 'guest' : 'host'];
+    let epoch = 0, sequence = 0, closed = false;
+    const inbox: TransportEvent[] = [];
+    const link: Endpoint = {
+      get epoch() { return epoch; }, sessionId: base.sessionId, failure: null,
+      get status() { return closed ? 'closed' : peer() ? 'open' : 'connecting'; },
+      send(body) {
+        if (link.status !== 'open') return { ok: false, reason: 'not_open' };
+        const message: WireMessage = { ...base, epoch, sequence: ++sequence, sender: role, ...body };
+        encodeMessage(message);
+        if (!drop(body)) peer()!.accept(message);
+        if (body.type === 'barrier') epoch = body.nextEpoch;
+        return { ok: true };
+      },
+      accept(message) {
+        inbox.push({ type: 'message', channel: messageChannel(message), message, receivedAt: state.now() });
+        if (message.type === 'barrier') epoch = message.nextEpoch;
+      },
+      fail() { if (!closed) inbox.push({ type: 'failed', code: 'connection' }); },
+      drain: () => inbox.splice(0),
+      close() { if (!closed) { closed = true; peer()?.fail(); } },
+      diagnostics: async () => ({ status: link.status, failure: null, peer: null }),
+    };
+    round[role] = link;
+    return link;
+  };
+  const state = await paired({ host: factory('host'), guest: factory('guest') }, deferStart);
+  return { ...state, rounds };
+}
+
+describe('bounded failed-peer recovery', () => {
+  it('freezes the host at the active peer freshness bound rather than flying on without inputs', async () => {
+    let silent = false;
+    const state = await recoverable(body => silent && (body.type === 'ping' || body.type === 'pong'));
+    try {
+      state.disconnect(); await state.advance();
+      for (let work = 0; work < 100 && (state.match.phase !== 'paused' || state.guest.phase !== 'paused'); work++) await state.advance(50);
+      state.match.setReady(true); state.guest.setReady(true);
+      for (let work = 0; work < 100 && (state.guest.phase !== 'playing' || state.match.phase !== 'playing'); work++) await state.advance(50);
+      const time = state.match.host!.scheduler.session.time;
+      silent = true;
+      for (let work = 0; work < 12 && !state.match.recoveryState; work++) await state.advance(50);
+      expect(state.match.phase).toBe('recovering');
+      expect(state.match.host!.scheduler.session.time - time).toBeLessThanOrEqual(0.5);
+      expect(state.match.release()).toBe(false);
+    } finally { state.close(); }
+  });
+  it.each(['none', 'barrier', 'recovery-cache'] as const)('restores the same journal and bombs after losing %s', async lost => {
+    let dropped = false;
+    const state = await recoverable(body => {
+      if (!dropped && body.type === lost) { dropped = true; return true; }
+      return false;
+    });
+    try {
+      for (let work = 0; work < 200 && (!state.match.frame?.ready || !state.guest.frame?.ready); work++) await state.advance(50);
+      expect(state.match.release()).toBe(true);
+      expect(state.guest.release()).toBe(true);
+      await state.guest.update();
+      expect(state.commands).toHaveLength(1);
+      if (lost === 'none') state.incoming.push({
+        type: 'message', channel: 'control', receivedAt: state.now(), message: state.commands.shift()!,
+      });
+      const journal = state.match.host!.journal, session = state.match.host!.scheduler.session;
+      state.disconnect(); await state.advance();
+      expect([state.match.phase, state.guest.phase]).toEqual(['recovering', 'recovering']);
+      expect(state.match.release()).toBe(false);
+      expect(() => state.guest.setReady(true)).toThrow('not ready');
+      for (let work = 0; work < 290 && (state.match.phase !== 'paused' || state.guest.phase !== 'paused'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['paused', 'paused']);
+      expect(state.match.host!.journal).toBe(journal);
+      expect(state.match.host!.scheduler.session).toBe(session);
+      expect(state.match.frame!.aircraft[0].bomb).not.toBeNull();
+      expect(state.guest.frame!.aircraft[0].bomb).toEqual(state.match.frame!.aircraft[0].bomb);
+      if (lost === 'none') {
+        expect(state.guest.frame!.aircraft[1].bomb).not.toBeNull();
+        expect(state.guest.inputIssue).toBeNull();
+      } else {
+        expect(state.guest.frame!.aircraft[1].bomb).toBeNull();
+        expect(state.guest.inputIssue).toContain('unconfirmed after connection loss');
+      }
+      expect(state.match.host!.epoch).toBe(lost === 'none' ? 2 : 3);
+      expect(state.guest.guest!.epoch).toBe(state.match.host!.epoch);
+      expect(state.match.pauseState?.ready).toEqual([false, false]);
+      const time = session.time;
+      for (let work = 0; work < 20; work++) await state.advance(50);
+      expect(session.time).toBe(time);
+      state.match.setReady(true); state.guest.setReady(true);
+      for (let work = 0; work < 100 && (state.guest.phase !== 'playing' || state.match.phase !== 'playing'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['playing', 'playing']);
+    } finally { state.close(); }
+  });
+  it.each(['loading', 'paused', 'countdown'] as const)('recovers from %s without starting or resuming flight', async phase => {
+    const state = await recoverable(undefined, phase === 'loading');
+    try {
+      if (phase !== 'loading') {
+        state.match.pause();
+        for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+        if (phase === 'countdown') {
+          state.match.setReady(true); state.guest.setReady(true);
+          for (let work = 0; work < 40 && state.guest.phase !== 'countdown'; work++) await state.advance(50);
+        }
+      }
+      expect(state.guest.phase).toBe(phase);
+      const time = state.match.host!.scheduler.session.time;
+      state.disconnect(); await state.advance();
+      for (let work = 0; work < 100 && (state.match.phase !== 'paused' || state.guest.phase !== 'paused'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['paused', 'paused']);
+      expect(state.match.host!.scheduler.session.time).toBe(time);
+      expect(state.match.pauseState?.ready).toEqual([false, false]);
+    } finally { state.close(); }
+  });
+  it('retries an interrupted checkpoint under the same original deadline', async () => {
+    let block = true;
+    const state = await recoverable(body => block && body.type === 'transfer-chunk');
+    try {
+      state.disconnect(); await state.advance();
+      const deadline = state.now() + state.match.recoveryState!.remainingMs;
+      for (let work = 0; work < 100 && state.guest.recoveryState?.stage !== 'checkpoint'; work++) await state.advance(50);
+      expect(state.guest.guest!.replica.presentationState).toBeNull();
+      state.rounds[0]!.host!.fail(); state.rounds[0]!.guest!.fail(); block = false;
+      await state.advance();
+      expect(state.now() + state.match.recoveryState!.remainingMs).toBe(deadline);
+      for (let work = 0; work < 100 && (state.match.phase !== 'paused' || state.guest.phase !== 'paused'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['paused', 'paused']);
+      expect([state.match.host!.epoch, state.guest.guest!.epoch]).toEqual([3, 3]);
+    } finally { state.close(); }
+  });
+  it('keeps the original deadline until both checkpoints are restored', async () => {
+    const state = await recoverable(body => body.type === 'recovery-restored');
+    try {
+      state.disconnect(); await state.advance();
+      const deadline = state.now() + state.match.recoveryState!.remainingMs;
+      for (let work = 0; work < 290; work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['recovering', 'recovering']);
+      expect(state.match.pauseState?.canReady).toBe(false);
+      state.elapsed(deadline - state.now());
+      await state.match.update(); await state.guest.update();
+      expect([state.match.phase, state.guest.phase]).toEqual(['held', 'held']);
+      expect(state.match.issue).toContain('15 seconds');
+      expect(state.rounds[0]!.host!.status).toBe('closed');
+      expect(state.rounds[0]!.guest!.status).toBe('closed');
+    } finally { state.close(); }
+  });
+  it.each(['deadline', 'leave'] as const)('aborts pending credential work on %s and closes a late replacement', async reason => {
+    vi.useFakeTimers();
+    let finish: ((link: MatchLink) => void) | undefined, signal: AbortSignal | undefined;
+    const state = await host(value => {
+      signal = value;
+      return new Promise<MatchLink>(resolve => { finish = resolve; });
+    });
+    try {
+      state.incoming.push({ type: 'failed', code: 'connection' });
+      await state.match.update(); await state.match.update();
+      expect(signal?.aborted).toBe(false);
+      if (reason === 'leave') state.match.close();
+      else {
+        state.elapsed(15_000);
+        vi.advanceTimersByTime(15_000);
+        expect(state.match.phase).toBe('held');
+        expect(state.match.issue).toContain('15 seconds');
+      }
+      expect(signal!.aborted).toBe(true);
+      const replacement = { ...state.match.prepared.link, epoch: 0, close: vi.fn() };
+      finish!(replacement); await Promise.resolve();
+      expect(replacement.close).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { state.match.close(); }
+  });
+});
 
 describe('match clock and lifecycle ownership', () => {
   it('reconciles an ahead-rendered guest only after the new paused checkpoint is verified', async () => {

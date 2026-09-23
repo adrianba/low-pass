@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { compatibility, counter, digest, identifier, manifest, reference, result, sequence, slot, snapshot, stamp } from './game.js';
-import { MAX_PLANS, MAX_TRANSFER_BYTES, MAX_TRANSFER_CHUNKS, PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES } from './limits.js';
+import { MAX_PLANS, MAX_RECOVERY_REFERENCES, MAX_TRANSFER_BYTES, MAX_TRANSFER_CHUNKS, PROTOCOL_VERSION, TRANSFER_CHUNK_BYTES } from './limits.js';
 import { lobbyInput, lobbyState } from './lobby.js';
 
 export const command = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('release'), sequence, plan: reference, displayedAt: stamp }),
   z.strictObject({ action: z.literal('assistance'), enabled: z.boolean() }),
-  z.strictObject({ action: z.literal('pause'), reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication']).optional() }),
+  z.strictObject({ action: z.literal('pause'), reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication', 'recovery']).optional() }),
   z.strictObject({ action: z.literal('ready'), barrier: counter }),
   z.strictObject({ action: z.literal('leave') }),
 ]);
@@ -49,7 +49,7 @@ export const wireMessage = z.discriminatedUnion('type', [
   z.strictObject({ ...envelope, type: z.literal('lobby-state'), state: lobbyState }),
   z.strictObject({ ...envelope, type: z.literal('lobby-input'), input: lobbyInput }),
   z.strictObject({ ...envelope, type: z.literal('pause-state'), barrier: counter.min(1), update: counter,
-    at: stamp, by: slot, reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication']),
+    at: stamp, by: slot, reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication', 'recovery']),
     stage: z.enum(['settling', 'restoring', 'ready']), ready: z.tuple([z.boolean(), z.boolean()]) })
     .refine(v => v.barrier === v.epoch + Number(v.stage === 'settling') &&
       (v.stage === 'ready' || !v.ready.some(Boolean))),
@@ -71,6 +71,11 @@ export const wireMessage = z.discriminatedUnion('type', [
     plans: z.array(reference).min(1).max(MAX_PLANS) }).refine(v => new Set(v.plans.map(p => p.id)).size === v.plans.length),
   z.strictObject({ ...envelope, type: z.literal('checkpoint-commit'), checkpoint: reference,
     planRevision: counter, eventSequence: counter, snapshotSequence: counter }),
+  z.strictObject({ ...envelope, type: z.literal('recovery-cache'),
+    references: z.array(reference).max(MAX_RECOVERY_REFERENCES) }).refine(v => v.sender === 'guest' &&
+      new Set(v.references.map(ref => ref.id)).size === v.references.length),
+  z.strictObject({ ...envelope, type: z.literal('recovery-restored') }).refine(v => v.sender === 'guest'),
+  z.strictObject({ ...envelope, type: z.literal('match-abort'), reason: z.enum(['left', 'error', 'recovery_expired']) }),
   z.strictObject({ ...envelope, type: z.literal('barrier'), nextEpoch: counter,
     reason: z.enum(['pause', 'resume', 'recovery', 'rematch']), at: stamp }),
   z.strictObject({ ...envelope, type: z.literal('resync'), reason: z.enum(['gap', 'plan', 'checkpoint', 'drift']) }),
@@ -80,7 +85,8 @@ export const wireMessage = z.discriminatedUnion('type', [
 ]).refine(v => (v.type !== 'lobby-input' || v.sender === 'guest') &&
   (v.type !== 'loading-ready' && v.type !== 'start-ready' || v.sender === 'guest') &&
   (v.type !== 'command' || v.slot === (v.sender === 'host' ? 0 : 1)) &&
-  (v.type !== 'barrier' && v.type !== 'start-offer' || v.nextEpoch === v.epoch + 1));
+  (v.type === 'barrier' && v.reason === 'recovery' ? v.epoch === 0 && v.nextEpoch > 0
+    : v.type !== 'barrier' && v.type !== 'start-offer' || v.nextEpoch === v.epoch + 1));
 export type WireMessage = z.infer<typeof wireMessage>;
 export type MessageBody = {
   [K in Exclude<WireMessage['type'], 'hello'>]: Omit<Extract<WireMessage, { type: K }>,

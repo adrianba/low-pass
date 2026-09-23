@@ -6,10 +6,9 @@ import type { Settings } from '../storage/records.js';
 import { TransferReceiver, TransferError } from './transfer.js';
 import type { CompletedTransfer } from './transfer.js';
 import { BUILD_IDENTITY } from './build-identity.js';
-import { RoomClient } from './room-client.js';
-import { PeerLink } from './peer-link.js';
+import type { PeerLink } from './peer-link.js';
+import { connectPeer } from './connect-peer.js';
 import { Lobby } from './lobby.js';
-import { icePolicy } from './ice-policy.js';
 import type { IceMode } from './ice-policy.js';
 import { prepareHostCourse } from './prepared-course.js';
 import type { PreparedHostCourse, OutgoingTransfer } from './prepared-course.js';
@@ -67,8 +66,7 @@ export class LobbyConnection {
     const aspect = innerWidth / innerHeight;
     if (aspect < 0.75 || aspect > 2) throw new Error('Resize this window to an aspect ratio between 0.75 and 2 before connecting.');
     if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error('Invalid course seed.');
-    const config = mode === 'direct' ? null : await new RoomClient().ice(member.capability);
-    const link = new PeerLink({ member, compatibility: identity, aspect, ...icePolicy(mode, config) });
+    const link = await connectPeer(member, identity, aspect, mode);
     return new LobbyConnection(link, settings, identity, seed, member.room.role, undefined, onPrepared);
   }
   private queue(message: MessageBody) {

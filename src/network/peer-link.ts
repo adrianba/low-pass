@@ -34,6 +34,7 @@ export class PeerLink {
   private retryDelay = 500;
   private readonly pendingSignals: ClientSignal[] = [];
   private pendingBytes = 0;
+  private finalEvents: TransportEvent[] = [];
   constructor(options: PeerLinkOptions) {
     const member = roomMembership.safeParse(options.member);
     if (!member.success || member.data.room.state !== 'admitted') throw new PeerLinkError('membership');
@@ -178,7 +179,7 @@ export class PeerLink {
   }
   drain(): TransportEvent[] {
     this.expired();
-    const events = this.peer?.drain() ?? [];
+    const events = [...this.finalEvents.splice(0), ...this.peer?.drain() ?? []];
     for (const event of events) {
       if (event.type === 'failed' || event.type === 'rejected') this.fail(event.code);
       else if (event.type === 'status' && event.status === 'closed' && !this.disposed) this.fail('connection_closed');
@@ -186,7 +187,12 @@ export class PeerLink {
     return events;
   }
   async diagnostics() { return { status: this.status, failure: this.failureValue, peer: await this.peer?.diagnostics() ?? null }; }
-  private fail(code: string) { if (!this.disposed) { this.failureValue = code; this.close(); } }
+  private fail(code: string) {
+    if (this.disposed) return;
+    this.failureValue = code;
+    this.finalEvents = this.peer?.drain() ?? [];
+    this.close();
+  }
   close() {
     if (this.disposed) return;
     this.disposed = true;

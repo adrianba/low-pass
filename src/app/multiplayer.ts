@@ -18,6 +18,7 @@ import { matchPlayerStatus, matchPrediction, matchReleaseStatus } from '../ui/ma
 import { TERRAIN_THEMES } from '../config/terrain.js';
 import { speedOf } from '../simulation/flight-track.js';
 import { FORMATION_PROFILE } from '../config/multiplayer.js';
+import { connectPeer } from '../network/connect-peer.js';
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -56,7 +57,7 @@ export class MultiplayerApp {
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration. Assistance is selected in the lobby. Reconnect, in-flight assistance changes, audio and saved match records are not available yet.</p>
+        <p>Network gameplay integration with shared pause and 15-second connection recovery. Assistance is selected in the lobby. In-flight assistance changes, audio and saved match records are not available yet.</p>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
         <div id="match-connect">
@@ -143,7 +144,9 @@ export class MultiplayerApp {
           this.world.reset();
           // Author for the narrowest supported viewport, not the host's window on behalf of the guest.
           this.match = new MatchController(prepared, (_slot, view, range) =>
-            this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect));
+            this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect), undefined,
+          signal => connectPeer(this.panel.session.admittedMember(), prepared.course.manifest.compatibility,
+            FORMATION_PROFILE.viewport.minAspect, mode as IceMode, 0, signal));
           this.availability();
           this.effects = new SharedCombat(this.world.combat, this.match.timeline!);
           this.lobbyPanel?.dispose(); this.lobbyPanel = null;
@@ -202,10 +205,16 @@ export class MultiplayerApp {
       this.root.dataset.phase = match.phase;
       this.get('#match-network').hidden = !match.serviceWarning;
       this.text('#match-network', match.serviceWarning ?? '');
-      const pause = match.pauseState;
-      this.get('#match-pause-card').hidden = !pause || match.phase === 'held';
-      this.get('.release-panel').hidden = !!pause && match.phase !== 'held';
-      if (pause) {
+      const pause = match.pauseState, recovery = match.recoveryState;
+      this.get('#match-pause-card').hidden = !pause && !recovery || match.phase === 'held';
+      this.get('.release-panel').hidden = (!!pause || !!recovery) && match.phase !== 'held';
+      this.get('#match-ready').hidden = !!recovery;
+      this.text('#match-pause-card h2', recovery ? 'RECONNECTING' : 'SHARED PAUSE');
+      if (recovery) {
+        this.text('#match-pause-reason', `Up to ${Math.ceil(recovery.remainingMs / 1000)} seconds remaining. Flight is frozen.`);
+        this.text('#match-pause-readiness', `Attempt ${recovery.attempt} / ${recovery.stage.toUpperCase()}. Both players must confirm when restored.`);
+        this.get('#match-pause-input').hidden = true;
+      } else if (pause) {
         this.text('#match-pause-reason', `Player ${pause.by + 1} / ${pause.reason.toUpperCase()} / ${pause.stage.toUpperCase()}`);
         if (!this.viewportValid()) this.text('#match-pause-reason', 'Resize to an aspect ratio between 0.75 and 2 before confirming readiness.');
         this.text('#match-pause-readiness', pause.remainingMs !== null ? `Both ready. Resuming in ${Math.ceil(pause.remainingMs / 1000)}...`

@@ -2,21 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PeerLink, SIGNAL_RECOVERY_MS } from '../../src/network/peer-link.js';
 import type { OutgoingSignal, RtcOptions } from '../../src/network/rtc-peer.js';
 import type { WireMessage } from '../../shared/protocol/messages.js';
-import { versions } from './protocol-fixtures.js';
+import { release, versions } from './protocol-fixtures.js';
 import type { RoomMembership } from '../../shared/protocol/rooms.js';
+import type { TransportEvent } from '../../src/network/transport.js';
 
 const peers = vi.hoisted(() => ({ values: [] as Array<{ close: ReturnType<typeof vi.fn>; sent: WireMessage[];
-  signal: (message: OutgoingSignal) => void }> }));
+  signal: (message: OutgoingSignal) => void; inbox: TransportEvent[]; disconnect: () => void }> }));
 vi.mock('../../src/network/rtc-peer.js', async importOriginal => {
   const original = await importOriginal<typeof import('../../src/network/rtc-peer.js')>();
   return { ...original, RtcPeer: class {
     status: 'open' | 'closed' = 'open';
     readonly epoch: number;
     readonly sent: WireMessage[] = [];
-    close = vi.fn(() => { this.status = 'closed'; });
+    readonly inbox: TransportEvent[] = [];
+    close = vi.fn(() => { this.status = 'closed'; this.inbox.length = 0; });
     constructor(private readonly options: RtcOptions) {
       this.epoch = options.epoch;
-      peers.values.push({ close: this.close, sent: this.sent, signal: options.signal });
+      peers.values.push({ close: this.close, sent: this.sent, signal: options.signal, inbox: this.inbox,
+        disconnect: () => { this.status = 'closed'; } });
     }
     start() {
       this.options.signal({ type: 'offer', generation: this.options.generation, sdp: 'v=0\r\n' });
@@ -24,7 +27,7 @@ vi.mock('../../src/network/rtc-peer.js', async importOriginal => {
     }
     receiveSignal() { return Promise.resolve(); }
     send(message: WireMessage) { this.sent.push(message); return { ok: true as const }; }
-    drain() { return []; }
+    drain() { return this.inbox.splice(0); }
   } };
 });
 class Socket {
@@ -61,6 +64,15 @@ describe('authenticated peer-link lifecycle', () => {
     expect(state.link.status).toBe('open');
     return state;
   }
+  it('retains already decoded receipts when signaling closes after the game channel fails', () => {
+    const { link, socket } = connected(), peer = peers.values[0]!;
+    const event: TransportEvent = { type: 'message', channel: 'control', receivedAt: 123, message: release('guest') };
+    peer.inbox.push(event);
+    peer.disconnect(); socket.close();
+    expect(link.failure).toBe('signaling_closed');
+    expect(link.drain()).toEqual([event]);
+    expect(link.drain()).toEqual([]);
+  });
   it('reauthenticates signaling without replacing a healthy peer or interrupting game traffic', async () => {
     const { link, socket } = connected(), peer = peers.values[0]!;
     socket.close();

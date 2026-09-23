@@ -1198,7 +1198,7 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-Automatic recovery, in-flight assistance changes, audio, records/results
+In-flight assistance changes, audio, records/results
 and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
@@ -1222,7 +1222,7 @@ Missile authoring uses the real per-aircraft camera pose with the envelope's min
 aspect, rather than accidentally using the host's aspect for both players. This
 conservative visibility requirement survives differently sized windows and later
 supported resizes without changing flight geometry or reauthoring frozen effects.
-Connection replacement and the bounded reconnect/abort UI are still subsequent work.
+Connection replacement now uses the bounded recovery workflow below.
 
 The recovery stream foundation now preserves the same journal even when its last
 outcome was not acknowledged or only part of an event group arrived. A verified
@@ -1240,8 +1240,35 @@ WebSocket. The application displays a degraded-service warning. Retries and
 buffered signaling are bounded, the original 15-second deadline does not slide,
 and a changed/expired membership cannot silently recreate the room. The service
 retains an answered negotiation for late candidates while still invalidating an
-unfinished offer after disconnection. This does not yet replace a failed WebRTC
-connection or provide full match recovery.
+unfinished offer after disconnection.
+
+Failed-peer recovery is now connected to the application. A failed channel or
+stale active peer freezes input and flight; one fixed 15-second watchdog covers
+refreshed ICE configuration, bounded replacement attempts and checkpoint restoration.
+Validated receipts survive transport teardown. Old-epoch releases settle within
+the existing 750 ms rule, never an extended 15-second scoring window.
+
+Replacement native links begin at transport epoch zero, independently of their
+signaling generation. Before sending a recovery barrier, the host advances its
+sealed authority to a newer epoch, so a lost barrier or cache reply cannot leave
+the next attempt behind the guest. Only this host barrier may jump from zero;
+ordinary barriers still advance exactly one epoch. The guest supplies a bounded
+verified cache inventory, and stream publication waits for that reply. Missing
+dependencies and the paused checkpoint are verified; the guest explicitly
+acknowledges restoration before the host enables shared readiness. Neither peer
+can resume without fresh explicit consent. Unknown speculative drops are reported
+without fabricating accepted inputs or extra misses. Expiry/leave closes candidates
+and aborts pending credential work; late returned links are disposed.
+
+Focused tests cover active bombs, queued receipts, lost barriers/cache replies,
+interrupted checkpoints, loading, paused countdowns, cancellation and exact expiry.
+Native Chromium matches exercise replacement on either/both pages, a full survivor
+encounter and recovery during the ended finale. Real-canvas Valley restoration and
+the reconnect UI also pass. A real-canvas Canyon run restored successfully but
+later paused for a guest clock safety bound; the existing software-rendered
+repeatability issue remains open, now with explicit clock diagnostics. No timing,
+geometry or scoring threshold was relaxed. These checks are not full-game TURN,
+sustained renderer, Windows Edge or production acceptance.
 
 ### 7.1 Do not score by arrival time
 

@@ -237,7 +237,10 @@ export class RtcPeer implements PeerTransport {
         this.currentEpoch = message.nextEpoch;
         const waiting = [...this.futureState.values()].sort((a, b) => a.message.sequence - b.message.sequence);
         this.futureState.clear();
-        for (const queued of waiting) this.received(queued);
+        for (const queued of waiting) {
+          if (queued.message.epoch === this.currentEpoch) this.received(queued);
+          else this.discardedEpochMessages = Math.min(Number.MAX_SAFE_INTEGER, this.discardedEpochMessages + 1);
+        }
       }
       this.opened();
     } catch (error) {
@@ -290,7 +293,9 @@ export class RtcPeer implements PeerTransport {
   private fail(code: RtcFailure): void {
     if (this.disposed) return;
     this.failureValue = code; this.dispose();
-    this.inbox = [{ type: 'failed', code }, { type: 'status', status: 'closed', epoch: this.currentEpoch }];
+    if (code === 'capacity') this.inbox = [];
+    // Preserve validated receipts for settlement; terminal markers reserve two bounded extra entries.
+    this.inbox.push({ type: 'failed', code }, { type: 'status', status: 'closed', epoch: this.currentEpoch });
   }
   private dispose(): void {
     this.stoppedAt ??= this.linkState();

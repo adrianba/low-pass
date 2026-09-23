@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { roomService } from '../helpers/room-service.js';
 
-declare global { interface Window { interruptTestSignaling: () => void } }
+declare global { interface Window { interruptTestSignaling: () => void; interruptTestPeer: () => void } }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${terrain} application plays on the real canvas and restores solo`, async ({ browser }, info) => {
   test.setTimeout(180_000);
@@ -11,14 +11,22 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
     guestBrowser.newContext({ viewport: { width: 840, height: 732 }, deviceScaleFactor: 0.25 })]);
   const pages = await Promise.all(contexts.map(context => context.newPage()));
   const errors: string[] = [];
+  const warnings: string[] = [];
   const stored = JSON.stringify({ version: 1, settings: { quality: 'low', assist: false, muted: true, volume: 0.5, terrain },
     scores: [{ id: 'existing-solo-score', score: 1234, date: '2026-09-20T00:00:00Z', assisted: false }] });
   try {
     for (const page of pages) {
       page.on('pageerror', error => errors.push(error.message));
-      page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+      page.on('console', message => {
+        if (message.type() === 'error') errors.push(message.text());
+        if (message.type() === 'warning' && message.text().startsWith('Private match paused:')) warnings.push(message.text());
+      });
       await page.addInitScript(value => {
         const sockets: WebSocket[] = [], NativeSocket = WebSocket;
+        const peers: RTCPeerConnection[] = [], NativePeer = RTCPeerConnection;
+        globalThis.RTCPeerConnection = class extends NativePeer {
+          constructor(configuration?: RTCConfiguration) { super(configuration); peers.push(this); }
+        };
         globalThis.WebSocket = class extends NativeSocket {
           constructor(url: string | URL, protocols?: string | string[]) { super(url, protocols); sockets.push(this); }
         };
@@ -26,6 +34,11 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
           const socket = sockets.find(socket => socket.readyState === WebSocket.OPEN);
           if (!socket) throw new Error('No active test signaling socket.');
           socket.close(4000, 'test-only signaling interruption');
+        };
+        window.interruptTestPeer = () => {
+          const connected = peers.filter(peer => peer.connectionState === 'connected');
+          if (connected.length !== 1) throw new Error('Expected one active test peer.');
+          connected[0]!.close();
         };
         const original = crypto.getRandomValues.bind(crypto);
         Object.defineProperty(crypto, 'getRandomValues', { value: (array: ArrayBufferView<ArrayBuffer>) => {
@@ -93,6 +106,21 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
       await expect(page.locator('#match-input')).toHaveText('');
       await expect(page.locator('#match-reticle')).toBeHidden();
     }
+    await guest.evaluate(() => window.interruptTestPeer());
+    await expect(guest.locator('#match-pause-card h2')).toHaveText('RECONNECTING');
+    await expect(guest.locator('#match-ready')).toBeHidden();
+    await guest.screenshot({ path: info.outputPath('guest-peer-recovery.png'), scale: 'css' });
+    await expect.poll(async () => {
+      const messages = await Promise.all(pages.map(page => page.locator('#match-message').textContent()));
+      if (messages.some(Boolean)) throw new Error(JSON.stringify(messages));
+      return Promise.all(pages.map(page => page.locator('#multiplayer-app').getAttribute('data-phase')));
+    }, { timeout: 15_000 }).toEqual(['paused', 'paused']);
+    for (const page of pages) {
+      await expect(page.locator('#match-pause-readiness')).toHaveText('Player 1: not ready / Player 2: not ready');
+      await expect(page.locator('#match-ready')).toBeEnabled();
+      await page.locator('#match-ready').click();
+    }
+    for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 10_000 });
     await expect.poll(async () => {
       if (await guest.locator('#match-message').isVisible()) throw new Error(JSON.stringify(await Promise.all(pages.map(async page => ({
         message: await page.locator('#match-message').textContent(),
@@ -108,7 +136,9 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
       await expect.poll(async () => {
         const phase = await host.locator('#multiplayer-app').getAttribute('data-phase');
         if (phase === 'paused' || phase === 'pausing' || phase === 'held') {
-          throw new Error(`Unexpected pre-finale pause: ${await host.locator('#match-pause-reason').textContent()} / ${await host.locator('#match-message').textContent()}`);
+          throw new Error(JSON.stringify({ reason: await host.locator('#match-pause-reason').textContent(),
+            message: await host.locator('#match-message').textContent(), warnings,
+            times: await Promise.all(pages.map(page => page.locator('#multiplayer-app').getAttribute('data-time'))) }));
         }
         return phase;
       }, { timeout: 100_000 }).toBe('ending');

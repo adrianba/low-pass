@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { build } from 'vite';
 import { resolve } from 'node:path';
 import { identityPlugin } from '../../scripts/build-identity.mjs';
@@ -17,8 +18,8 @@ test.beforeAll(async () => {
   for (const output of chunks) if (output.type === 'asset') assets.set('/' + output.fileName, output.source);
 });
 
-for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${terrain} play survives signaling replacement and streams next encounters`, async ({ browser }) => {
-  test.setTimeout(180_000);
+for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${terrain} play recovers peers, survivor and finale without resetting the match`, async ({ browser }) => {
+  test.setTimeout(210_000);
   const server = await roomService();
   const store = server.service.rooms!.store;
   const host = store.create(store.authorize(server.code, 'match-host').capability, 'match-host');
@@ -63,11 +64,38 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${
         peerConnections: 1, phase: 'playing', signaling: 'available', sockets: affected.includes(page) ? 1 : 0,
       })));
     }
+    const recover = async (affected: Page[]) => {
+      const previous = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+      await Promise.all(affected.map(page => page.evaluate(() => window.matchFixture.interruptPeer())));
+      await expect.poll(async () => {
+        const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+        if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
+        return reports.map(report => ({ phase: report.phase, ready: report.ready }));
+      }, { timeout: 15_000 }).toEqual([{ phase: 'paused', ready: true }, { phase: 'paused', ready: true }]);
+      const restored = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+      expect(restored[0]!.epoch).toBe(restored[1]!.epoch);
+      for (const [index, report] of restored.entries()) {
+        expect(report.epoch!).toBeGreaterThan(previous[index]!.epoch!);
+        expect(report.peerConnections).toBeGreaterThan(previous[index]!.peerConnections);
+        expect(report.time - previous[index]!.time).toBeLessThan(0.6);
+      }
+      await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.ready())));
+      await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report().then(report => report.phase)))),
+        { timeout: 10_000 }).toEqual(previous.map(report => report.phase === 'ending' ? 'ending' : 'playing'));
+    };
+    for (const affected of [[pages[0]!], [pages[1]!], pages]) await recover(affected);
     await expect.poll(async () => {
       const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
       if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
       return reports.map(report => ({ drops: report.drops, scores: report.players.map(player => player.score > 0), later: report.time > 42 }));
-    }, { timeout: 70_000 }).toEqual([{ drops: 2, scores: [true, true], later: true }, { drops: 2, scores: [true, true], later: true }]);
+    }, { timeout: 70_000 }).toEqual([{ drops: 2, scores: [true, true], later: true }, { drops: 3, scores: [true, true], later: true }]);
+    await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
+      window.matchFixture.report().then(report => report.players.filter(player => player.eliminated).length)))),
+    { timeout: 90_000 }).toEqual([1, 1]);
+    await recover([pages[0]!]);
+    await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
+      window.matchFixture.report().then(report => report.phase)))), { timeout: 40_000 }).toEqual(['ending', 'ending']);
+    await recover(pages);
     await expect.poll(async () => {
       const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
       if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));

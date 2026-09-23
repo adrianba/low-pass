@@ -6,7 +6,8 @@ import type { CombatViewProvider } from '../game/multiplayer/host-combat.js';
 import type { SharedWorldFrame } from '../rendering/shared-frame.js';
 import { GuestGame } from './guest-game.js';
 import { HostGame, GAME_STREAM_LIMITS } from './host-game.js';
-import type { PreparedConnection } from './lobby-connection.js';
+import type { MatchLink, PreparedConnection } from './lobby-connection.js';
+import { RoomClientError } from './room-client.js';
 import { ClockError, PeerClock } from './peer-clock.js';
 import { ReplicaClock, REPLICA_CLOCK_LIMITS } from './replica-clock.js';
 import { SessionClock } from './session-clock.js';
@@ -18,7 +19,16 @@ import { snapshotMatchDisplay } from './match-display.js';
 import type { MatchDisplay } from './match-display.js';
 import { LocalDrop } from '../rendering/local-drop.js';
 
-export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'pausing' | 'paused' | 'held' | 'closed';
+export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'pausing' | 'paused' | 'recovering' | 'held' | 'closed';
+export const MATCH_RECOVERY_MS = 15_000;
+const RECOVERABLE = new Set(['connection', 'channel', 'timeout', 'candidate', 'negotiation', 'signaling',
+  'signaling_closed', 'connection_closed', 'peer_disconnected', 'generation', 'peer_unavailable', 'already_connected']);
+interface Recovery {
+  deadline: number; stage: 'connecting' | 'barrier' | 'cache' | 'checkpoint'; attempt: number;
+  retryAt: number; attemptUntil: number; pending: boolean; prepared: boolean; restored: boolean; at: Stamp;
+  abort: AbortController | null; timer: ReturnType<typeof setTimeout>;
+  drop: LocalDrop | null;
+}
 type PauseNotice = Extract<MessageBody, { type: 'pause-state' }>;
 export type PauseReason = PauseNotice['reason'];
 type StartupMessage = Extract<WireMessage, { type: 'loading-ready' | 'start-offer' | 'start-ready' | 'start-commit' | 'start-cancel' | 'barrier' }>;
@@ -63,13 +73,16 @@ export class MatchController {
   private preflightPause: PauseReason | null = null;
   private resumeHandshake: StartHandshake | null = null;
   private peerPauseInput = 0;
+  private recovery: Recovery | null = null;
+  private lastPeerAt: number;
   private startedAt = 0;
   private inbox: TransportEvent[];
   constructor(readonly prepared: PreparedConnection, view: CombatViewProvider,
-    private readonly now: () => number = () => performance.now()) {
+    private readonly now: () => number = () => performance.now(),
+    private readonly reconnect?: (signal: AbortSignal) => Promise<MatchLink>) {
     this.inbox = [...prepared.inbox]; prepared.inbox.length = 0;
     this.clock = new SessionClock(now, 0, prepared.epoch);
-    this.lastFrameWall = now();
+    this.lastFrameWall = this.lastPeerAt = now();
     this.startup = this.handshake(prepared.epoch, stampAt(0));
     if (prepared.role === 'host') {
       const author = new FormationWorker();
@@ -101,6 +114,10 @@ export class MatchController {
   get display(): MatchDisplay | null { return this.displayValue; }
   get inputIssue(): string | null { return this.inputIssueValue; }
   get inputRevision(): number { return this.inputRevisionValue; }
+  get recoveryState() {
+    return this.recovery ? { remainingMs: Math.max(0, this.recovery.deadline - this.now()),
+      attempt: this.recovery.attempt, stage: this.recovery.stage } : null;
+  }
   get host(): HostGame | null { return this.hostValue; }
   get guest(): GuestGame | null { return this.guestValue; }
   get timeline() { return this.hostValue?.timeline ?? this.guestValue?.combat ?? null; }
@@ -112,7 +129,7 @@ export class MatchController {
     } : null);
     return notice ? { ...structuredClone(notice),
       selectedReady: this.started ? this.selectedReady : this.prepared.lobby.selectedReady,
-      canReady: this.available && this.loaded && (!this.started || this.pauseRestored) && notice.stage === 'ready' && !this.stopped,
+      canReady: !this.recovery && this.available && this.loaded && (!this.started || this.pauseRestored) && notice.stage === 'ready' && !this.stopped,
       remainingMs: (this.started ? this.resumeHandshake : this.startup)?.remainingMs ?? null } : null;
   }
   setAvailable(available: boolean, reason: PauseReason = 'focus'): void {
@@ -130,27 +147,34 @@ export class MatchController {
   assetsLoaded(): void { this.loaded = true; }
   private send = (body: MessageBody): SendResult => {
     if (!this.active) return { ok: false, reason: 'not_open' };
+    if (this.recovery && this.recovery.stage !== 'checkpoint' &&
+      !['barrier', 'recovery-cache', 'ping', 'pong', 'match-abort'].includes(body.type)) return { ok: false, reason: 'not_open' };
     return this.prepared.link.send(body);
   };
   async update(): Promise<void> {
     if (!this.active || this.busy || this.phaseValue === 'held') return;
     this.busy = true;
     try {
+      if (this.recovery) { await this.updateRecovery(); return; }
       this.inbox.push(...this.prepared.link.drain());
       for (let remaining = this.inbox.length; remaining > 0; remaining--) {
         const event = this.inbox.shift()!;
         if (event.type === 'message') await this.receive(event.message, event.receivedAt);
+        else if (event.type === 'failed' && RECOVERABLE.has(event.code) && this.reconnect) { this.beginRecovery(); return; }
         else if (event.type === 'rejected' || event.type === 'failed') throw new Error(`Match transport failed: ${event.code}.`);
         if (this.stopped) return;
       }
       if (this.stopped) return;
-      if (this.prepared.link.status !== 'open') throw new Error('The peer connection is unavailable.');
-      const now = this.now();
-      if (now - this.lastProbe >= 500) {
-        const probe = this.peerClock.probe(now);
-        if (!this.send(probe).ok) this.peerClock.cancelProbe(probe.id);
-        this.lastProbe = now;
+      if (this.prepared.link.status !== 'open') {
+        if (this.reconnect && RECOVERABLE.has(this.prepared.link.failure ?? 'connection_closed')) { this.beginRecovery(); return; }
+        throw new Error(`The peer connection is unavailable: ${this.prepared.link.failure ?? 'closed'}.`);
       }
+      const now = this.now();
+      if (this.started && (this.phaseValue === 'playing' || this.phaseValue === 'ending') &&
+        now - this.lastPeerAt > REPLICA_CLOCK_LIMITS.freshnessMs && this.reconnect) {
+        this.beginRecovery(); return;
+      }
+      this.probe();
       if (!this.started) {
         const lobby = this.prepared.lobby, state = lobby.state;
         if (!state || state.terrain !== this.prepared.course.manifest.terrain) throw new Error('The prepared course changed. Return to the lobby.');
@@ -169,6 +193,7 @@ export class MatchController {
     } catch (error) {
       if (this.stopped) return;
       if (error instanceof ClockError && this.started && !this.pauseRequested) {
+        console.warn('Private match paused:', error.message);
         this.pause('clock'); return;
       }
       this.hold(error instanceof Error ? error.message : 'The private match could not continue.');
@@ -176,10 +201,167 @@ export class MatchController {
     } finally { this.busy = false; }
   }
   private async receive(message: WireMessage, receivedAt: number): Promise<void> {
+    if (!Number.isFinite(receivedAt) || receivedAt > this.now()) throw new Error('Invalid peer receipt time.');
+    this.lastPeerAt = Math.max(this.lastPeerAt, receivedAt);
+    if (message.type === 'match-abort') {
+      this.hold(message.reason === 'left' ? 'The other player left the private flight.' : 'The other player could not continue the private flight.', false);
+      return;
+    }
     if (message.type === 'ping') {
       // Probes are unordered and disposable; never put a stale response in the reliable queue.
       this.send({ type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: this.now() }); return;
     }
+    await this.receiveGameplay(message, receivedAt);
+  }
+  private probe() {
+    const now = this.now();
+    const interval = this.phaseValue === 'playing' || this.phaseValue === 'ending' ? 100 : 500;
+    if (now - this.lastProbe < interval) return;
+    const probe = this.peerClock.probe(now);
+    if (!this.send(probe).ok) this.peerClock.cancelProbe(probe.id);
+    this.lastProbe = now;
+  }
+  private beginRecovery(): void {
+    if (this.recovery || this.stopped) return;
+    if (!this.reconnect) { this.hold('The peer connection could not be recovered.'); return; }
+    this.startup.close(); this.resumeHandshake?.close(); this.resumeHandshake = null;
+    this.selectedReady = false; this.pauseRequested = true; this.pauseRestored = false;
+    const host = this.hostValue, session = host?.scheduler.session;
+    if (host && session) {
+      if (host.journal.authority.pauseState === 'running') this.settleAt = host.journal.authority.beginPause();
+      this.clock.freezeAt(session.time, host.epoch);
+    }
+    this.started = true; this.phaseValue = 'recovering';
+    const at = host && session ? stampAt(session.status === 'over'
+      ? Math.max(session.time, this.frameValue?.time ?? session.time) : session.time) : stampAt(this.frameValue?.time ?? 0);
+    const deadline = this.now() + MATCH_RECOVERY_MS;
+    const timer = setTimeout(() => {
+      if (this.recovery && this.now() >= this.recovery.deadline) this.hold('Connection recovery exceeded 15 seconds.');
+    }, MATCH_RECOVERY_MS);
+    this.recovery = {
+      deadline, stage: 'connecting', attempt: 0,
+      retryAt: this.now(), attemptUntil: Infinity, pending: false, prepared: false, restored: false, at, abort: null, timer,
+      drop: this.localDrop?.flight ?? null
+    };
+    this.prepared.link.close(); this.inbox.length = 0;
+  }
+  private retryRecovery(state: Recovery): void {
+    this.prepared.link.close(); state.abort?.abort(); state.abort = null;
+    state.pending = false; state.prepared = false; state.restored = false; state.stage = 'connecting';
+    state.retryAt = this.now() + Math.min(2000, 500 * 2 ** Math.min(2, state.attempt - 1));
+  }
+  private attemptRecovery(state: Recovery): void {
+    state.attempt++; state.pending = true;
+    const attempt = state.attempt, abort = state.abort = new AbortController();
+    void this.reconnect!(abort.signal).then(link => {
+      if (this.recovery !== state || state.attempt !== attempt || abort.signal.aborted || this.now() >= state.deadline) {
+        link.close(); return;
+      }
+      if (link.sessionId !== this.prepared.link.sessionId || link.epoch !== 0) {
+        link.close(); this.hold('The replacement connection did not preserve the private session.'); return;
+      }
+      this.prepared.link = link; this.inbox.length = 0; state.pending = false;
+      state.stage = 'barrier'; state.attemptUntil = this.now() + 5000;
+      this.peerClock.reset(); this.resetReplicaClock(); this.lastProbe = -Infinity; this.lastPeerAt = this.now();
+    }, error => {
+      if (this.recovery !== state || state.attempt !== attempt || abort.signal.aborted) return;
+      if (error instanceof RoomClientError && ['network', 'timeout', 'service_error'].includes(error.code)) this.retryRecovery(state);
+      else this.hold(error instanceof Error ? error.message : 'Replacement connection setup failed.');
+    });
+  }
+  private async updateRecovery(): Promise<void> {
+    const state = this.recovery!;
+    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.'); return; }
+    const host = this.hostValue;
+    if (host?.journal.authority.pauseState === 'settling') {
+      this.settleLocalRelease();
+      await host.pump();
+      if (this.stopped || this.recovery !== state) return;
+      if (this.now() > this.settleAt) host.journal.authority.sealPause();
+    }
+    if (state.stage === 'connecting') {
+      if (!state.pending && this.now() >= state.retryAt) this.attemptRecovery(state);
+      return;
+    }
+    this.inbox.push(...this.prepared.link.drain());
+    for (let remaining = this.inbox.length; remaining > 0; remaining--) {
+      const event = this.inbox.shift()!;
+      if (event.type === 'failed' || event.type === 'rejected') {
+        if (event.type === 'failed' && RECOVERABLE.has(event.code)) { this.retryRecovery(state); return; }
+        throw new Error(`Replacement connection failed: ${event.code}.`);
+      }
+      if (event.type === 'message') await this.receiveRecovery(event.message, event.receivedAt, state);
+      if (this.stopped || this.recovery !== state) return;
+    }
+    if (this.prepared.link.status === 'closed') {
+      if (RECOVERABLE.has(this.prepared.link.failure ?? 'connection_closed')) this.retryRecovery(state);
+      else this.hold(`Replacement connection failed: ${this.prepared.link.failure ?? 'closed'}.`);
+      return;
+    }
+    if (state.stage !== 'checkpoint' && this.now() >= state.attemptUntil) { this.retryRecovery(state); return; }
+    if (this.prepared.link.status !== 'open') return;
+    if (host && state.stage === 'barrier') {
+      if (host.journal.authority.pauseState !== 'paused') return;
+      if (!state.prepared) {
+        host.beginRecoveryEpoch(host.epoch + 1); this.clock.freezeAt(host.scheduler.session.time, host.epoch);
+        state.prepared = true;
+        this.prepareRecoveredPause(host.epoch, state.at);
+      }
+      if (this.send({ type: 'barrier', reason: 'recovery', nextEpoch: host.epoch, at: state.at }).ok) state.stage = 'cache';
+      return;
+    }
+    if (this.guestValue && state.stage === 'cache') {
+      if (this.send({ type: 'recovery-cache', references: this.guestValue.replica.plans.inventory() }).ok) state.stage = 'checkpoint';
+      return;
+    }
+    if (state.stage !== 'checkpoint') return;
+    this.probe();
+    await this.updatePause();
+    if (this.stopped || this.recovery !== state) return;
+    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.'); return; }
+    if (this.pauseRestored && this.pauseNotice?.stage === 'ready') {
+      if (state.drop && this.displayValue) {
+        const { slot, releasedAt } = state.drop, player = this.displayValue.players[slot], aircraft = this.displayValue.frame.aircraft[slot];
+        const bombMatches = aircraft.bomb && Math.abs(this.displayValue.frame.time - aircraft.bomb.age - releasedAt) < 1e-6;
+        if (!aircraft.released && !bombMatches && !(player.result && player.result.time >= releasedAt)) {
+          this.rejectDrop('unconfirmed_after_connection_loss');
+        }
+      }
+      clearTimeout(state.timer); this.recovery = null; state.abort = null;
+      this.phaseValue = 'paused'; this.lastPeerAt = this.now();
+    } else this.phaseValue = 'recovering';
+  }
+  private prepareRecoveredPause(epoch: number, at: Stamp) {
+    this.localDrop = null; this.pauseRestored = false; this.pauseTimeout = Infinity;
+    this.pauseNotice = {
+      type: 'pause-state', barrier: epoch, update: 0, at: structuredClone(at),
+      by: 0, reason: 'recovery', stage: 'restoring', ready: [false, false]
+    };
+    this.pauseDirty = !!this.hostValue;
+    this.resumeHandshake?.close(); this.resumeHandshake = this.handshake(epoch, at);
+  }
+  private async receiveRecovery(message: WireMessage, receivedAt: number, state: Recovery) {
+    if (message.type === 'hello') return;
+    if (message.type === 'barrier' && message.reason === 'recovery' && this.guestValue && state.stage === 'barrier') {
+      this.guestValue.recoverEpoch(message.nextEpoch);
+      this.prepareRecoveredPause(message.nextEpoch, message.at); state.stage = 'cache';
+      return;
+    }
+    if (message.type === 'recovery-cache' && this.hostValue && state.stage === 'cache') {
+      this.hostValue.acceptRecoveryCache(message.references); state.stage = 'checkpoint';
+      return;
+    }
+    if (message.type === 'recovery-restored' && this.hostValue && state.stage === 'checkpoint') {
+      if (!this.hostValue.ready || message.epoch !== this.hostValue.epoch) throw new Error('Premature recovery acknowledgement.');
+      state.restored = true; return;
+    }
+    if (state.stage === 'checkpoint' || message.type === 'match-abort' ||
+      (message.type === 'ping' || message.type === 'pong') && message.epoch === (this.hostValue?.epoch ?? this.guestValue!.epoch)) {
+      await this.receive(message, receivedAt); return;
+    }
+    throw new Error('Unexpected recovery handshake message.');
+  }
+  private async receiveGameplay(message: WireMessage, receivedAt: number): Promise<void> {
     if (message.type === 'pong') { this.peerClock.receive(message, this.now()); return; }
     if (!this.started) {
       if (message.type === 'lobby-state') this.prepared.lobby.receiveState(message.state);
@@ -319,7 +501,7 @@ export class MatchController {
         this.resumeHandshake = this.handshake(notice.barrier, notice.at);
         return;
       }
-      if (!host.ready) return;
+      if (!host.ready || this.recovery && !this.recovery.restored) return;
       if (!this.pauseRestored) {
         this.captureHost(secondsAt(this.pauseNotice!.at)); this.pauseRestored = true;
         this.pauseTimeout = Infinity; this.phaseValue = 'paused';
@@ -332,6 +514,10 @@ export class MatchController {
       if (!this.pauseRestored) {
         this.captureGuest(secondsAt(this.pauseNotice!.at)); this.pauseRestored = true;
         this.pauseTimeout = Infinity;
+      }
+      if (this.recovery && !this.recovery.restored) {
+        if (!this.send({ type: 'recovery-restored' }).ok) return;
+        this.recovery.restored = true;
       }
       if (this.pauseNotice!.stage !== 'ready') return;
       this.phaseValue = 'paused';
@@ -486,21 +672,25 @@ export class MatchController {
     this.frameValue = this.localDrop ? this.localDrop.flight.frame(source.frame) : source.frame;
     this.displayValue = this.frameValue === source.frame ? source : Object.freeze({ ...source, frame: this.frameValue });
   }
-  hold(reason: string): void {
+  hold(reason: string, notify = true): void {
     if (!this.active || this.phaseValue === 'held') return;
     this.issueValue = reason; this.phaseValue = 'held';
+    if (this.recovery) {
+      clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
+    }
     this.hostValue?.scheduler.session.pause();
     this.pendingRelease = null;
     this.localDrop = null;
     if (this.captured) this.present(this.captured);
-    if (this.started) {
-      this.send(this.hostValue ? { type: 'barrier', reason: 'pause', nextEpoch: this.prepared.link.epoch + 1,
-        at: stampAt(this.hostValue.scheduler.session.time) } : { type: 'resync', reason: 'drift' });
-    }
+    if (notify && this.started) this.send({ type: 'match-abort', reason: 'error' });
+    this.prepared.link.close();
   }
   close(): void {
     if (!this.active) return;
     this.active = false; this.phaseValue = 'closed';
+    if (this.recovery) {
+      clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
+    }
     this.pendingRelease = null;
     this.localDrop = null; this.captured = null; this.displayValue = null; this.frameValue = null;
     this.startup.close(); this.resumeHandshake?.close();

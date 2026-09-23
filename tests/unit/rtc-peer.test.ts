@@ -71,6 +71,27 @@ function setup(patch: Partial<RtcOptions> = {}) {
 }
 
 describe('bounded native peer adapter', () => {
+  it('preserves validated release receipts ahead of a recoverable connection failure', () => {
+    const state = setup({ clock: () => 123 }); state.ready();
+    const command = release('guest');
+    state.pc.channels[0]!.receive(encodeMessage(command));
+    state.pc.close();
+    expect(state.peer.drain()).toEqual([
+      { type: 'message', channel: 'control', receivedAt: 123, message: command },
+      { type: 'failed', code: 'connection' }, { type: 'status', status: 'closed', epoch: 0 },
+    ]);
+  });
+  it('adopts a recovered authority epoch only through a host barrier on a fresh link', () => {
+    const state = setup({ role: 'guest' }); state.ready();
+    state.pc.channels[1]!.receive(encodeMessage({ ...base, epoch: 1, type: 'snapshot', state: snapshot(), sampledAt: 0 }));
+    const barrier = { ...base, type: 'barrier' as const, reason: 'recovery' as const, nextEpoch: 9, at: { tick: 10, fraction: 0 } };
+    state.pc.channels[0]!.receive(encodeMessage(barrier));
+    expect(state.peer.epoch).toBe(9);
+    expect(state.peer.drain().filter(event => event.type === 'message').map(event => event.message.type)).toEqual(['barrier']);
+    state.pc.channels[1]!.receive(encodeMessage({ ...base, epoch: 9, type: 'snapshot', state: snapshot(), sampledAt: 0 }));
+    expect(state.peer.drain()).toHaveLength(1);
+    expect(() => encodeMessage({ ...barrier, epoch: 9, nextEpoch: 10 })).toThrow();
+  });
   it('uses reliable control/unreliable state and gates data behind a matching peer hello', () => {
     const { peer, pc, ready } = setup();
     expect(peer.send(release('host'))).toEqual({ ok: false, reason: 'not_open' });

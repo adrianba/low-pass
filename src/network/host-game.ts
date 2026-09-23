@@ -40,6 +40,7 @@ export class HostGame {
   private checkpointState: Snapshot | null = null;
   private checkpointCommitted = false;
   private initialized = false;
+  private cachePending = false;
   private lastSnapshot = -Infinity;
   private lastWall = -Infinity;
   private busy = false;
@@ -88,6 +89,17 @@ export class HostGame {
     }
   }
   recoverEpoch(nextEpoch: number, inventory: readonly Reference[]): void {
+    this.checkInventory(inventory);
+    this.beginRecoveryEpoch(nextEpoch);
+    this.acceptRecoveryCache(inventory);
+  }
+  beginRecoveryEpoch(nextEpoch: number): void {
+    if (this.closed || this.busy) throw new Error('Invalid host recovery boundary.');
+    this.journal.authority.advancePausedEpoch(nextEpoch);
+    this.resetCheckpoint(); this.cachePending = true;
+    this.commit = { type: 'plan-commit', planRevision: this.plans.revision, plans: [...this.plans.references.values()] };
+  }
+  private checkInventory(inventory: readonly Reference[]): Map<string, string> {
     if (this.closed || this.busy || inventory.length > MAX_RECOVERY_REFERENCES) throw new Error('Invalid host recovery boundary.');
     const known = new Map(inventory.map(value => { const ref = reference.parse(value); return [ref.id, ref.digest]; }));
     if (known.size !== inventory.length) throw new Error('Duplicate recovery cache reference.');
@@ -96,9 +108,11 @@ export class HostGame {
       const offer = value.transfer.offer, digest = known.get(offer.id);
       if (digest !== undefined && digest !== offer.digest) throw new Error('Recovery cache identity conflict.');
     }
-    this.journal.authority.advancePausedEpoch(nextEpoch);
-    this.resetCheckpoint();
-    this.commit = { type: 'plan-commit', planRevision: this.plans.revision, plans: [...this.plans.references.values()] };
+    return known;
+  }
+  acceptRecoveryCache(inventory: readonly Reference[]): void {
+    if (!this.cachePending) throw new Error('No pending recovery cache negotiation.');
+    const known = this.checkInventory(inventory), retained = [...this.retainedFlights(), ...this.effects.values()];
     const needed = new Set([...this.effects.values()].filter(value => !known.has(value.transfer.offer.id))
       .flatMap(value => value.dependencies.map(flight => flight.transfer.offer.id)));
     for (const value of retained) {
@@ -111,6 +125,7 @@ export class HostGame {
       if (acknowledged && offer.kind === 'combat') this.journal.acknowledgeEffect({ id: offer.id, digest: offer.digest });
       if (acknowledged && liveFlight) this.plans.acknowledge({ id: offer.id, digest: offer.digest });
     }
+    this.cachePending = false;
   }
   private resetCheckpoint() {
     this.checkpoint = null; this.checkpointState = null; this.checkpointCommitted = false;
@@ -158,6 +173,7 @@ export class HostGame {
   /** Returns a hold reason; the lifecycle owner must not discard elapsed time or catch up unseen flight. */
   async pump(target = this.scheduler.session.time): Promise<HostGameWait> {
     if (this.closed || this.busy) throw new Error('Host game pump requires exclusive live ownership.');
+    if (this.cachePending) return this.wait = 'publication';
     const session = this.scheduler.session;
     if (!Number.isFinite(target) || target < session.time || target - session.time > GAME_STREAM_LIMITS.advanceSeconds + 1e-8) {
       throw new Error('Host game advance exceeds its per-frame work budget.');

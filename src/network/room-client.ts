@@ -149,5 +149,5 @@ export class RoomClient {
   }
   invitation(credential: string) { return this.send('room/invitation', roomInvitation, {}, credential); }
   leave(credential: string) { return this.send('room/leave', z.null(), {}, credential); }
-  ice(credential: string) { return this.send('room/ice', iceConfiguration, {}, credential); }
+  ice(credential: string, signal?: AbortSignal) { return this.send('room/ice', iceConfiguration, {}, credential, signal); }
 }

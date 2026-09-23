@@ -667,7 +667,7 @@ rolling plan publication, release settlement and complete guest presentation.
 Native Chromium fixtures run Valley and Canyon matches through both finales.
 Those controller fixtures supply prepared camera views rather than a live
 WebGL application. The application preview below adds real scene coverage;
-shared resume/recovery and multiplayer records remain unwired.
+shared resume/recovery are connected; multiplayer records remain unwired.
 This is not the two-computer Edge gameplay review checkpoint.
 
 Rolling course selection and transfer encoding run in a bounded dedicated Web
@@ -730,8 +730,7 @@ authoring uses each aircraft's real camera pose at the narrowest supported aspec
 so the host's wider window cannot hide a guest missile launch. Resizing requires
 fresh readiness; unsupported sizes disable it until corrected.
 
-**Incomplete:** unrecoverable errors still require leaving the preview. Automatic
-recovery, in-flight assistance changes,
+**Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes,
 audio, results/records and rematch UI are subsequent steps. No multiplayer score
 is saved yet. This is not the full two-computer Windows Edge review checkpoint.
 
@@ -739,7 +738,23 @@ A signaling-only interruption no longer destroys a healthy peer connection.
 The existing flight continues with a degraded-service warning while the same
 in-memory membership reconnects, within one fixed 15-second deadline. The native
 game channel is not replaced by this path. Expired or changed membership fails
-explicitly; failed-peer reconstruction and full match recovery remain unfinished.
+explicitly, without extending the deadline by starting another recovery cycle.
+
+A failed or stale game connection freezes flight and attempts replacement using
+the same in-memory room membership and refreshed ICE configuration. One fixed
+15-second deadline includes credentials, retries, negotiation and restoration.
+The host preserves its journal, plans, scores and bombs; it settles already
+received releases within the existing 750 ms window, not the recovery deadline.
+A fresh native link adopts the host's newer authority epoch, exchanges verified
+cache references and restores an acknowledged paused checkpoint. Both players
+must explicitly become ready again. Unconfirmed drops are reported rather than
+invented. Expiry closes the candidate connection; leaving aborts credential work
+and disposes late arrivals. There is no host migration or page-reload recovery.
+
+Native Chromium matches exercise host-only, guest-only and simultaneous
+replacement, then recovery while spectating and during the ended finale.
+The real-canvas Valley application also exercises the reconnect card and dual
+readiness. These are local direct-path checks, not full-game relay or Edge acceptance.
 
 The application browser cases use two isolated browser processes, Low graphics
 and a reduced test-only device scale for software-rendered CI. A complete Canyon

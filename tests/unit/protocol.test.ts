@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertCompatible, byteLength, decodeMessage, decodePayload, encodeMessage, encodePayload, ProtocolError } from '../../shared/protocol/codec.js';
-import { MAX_TRANSFER_BYTES, MAX_WIRE_BYTES, CHANNELS, PHYSICS_HZ } from '../../shared/protocol/limits.js';
+import { MAX_RECOVERY_REFERENCES, MAX_TRANSFER_BYTES, MAX_WIRE_BYTES, CHANNELS, PHYSICS_HZ } from '../../shared/protocol/limits.js';
 import { payload, secondsAt, stampAt } from '../../shared/protocol/game.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
 import type { WireMessage } from '../../shared/protocol/messages.js';
@@ -22,6 +22,24 @@ function rejected(callback: () => unknown, code: ProtocolError['code']) {
 }
 
 describe('bounded shared multiplayer protocol', () => {
+  it('limits replacement handshakes to fresh host barriers and bounded guest cache claims', () => {
+    const barrier = { ...base, type: 'barrier', nextEpoch: 9, reason: 'recovery', at: stampAt(2) };
+    expect(decodeMessage(encodeMessage(barrier), context)).toEqual(barrier);
+    for (const invalid of [{ ...barrier, epoch: 8 }, { ...barrier, nextEpoch: 0 },
+      { ...barrier, reason: 'pause' }, { ...barrier, reason: 'resume' }]) {
+      rejected(() => encodeMessage(invalid), 'invalid_message');
+    }
+    rejected(() => encodeMessage({ ...barrier, sender: 'guest' }), 'role');
+    const cache = { ...base, sender: 'guest', type: 'recovery-cache', references: [reference] };
+    expect(decodeMessage(encodeMessage(cache), { ...context, peer: 'guest' })).toEqual(cache);
+    for (const invalid of [{ ...cache, sender: 'host' }, { ...cache, references: [reference, reference] },
+      { ...cache, references: Array.from({ length: MAX_RECOVERY_REFERENCES + 1 }, (_, index) => ({ ...reference, id: `ref-${index}` })) },
+      { ...base, type: 'recovery-restored' }]) rejected(() => encodeMessage(invalid), 'invalid_message');
+    for (const sender of ['host', 'guest'] as const) {
+      const abort = { ...base, sender, type: 'match-abort', reason: 'left' };
+      expect(decodeMessage(encodeMessage(abort), { ...context, peer: sender })).toEqual(abort);
+    }
+  });
   it('binds pause notices to the host, settlement epoch and readiness stage', () => {
     const notice: WireMessage = { ...base, type: 'pause-state', barrier: 1, update: 0, at: stampAt(2),
       by: 1, reason: 'focus', stage: 'settling', ready: [false, false] };

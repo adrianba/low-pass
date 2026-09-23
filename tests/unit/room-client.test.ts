@@ -62,9 +62,11 @@ describe('typed private room client', () => {
     const client = new RoomClient(request);
     const timed = expect(client.capabilities()).rejects.toMatchObject({ code: 'timeout' });
     await vi.advanceTimersByTimeAsync(ROOM_REQUEST_TIMEOUT_MS); await timed;
-    const abort = new AbortController();
-    const cancelled = expect(client.status(credential, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
-    abort.abort(); await cancelled;
+    for (const action of ['status', 'ice'] as const) {
+      const abort = new AbortController();
+      const cancelled = expect(client[action](credential, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
+      abort.abort(); await cancelled;
+    }
     expect(vi.getTimerCount()).toBe(0);
   });
 });

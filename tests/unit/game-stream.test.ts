@@ -92,6 +92,26 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
 }
 
 describe('host/guest gameplay stream ownership', () => {
+  it('advances the authority before recovery negotiation but publishes nothing without a valid cache reply', async () => {
+    const state = await setup();
+    try {
+      await state.pump(); await state.pump();
+      state.host.journal.authority.beginPause(); state.elapse(751); state.host.journal.authority.sealPause();
+      state.host.beginRecoveryEpoch(1);
+      expect(state.host.epoch).toBe(1);
+      expect(await state.pump()).toBe('publication');
+      expect(state.sent.filter(message => message.epoch === 1)).toEqual([]);
+      const inventory = state.guest.replica.plans.inventory();
+      expect(() => state.host.acceptRecoveryCache([...inventory, inventory[0]!])).toThrow('Duplicate');
+      expect(await state.pump()).toBe('publication');
+      state.host.beginRecoveryEpoch(2); state.guest.recoverEpoch(2);
+      state.host.acceptRecoveryCache(inventory);
+      expect(() => state.host.acceptRecoveryCache(inventory)).toThrow('No pending');
+      for (let work = 0; work < 20 && !state.host.ready; work++) await state.pump();
+      expect(state.host.ready).toBe(true);
+      expect(state.guest.replica.presentationState?.status).toBe('paused');
+    } finally { state.host.close(); state.guest.close(); }
+  });
   it('does not commit a recovered checkpoint before its missing flight is acknowledged', async () => {
     const state = await setup();
     try {
