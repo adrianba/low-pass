@@ -9,6 +9,27 @@ function sample(clock: PeerClock, sentAt: number, outward: number, inward: numbe
     sentAt + outward + inward)).toEqual({ ok: true });
 }
 describe('bounded peer-clock estimation', () => {
+  it('does not turn queued pong processing into backwards clock drift after replacing every sample', () => {
+    const peer = new PeerClock();
+    sample(peer, 0, 0, 0);
+    for (let index = 1; index <= CLOCK_LIMITS.samples + 1; index++) {
+      const sentAt = index * 300, ping = peer.probe(sentAt);
+      const receivedAt = sentAt + 10, processedAt = receivedAt + 240;
+      expect(peer.receive({ type: 'pong', id: ping.id, sentAt, receivedAt: sentAt + 505 },
+        processedAt, receivedAt)).toEqual({ ok: true });
+      const estimate = peer.estimate(processedAt);
+      expect(estimate.offsetMs).toBe(500);
+      expect(estimate.uncertaintyMs).toBeLessThan(7);
+      expect(estimate.remoteLower).toBeLessThan(processedAt + 500);
+      expect(estimate.remoteUpper).toBeGreaterThan(processedAt + 500);
+    }
+  });
+  it('validates receipt times without extending probe expiry for a queued reply', () => {
+    const peer = new PeerClock(), ping = peer.probe(100);
+    const pong = { type: 'pong' as const, id: ping.id, sentAt: ping.sentAt, receivedAt: 600 };
+    for (const receivedAt of [NaN, 99, 201]) expect(() => peer.receive(pong, 200, receivedAt)).toThrow('invalid');
+    expect(peer.receive(pong, 2101, 110)).toEqual({ ok: false, reason: 'expired' });
+  });
   it('cancels unsent probes without exhausting pending capacity or accepting their stray replies', () => {
     const clock = new PeerClock(); sample(clock, 0, 0, 0);
     let last = clock.probe(1);
@@ -31,7 +52,7 @@ describe('bounded peer-clock estimation', () => {
     const next = clock.estimate(2000);
     expect(next.remoteLower).toBeLessThan(2500); expect(next.remoteUpper).toBeGreaterThan(2500);
     expect(next.uncertaintyMs).toBeLessThan(12);
-    expect(() => clock.estimate(7000)).toThrow('stale');
+    expect(() => clock.estimate(7000)).toThrow('stale (peer timing sample 5780ms old)');
   });
   it('bounds probes and samples, rejects forged timing and exposes incompatible or uncertain clocks', () => {
     const clock = new PeerClock(), ping = clock.probe(0);
@@ -107,6 +128,12 @@ describe('bounded replica presentation clock', () => {
     clock.frame(20, { startAt: 0, endAt: 2 });
     clock.observe({ epoch: 1, at: stampAt(1.6), monotonicMs: 600, running: true }, 120);
     expect(() => clock.frame(120, { startAt: 0, endAt: 2 })).toThrow('drift');
-    expect(() => clock.frame(621, { startAt: 0, endAt: 2 })).toThrow('stale');
+    expect(() => clock.frame(621, { startAt: 0, endAt: 2 })).toThrow('stale (snapshot receipt 501ms old)');
+  });
+  it('distinguishes delayed anchor extrapolation from a missing snapshot receipt', () => {
+    const peer = new PeerClock(); sample(peer, 0, 0, 0);
+    const clock = new ReplicaClock(peer);
+    clock.observe({ epoch: 1, at: stampAt(1), monotonicMs: 500, running: true }, 600);
+    expect(() => clock.frame(600, { startAt: 0, endAt: 20 })).toThrow('stale (snapshot extrapolation 548ms)');
   });
 });

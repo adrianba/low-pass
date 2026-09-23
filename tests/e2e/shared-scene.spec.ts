@@ -66,6 +66,13 @@ for (const terrain of ['green-valley', 'desert', 'river-canyon'] as const) {
     const high = await page.evaluate(terrain => window.sharedScene.configure(terrain, 1, 'high'), terrain);
     expect(high.cameraError).toBeLessThan(0.001); expect(high.covered).toBe(true);
     expect(high.chunks).toBeLessThanOrEqual(high.chunkBudget);
+    for (let rematch = 0; rematch < 3; rematch++) {
+      const restored = await page.evaluate(terrain => window.sharedScene.configure(terrain), terrain);
+      expect(restored.counts).toEqual(first.counts);
+      expect(restored.chunks).toBe(first.chunks);
+      expect(restored.covered).toBe(true);
+      expect(restored.aircraft.map(aircraft => aircraft.enabled)).toEqual([true, true]);
+    }
     expect(errors).toEqual([]);
     await page.evaluate(() => window.sharedScene.dispose());
   });

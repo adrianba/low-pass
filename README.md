@@ -684,6 +684,20 @@ service. This command does not provision credentials, configure coturn, start a
 server, or deploy anything. Do not publish this development entry. A subsequent
 ordinary `npm run build` removes it; `/` has no multiplayer menu action.
 
+For the existing local container harness, build the ordinary image, then copy
+its exact `/opt/low-pass/dist/index.html` to a stable private artifact named
+`multiplayer.html`. Set `MULTIPLAYER_PREVIEW_FILE` to that absolute file path
+when invoking `scripts/run-connectivity-backend.mjs`, and select the newly built
+image with `CONNECTIVITY_IMAGE`. The launcher mounts only this extra HTML entry;
+all referenced scripts, workers, assets and notices come from that same image.
+Keep existing connectivity and room-control fixture paths configured as before.
+Never put a live mount in an output directory that Playwright clears.
+Start the existing loopback proxy after the backend is healthy. Both Edge
+computers must reach the same configured origin, `http://localhost:8080`, using
+the existing SSH-tunnel procedure if necessary; do not expose this synthetic
+proxy directly to the Internet. The review URL is
+`http://localhost:8080/multiplayer.html`.
+
 The preview reuses the actual application canvas, room/admission panels and
 lobby. Both players select ready, load both aircraft/terrain/effects, and complete
 the acknowledged countdown. The host authors the course and outcomes; the guest
@@ -796,7 +810,13 @@ and disposes late arrivals. There is no host migration or page-reload recovery.
 Native Chromium matches exercise host-only, guest-only and simultaneous
 replacement, then recovery while spectating and during the ended finale.
 The real-canvas Valley application also exercises the reconnect card and dual
-readiness. These are local direct-path checks, not full-game relay or Edge acceptance.
+readiness. An additional run against the actual hardened review container
+completed Valley and a Desert rematch through the deployed TLS relay, including
+peer replacement, shared pause, spectating, results, records and return to solo.
+Both browsers enforced relay-only policy. This is full-game Chromium relay
+evidence, not two-computer Edge or sustained ten-minute game acceptance.
+The preceding direct-path mounted run timed out during peer startup; that
+intermittent negotiation failure remains unresolved.
 
 The application browser cases use two isolated browser processes, Low graphics
 and a reduced test-only device scale for software-rendered CI. A complete Canyon
@@ -806,6 +826,68 @@ unresolved; smaller test pixels are not a performance fix or Edge acceptance.
 The ordinary build can
 run the tests without publishing the preview HTML: the test proxy serves the
 real application HTML at that path only for its two local clients.
+
+Clock diagnostics distinguish old peer samples, missing snapshot receipts,
+excess snapshot extrapolation, excessive presentation correction and a host
+simulation gap. Pong timing uses the recorded transport receipt rather than
+later application processing; queued processing cannot manufacture extra RTT.
+Probe expiry, freshness, correction and release-settlement limits are unchanged.
+The receipt correction has deterministic coverage, but does not establish the
+cause or resolution of every prior browser pause. Recent software-rendered
+Canyon runs still paused at approximately 10 and 38 seconds with corrections
+just beyond 100 ms; a separate interrupted Valley run completed its intended
+disconnect/results path. These failures remain release blockers, not successful
+uninterrupted acceptance. CPU profiling that mostly captured an already-paused
+game is not evidence about the earlier active-flight stalls.
+
+Run ordinary application checks without per-WebGL-call instrumentation. Opt in
+with `GRAPHICS_MULTIPLAYER=1` for bounded GL timing/resource diagnostics, or
+`PROFILE_MULTIPLAYER=1` for those diagnostics plus CDP CPU profiles. These options
+are test-only and can themselves disturb timing. Preserve failed-run reports;
+do not increase gameplay bounds or repeatedly rerun until a failure disappears.
+
+To exercise the actual mounted application instead of the test-owned server:
+
+```sh
+TEST_URL=http://localhost:8080 \
+MULTIPLAYER_URL=http://localhost:8080/multiplayer.html \
+npx playwright test tests/e2e/multiplayer-app.spec.ts --project=chromium
+```
+
+The external URL is restricted to the expected loopback path; this explicitly
+uses the ignored local hosting-code file. Direct is the default test route.
+For live relay, additionally set `LOW_PASS_LIVE_TURN=1` and
+`MULTIPLAYER_ROUTE=tls` (or `udp`/`tcp`). Non-direct tests require both the
+external local preview and explicit live opt-in. Traces/video are disabled;
+only post-admission screenshots and redacted reports are retained.
+
+#### Two-computer Windows Edge review
+
+Use the same image/build on both current Windows Edge computers with graphics
+acceleration enabled. Keep both tabs visible; the host must remain open even
+after its aircraft is eliminated. The host enters the local hosting code, never
+the TURN secret. Share only the invitation with player 2, admit them, then select
+**CONNECT LOBBY** on both sides. Start with automatic connectivity; separately
+exercise forced relay, including TLS on the configured 5349 listener. Do not
+infer relay use merely because automatic connection succeeded.
+
+Review each terrain, both aircraft positions and death orders, independent
+bomb timing/scores, survivor spectating, local assistance/audio, shared pause
+and canceled/resumed readiness. Complete a rematch with changed terrain and
+confirm fresh totals while earlier multiplayer records and solo records remain.
+Include a sustained session beyond ten minutes and a brief connection loss:
+recovery must either restore a paused match requiring both players' readiness
+within its fixed 15-second budget, or explicitly report an incomplete match.
+Reloading or closing the host is not recoverable host migration.
+
+Record the build, terrain, graphics setting, route, approximate game time and
+visible reason for any pause/freeze, plus whether both-ready resume works.
+Report visual/audio/readability problems as well as score disagreement.
+Do not share invitations, hosting codes, credential responses, SDP or candidate
+addresses; do not capture network HARs or credential-bearing browser traces.
+This is the next human acceptance gate, not production deployment approval.
+Unresolved sustained-play failures must be assessed with that evidence before
+enabling the normal menu, recommending merge, or publishing an image.
 
 ### Local formation preview (not networked)
 

@@ -277,7 +277,7 @@ export class MatchController {
     } catch (error) {
       if (this.stopped) return;
       if (error instanceof ClockError && this.started && !this.pauseRequested) {
-        console.warn('Private match paused:', error.message);
+        console.warn('Private match paused:', this.prepared.role, error.message);
         this.pause('clock'); return;
       }
       this.hold(error instanceof Error ? error.message : 'The private match could not continue.');
@@ -448,7 +448,7 @@ export class MatchController {
     throw new Error('Unexpected recovery handshake message.');
   }
   private async receiveGameplay(message: WireMessage, receivedAt: number): Promise<void> {
-    if (message.type === 'pong') { this.peerClock.receive(message, this.now()); return; }
+    if (message.type === 'pong') { this.peerClock.receive(message, this.now(), receivedAt); return; }
     if (!this.started) {
       if (message.type === 'lobby-state') this.prepared.lobby.receiveState(message.state);
       else if (message.type === 'lobby-input') this.prepared.lobby.receiveInput(message.input);
@@ -683,6 +683,7 @@ export class MatchController {
     if (session.status !== 'over') {
       const target = secondsAt(this.clock.sample().at);
       if (target - session.time > REPLICA_CLOCK_LIMITS.futureSeconds) {
+        console.warn('Private match paused:', 'host', `simulation gap ${Math.round((target - session.time) * 1000)}ms`);
         this.pause('clock'); return;
       }
       const work = Math.max(1, Math.ceil((target - session.time) / GAME_STREAM_LIMITS.advanceSeconds));

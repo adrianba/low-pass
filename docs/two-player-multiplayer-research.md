@@ -2,10 +2,46 @@
 
 Research date: 2026-09-13.
 
-Status: proposed implementation architecture, based on repository inspection,
-technical references, and the product decisions confirmed below. No multiplayer
-code or infrastructure has been implemented as part of this research. Proposed
-budgets and prototype gates are not measured performance results.
+The original research proposed the architecture from repository inspection,
+technical references and the confirmed product decisions. The checkpoint sections
+below retain the implementation history; their earlier integration limitations
+are not the current feature inventory. Proposed budgets are not measured
+performance guarantees.
+
+**Current acceptance status:** the private, local-only application preview now
+connects room admission, native peers, host-authoritative courses and scoring,
+both aircraft, survivor spectating, shared pause/recovery, independent assistance,
+viewed-player audio, separate records/results and acknowledged rematches.
+Normal production entry remains solo-only. Nothing here authorizes publication
+or changes the separately managed Ansible/coturn deployment.
+
+Native controller matches cover both death orders, bounded recovery, finales and
+same-connection rematches across the three terrains. Actual WebGL scene checks
+also retain identical mesh/material/geometry/texture counts after three repeated
+resets at the same course position, including a high-to-low graphics transition.
+These bounded resource checks are not an uninterrupted full-game timing result.
+
+Sustained real-canvas acceptance remains open: complete Valley/Desert matches and
+an interrupted Valley results path have passed, but software-rendered Canyon
+runs still hit the unchanged 100 ms clock-correction safety bound. Clock probes
+now use their transport arrival timestamp rather than later queued processing,
+with deterministic coverage; this does not resolve or explain all historical
+render/publication stalls. Diagnostics distinguish snapshot age, extrapolation,
+peer sample age and host simulation gaps. Heavy GL/CPU profiling is opt-in, not
+part of ordinary acceptance. Do not discard failed runs or relax fairness bounds.
+
+The actual hardened local container additionally completed Valley and a Desert
+rematch over the deployed TLS relay with relay-only browser policies, including
+recovery, spectating, results and record preservation. The preceding mounted
+direct-path run timed out during initial peer negotiation; this remains open.
+Neither the successful relay run nor bounded resource counts erase that failure
+or the Canyon pauses. No uninterrupted ten-minute full-game or Edge claim follows.
+
+The next human gate is the complete two-computer Windows Edge review described
+in [the application handoff](../README.md#two-computer-windows-edge-review).
+It must assess sustained flight and the recorded pauses on the target browser,
+including forced relay, before normal-menu exposure or a release recommendation.
+Chromium/SwiftShader, local ARM64 images and health checks are not substitutes.
 
 **Implementation checkpoint:** the implementation branch now contains solo
 regression fixtures and an optional, explicitly disabled Node HTTP runtime.

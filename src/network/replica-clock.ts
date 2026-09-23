@@ -43,13 +43,17 @@ export class ReplicaClock {
     }
     let desired = secondsAt(anchor.at), floorWait = 0;
     if (anchor.running) {
-      if (now - this.receivedAt > REPLICA_CLOCK_LIMITS.freshnessMs) throw new ClockError('stale');
+      if (now - this.receivedAt > REPLICA_CLOCK_LIMITS.freshnessMs) {
+        throw new ClockError('stale', `snapshot receipt ${Math.round(now - this.receivedAt)}ms old`);
+      }
       const estimate = this.peer.estimate(now);
       const delayed = desired + (estimate.remoteLower - anchor.monotonicMs) / 1000 -
         REPLICA_CLOCK_LIMITS.presentationDelaySeconds;
       floorWait = Math.max(0, this.epochFloor - delayed);
       desired = Math.max(this.epochFloor, delayed);
-      if (desired > secondsAt(anchor.at) + REPLICA_CLOCK_LIMITS.futureSeconds) throw new ClockError('stale');
+      if (desired > secondsAt(anchor.at) + REPLICA_CLOCK_LIMITS.futureSeconds) {
+        throw new ClockError('stale', `snapshot extrapolation ${Math.round((desired - secondsAt(anchor.at)) * 1000)}ms`);
+      }
     }
     if (desired < coverage.startAt || desired > coverage.endAt) throw new ClockError('coverage');
     let next = desired;

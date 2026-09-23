@@ -29,14 +29,16 @@ export class PeerClock {
   cancelProbe(id: number): void {
     if (!this.pending.delete(id)) throw new ClockError('invalid');
   }
-  receive(pong: Extract<MessageBody, { type: 'pong' }>, time: number): { ok: true } | { ok: false; reason: 'unknown' | 'expired' } {
+  receive(pong: Extract<MessageBody, { type: 'pong' }>, time: number, receivedAt = time): { ok: true } | { ok: false; reason: 'unknown' | 'expired' } {
     const now = this.now(time), sentAt = this.pending.get(pong.id);
     if (sentAt === undefined) return { ok: false, reason: 'unknown' };
-    if (sentAt !== pong.sentAt || !Number.isFinite(pong.receivedAt) || Math.abs(pong.receivedAt) > 1e12) throw new ClockError('invalid');
+    if (sentAt !== pong.sentAt || !Number.isFinite(pong.receivedAt) || Math.abs(pong.receivedAt) > 1e12 ||
+      !Number.isFinite(receivedAt) || receivedAt < sentAt || receivedAt > now) throw new ClockError('invalid');
     this.pending.delete(pong.id);
     if (now - sentAt > CLOCK_LIMITS.probeAgeMs) return { ok: false, reason: 'expired' };
-    const margin = CLOCK_LIMITS.timestampErrorMs + (now - sentAt) * CLOCK_LIMITS.driftPpm / 1e6;
-    this.samples.push({ lower: pong.receivedAt - now - margin, upper: pong.receivedAt - sentAt + margin, at: now });
+    // Application queueing after transport receipt is not part of the network timing interval.
+    const margin = CLOCK_LIMITS.timestampErrorMs + (receivedAt - sentAt) * CLOCK_LIMITS.driftPpm / 1e6;
+    this.samples.push({ lower: pong.receivedAt - receivedAt - margin, upper: pong.receivedAt - sentAt + margin, at: receivedAt });
     if (this.samples.length > CLOCK_LIMITS.samples) this.samples.shift();
     return { ok: true };
   }
@@ -46,7 +48,11 @@ export class PeerClock {
       const margin = (now - sample.at) * CLOCK_LIMITS.driftPpm / 1e6;
       return { lower: sample.lower - margin, upper: sample.upper + margin };
     });
-    if (!fresh.length) throw new ClockError(this.samples.length ? 'stale' : 'unsynchronized');
+    if (!fresh.length) {
+      const latest = this.samples.at(-1);
+      throw new ClockError(latest ? 'stale' : 'unsynchronized',
+        latest ? `peer timing sample ${Math.round(now - latest.at)}ms old` : undefined);
+    }
     // Prefer a narrow, recent interval; averaging queued packets biases the offset.
     const best = fresh.reduce((a, b) => b.upper - b.lower <= a.upper - a.lower ? b : a);
     if (Math.max(...fresh.map(sample => sample.lower)) > Math.min(...fresh.map(sample => sample.upper))) {
