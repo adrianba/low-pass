@@ -313,6 +313,36 @@ export class World {
     this.engine.resize();
   }
 
+  async prepareSharedScene(signal: AbortSignal): Promise<void> {
+    if (!this.sharedActive) throw new Error('Prepare the shared frame before warming its scene.');
+    const nodes = [...this.scene.transformNodes, ...this.scene.meshes];
+    const enabled = nodes.map(node => node.isEnabled(false));
+    const clipping = this.scene.skipFrustumClipping;
+    const deadline = performance.now() + 30_000;
+    const nextFrame = () => new Promise<void>((resolve, reject) => {
+      if (signal.aborted) { reject(new Error('Shared scene preparation cancelled.')); return; }
+      if (performance.now() >= deadline) { reject(new Error('Shared graphics initialization timed out.')); return; }
+      const frame = requestAnimationFrame(() => { clearTimeout(timeout); signal.removeEventListener('abort', cancel); resolve(); });
+      const cancel = () => { cancelAnimationFrame(frame); clearTimeout(timeout); reject(new Error('Shared scene preparation cancelled.')); };
+      const timeout = setTimeout(() => {
+        cancelAnimationFrame(frame); signal.removeEventListener('abort', cancel);
+        reject(new Error('Shared graphics initialization timed out. Try reloading with graphics acceleration enabled.'));
+      }, Math.max(0, deadline - performance.now()));
+      signal.addEventListener('abort', cancel, { once: true });
+    });
+    try {
+      for (const node of nodes) node.setEnabled(true);
+      this.scene.skipFrustumClipping = true;
+      this.renderOnce();
+      while (!this.scene.isReady(true)) await nextFrame();
+      this.renderOnce();
+      await nextFrame();
+    } finally {
+      nodes.forEach((node, index) => { if (!node.isDisposed()) node.setEnabled(enabled[index]!); });
+      this.scene.skipFrustumClipping = clipping;
+    }
+  }
+
   /** Caller owns the returned view and must dispose it before this World. */
   createAircraftView(prefix: string): AircraftView {
     if (!prefix || this.containers.length !== 2 || this.scene.isDisposed ||
@@ -649,6 +679,11 @@ export class World {
   }
 
   render(): void { this.scene.render(); }
+  renderOnce(): void {
+    this.engine.beginFrame();
+    try { this.render(); }
+    finally { this.engine.endFrame(); }
+  }
   dispose(): void {
     this.sharedAircraft?.dispose();
     this.sharedTargets?.dispose(); this.sharedImpacts?.dispose();

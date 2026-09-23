@@ -27,6 +27,17 @@ function event(slot: 0 | 1, sequence: number, bornAt: number, kind: MissileKind,
 const healthy: readonly [CombatActor, CombatActor] = [{ misses: 0, eliminated: false }, { misses: 0, eliminated: false }];
 
 describe('independent shared combat timelines', () => {
+  it('can render a controller-owned timeline without resetting it on visual disposal', () => {
+    const engine = new NullEngine(), scene = new Scene(engine);
+    try {
+      const timeline = new CombatTimeline(), shared = new SharedCombat(new CombatEffects(scene), timeline);
+      timeline.update([], 2, healthy, sample);
+      shared.render(0); shared.reset(); shared.dispose();
+      expect(timeline.time).toBe(2);
+      expect(timeline.poseAt(1)).toEqual(sample(1, 2));
+    } finally { scene.dispose(); engine.dispose(); }
+  });
+
   it('preserves overlapping damage and finales without suppressing cues or repairing damage', () => {
     const timeline = new CombatTimeline();
     timeline.update([], 0, healthy, sample);

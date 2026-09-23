@@ -8,6 +8,8 @@ import { FlightTrack } from '../simulation/flight-track.js';
 import { sampleChase } from '../simulation/chase-timeline.js';
 import type { CompletedTransfer } from './transfer.js';
 import { combatDependencies, expandCombat } from './combat-data.js';
+import { readCombatPlanData } from '../game/multiplayer/combat-plan.js';
+import type { CombatPlanData } from '../game/multiplayer/combat-plan.js';
 
 type Reference = CompletedTransfer['reference'];
 export type FormationData = Extract<Payload, { kind: 'formation' }>['data'];
@@ -50,7 +52,10 @@ export class FormationPlayback {
   }
 }
 
-interface Stored { reference: Reference; payload: Payload; bytes: number; playback: FormationPlayback | null; combat: CombatData | null }
+interface Stored {
+  reference: Reference; payload: Payload; bytes: number; playback: FormationPlayback | null;
+  combat: CombatData | null; combatPlan: CombatPlanData | null;
+}
 /** Only hash-verified CompletedTransfers enter here; no candidate selection runs. */
 export class ReplicaPlans {
   private readonly values = new Map<string, Stored>();
@@ -80,7 +85,7 @@ export class ReplicaPlans {
     const playback = owned.kind === 'formation' ? new FormationPlayback(owned.data) : null;
     const resolved = owned.kind === 'combat' && owned.data.missile.motion.kind !== 'track-reference' ? combat.parse(owned.data) : null;
     if (owned.kind === 'combat' && resolved) owned.data = resolved;
-    this.values.set(ref.id, { reference: ref, payload: owned, playback, bytes, combat: resolved });
+    this.values.set(ref.id, { reference: ref, payload: owned, playback, bytes, combat: resolved, combatPlan: null });
     this.resolveCombat();
   }
   private resolveCombat(): void {
@@ -104,6 +109,11 @@ export class ReplicaPlans {
     const stored = this.values.get(value.id);
     if (!stored || stored.reference.digest !== value.digest || !stored.combat) throw new Error('Missing verified combat plan.');
     return structuredClone(stored.combat);
+  }
+  combatPlan(value: Reference): CombatPlanData {
+    const stored = this.values.get(value.id);
+    if (!stored || stored.reference.digest !== value.digest || !stored.combat) throw new Error('Missing verified combat plan.');
+    return stored.combatPlan ??= readCombatPlanData(stored.combat);
   }
   commit(values: readonly Reference[]): void {
     if (!values.length || values.length > MAX_PLANS || new Set(values.map(value => value.id)).size !== values.length) {

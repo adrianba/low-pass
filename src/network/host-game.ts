@@ -50,7 +50,8 @@ export class HostGame {
     private readonly now: () => number, private readonly send: (body: MessageBody) => SendResult,
     view: CombatViewProvider, assistance: readonly [boolean, boolean],
     private readonly manifest: Extract<MessageBody, { type: 'course-manifest' }>['manifest'],
-    private readonly author?: FormationAuthoring) {
+    private readonly author?: FormationAuthoring,
+    private readonly sampledAt: (time: number) => number = () => this.now()) {
     identifier.parse(sessionId); counter.parse(epoch);
     this.scheduler = prepared.scheduler;
     if (this.scheduler.session.time !== 0 || this.scheduler.session.lastEventId !== 0) throw new Error('A host game requires its unused prepared course.');
@@ -231,7 +232,7 @@ export class HostGame {
       }
       const now = this.readNow();
       if (!this.initialized || snapshotDue && now - this.lastSnapshot >= GAME_STREAM_LIMITS.snapshotMs) {
-        const result = this.send(this.journal.snapshot(now));
+        const result = this.send(this.journal.snapshot(this.sampledAt(this.scheduler.session.time)));
         if (!result.ok) return result.reason;
         this.initialized = true; this.lastSnapshot = now;
       }

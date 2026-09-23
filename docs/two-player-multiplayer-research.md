@@ -1139,7 +1139,7 @@ Acknowledgements gate flight commits and complete outcome groups; pending
 outcomes prevent scheduler retirement. Small combat payloads take priority over
 bulk flight data, with self-contained combat when a referenced track is not yet
 verified. Explicit holds remain terminal in this slice; shared resume and
-15-second recovery are still pending, as are normal-menu/WebGL/HUD wiring.
+15-second recovery are still pending. The normal menu remains solo-only.
 
 Native execution exposed synchronous next-course authoring blocking the flight
 clock at the first handoff. A dedicated, single-job Web Worker now performs
@@ -1151,6 +1151,46 @@ both death orders and survivor continuation. No geometry or scoring limits
 were changed. Tests also exposed fractional-tick rounding at an exactly sampled
 Canyon release; only identical encoded host-time stamps normalize to the exact
 sample, while truly future input remains rejected.
+
+The opt-in application slice now wires these controllers into the real `World`,
+room/lobby panels, both-player HUD and keyboard handling behind an explicit
+local `/multiplayer.html` build entry. It does not replace the normal solo menu.
+The application owns its render loop while private flight is open, keeps a static
+lobby image, draws hidden materials/effects during cancellable preflight, and
+returns rendering ownership to solo on exit without modifying solo records.
+HUD results follow owned snapshots captured with each complete presentation frame,
+not a live host snapshot that may have advanced during asynchronous publication.
+Equal-size scores, cumulative misses, sticky assisted labels, damage/results,
+local identity, release/bomb state and survivor viewing are visible. Lobby-selected
+assistance predicts canonical first ground/water contact from the drawn local
+pose and projects an overlay; it never marks water as a hit or follows a spectator
+camera. Static held/lobby scenes redraw on resize and graphics changes without
+advancing simulation. Release commands retain the
+frame actually drawn rather than a fresher timer-generated frame. Verified,
+immutable combat plans and the controller's timeline are reused by the renderer
+instead of reparsing the same tracks every frame.
+
+Actual-canvas work exposed a distinction between the 100 ms simulation work
+budget and elapsed wall time. Bounded catch-up now preserves up to the existing
+500 ms freshness window in at most five work steps, with snapshots stamped at
+their represented simulation time. Longer stalls still hold; no release grace,
+scoring window, flight geometry or clock threshold has been relaxed. Browser
+clock coverage also reproduces and fixes a false backwards-drift hold while
+waiting at a new epoch's presentation floor: this waiting interval is not elapsed
+flight time. The correction and freshness limits remain unchanged. Browser
+traces also found long native GPU submissions, including a first-use draw stall;
+preflight drawing reduced the observed early Valley stall. Software-rendered
+Canyon still intermittently hits the safety bounds even at reduced pixel counts.
+A later full real-canvas match passed through both finales, but that does not
+resolve the earlier 1451 ms host gap or publication holds. The automated two-browser application
+cases therefore use Low graphics and a test-only 0.25 device scale; that is
+correctness coverage, not full-resolution performance acceptance or Windows Edge
+evidence. Actual two-computer Edge gameplay remains the later human gate.
+
+Shared resume/recovery, in-flight assistance changes, speculative bomb
+reconciliation, audio, records/results and rematch are not complete. The local
+preview labels these limitations; no production deployment or publication is
+implied by the opt-in build command.
 
 ### 7.1 Do not score by arrival time
 

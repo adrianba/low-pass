@@ -1,5 +1,6 @@
 import { decodeMessage, encodeMessage } from '../../shared/protocol/codec.js';
 import { secondsAt } from '../../shared/protocol/game.js';
+import type { SharedWorldFrame } from '../rendering/shared-frame.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
 import { CombatTimeline } from '../game/multiplayer/combat-timeline.js';
@@ -78,7 +79,7 @@ export class GuestGame {
       return plan;
     };
     const actors = state.players;
-    this.combat.update(state.effects.map(effect => this.replica.plans.combat(effect)), time, actors,
+    this.combat.update(state.effects.map(effect => this.replica.plans.combatPlan(effect)), time, actors,
       (slot, time) => at(time).flight.pose(slot, time));
     const flightTime = state.status === 'over' ? secondsAt(state.at) : time;
     const current = at(flightTime);
@@ -92,8 +93,13 @@ export class GuestGame {
       reference: current.ref };
     return frame;
   }
-  release(): boolean {
-    const displayed = this.displayed;
+  release(frame?: SharedWorldFrame): boolean {
+    const displayed = frame ? (() => {
+      const flight = this.replica.plans.at(frame.time);
+      const ref = this.replica.plans.references().find(ref => this.replica.plans.formation(ref).sequence === flight.sequence);
+      return ref ? { time: frame.time, sequence: flight.sequence, reference: ref,
+        ready: frame.ready && frame.viewedSlot === 1 && flight.sequence > this.releasedSequence } : null;
+    })() : this.displayed;
     if (!displayed?.ready || this.closed) return false;
     this.queue({ type: 'command', slot: 1, inputSequence: ++this.lastInput,
       command: releaseIntent(displayed.sequence, displayed.reference, displayed.time) });

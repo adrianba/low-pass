@@ -10,7 +10,7 @@ import type { CompletedTransfer } from '../../src/network/transfer.js';
 import { base, versions } from './protocol-fixtures.js';
 import type { TerrainTheme } from '../../src/config/terrain.js';
 
-async function setup(terrain: TerrainTheme = 'green-valley') {
+async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: number) => number) {
   const prepared = await prepareHostCourse(terrain, 7, 0);
   const verified: CompletedTransfer[] = [];
   const receiver = new TransferReceiver(() => 0, { maxTransfers: 2, maxBytes: 32 * 1024 * 1024, ttlMs: 30_000 });
@@ -34,7 +34,7 @@ async function setup(terrain: TerrainTheme = 'green-valley') {
     if (body.type !== 'snapshot' || !dropSnapshots) outgoing.push(message);
     sent.push(message); wire++;
     return { ok: true };
-  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), [false, true], manifest);
+  }, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), [false, true], manifest, undefined, sampledAt);
   const guest = new GuestGame({ formations: [verified[0]!, verified[1]!], course: { type: 'course-manifest', revision: 0,
     manifest,
     plans: [verified[0]!.reference, verified[1]!.reference] } }, base.sessionId, 0, () => wall, body => {
@@ -88,6 +88,23 @@ async function setup(terrain: TerrainTheme = 'green-valley') {
 }
 
 describe('host/guest gameplay stream ownership', () => {
+  it('timestamps catch-up snapshots at their represented state and releases the actually displayed guest frame', async () => {
+    const state = await setup('green-valley', time => 10_000 + time * 1000);
+    await state.pump(); await state.pump();
+    const releaseAt = state.host.scheduler.plan().attempts[1].releaseAt;
+    await state.advance(releaseAt);
+    const displayed = state.guest.frame(releaseAt, 7);
+    await state.advance(releaseAt + 0.05);
+    state.guest.frame(releaseAt + 0.05, 7);
+    expect(state.guest.release(displayed)).toBe(true);
+    state.guest.pump();
+    expect(state.host.scheduler.session.snapshot().encounters[0]!.attempts[1]!.releasedAt).toBeCloseTo(releaseAt, 10);
+    for (const message of state.sent) if (message.type === 'snapshot') {
+      expect(message.sampledAt).toBeCloseTo(10_000 + secondsAt(message.state.at) * 1000, 8);
+    }
+    state.host.close(); state.guest.close();
+  });
+
   it.each((['green-valley', 'desert', 'river-canyon'] as const).flatMap(terrain =>
     ([0, 1] as const).map(firstDead => ({ terrain, firstDead }))))('streams $terrain with player $firstDead eliminated first', async ({ terrain, firstDead }) => {
     const state = await setup(terrain);
@@ -100,6 +117,14 @@ describe('host/guest gameplay stream ownership', () => {
       await state.advance(plan.handoffAt);
       for (let attempt = 0; attempt < 10 && state.host.journal.pendingCount; attempt++) await state.pump();
       const host = state.host.scheduler.session.snapshot(), guest = state.guest.replica.presentationState!;
+      for (const ref of guest.effects) {
+        const plan = state.guest.replica.plans.combatPlan(ref);
+        expect(state.guest.replica.plans.combatPlan(ref)).toBe(plan);
+        expect(Object.isFrozen(plan)).toBe(true);
+        const copy = state.guest.replica.plans.combat(ref);
+        copy.bornAt++;
+        expect(state.guest.replica.plans.combatPlan(ref).bornAt).toBe(plan.bornAt);
+      }
       expect(guest.players.map(p => [p.score, p.misses, p.assisted])).toEqual(host.players.map(p => [p.score, p.misses, p.assisted]));
       expect(state.host.counts.flights).toBeLessThanOrEqual(4);
       expect(state.guest.replica.plans.count).toBeLessThanOrEqual(12);

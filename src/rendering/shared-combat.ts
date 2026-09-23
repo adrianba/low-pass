@@ -16,12 +16,15 @@ const SMOKE_INTERVAL = 0.045;
 interface Emission { index: number; finale: number | null; point: Vec3; velocity: Vec3 }
 
 export class SharedCombat {
-  readonly timeline = new CombatTimeline();
+  readonly timeline: CombatTimeline;
+  private readonly ownsTimeline: boolean;
   private readonly views: EffectView[];
   private readonly damage: readonly [ReturnType<CombatEffects['createDamageView']>, ReturnType<CombatEffects['createDamageView']>];
   private disposed = false;
   private emissions: [Array<Emission | null>, Array<Emission | null>] = [Array.from({ length: 28 }, () => null), Array.from({ length: 28 }, () => null)];
-  constructor(template: CombatEffects) {
+  constructor(template: CombatEffects, timeline?: CombatTimeline) {
+    this.timeline = timeline ?? new CombatTimeline();
+    this.ownsTimeline = timeline === undefined;
     this.views = Array.from({ length: MAX_COMBAT_VIEWS }, (_, index) => ({ id: null,
       missile: template.createMissileView(`Shared combat ${index} `),
       explosion: template.createExplosionView(`Shared combat ${index} `) }));
@@ -114,7 +117,7 @@ export class SharedCombat {
     for (const fragment of view.explosion) fragment.mesh.setEnabled(false);
   }
   reset(): void {
-    this.timeline.reset();
+    if (this.ownsTimeline) this.timeline.reset();
     this.emissions[0].fill(null); this.emissions[1].fill(null);
     for (const view of this.views) this.hide(view);
     for (const damage of this.damage) { damage.flash.setEnabled(false); for (const puff of damage.puffs) puff.setEnabled(false); }
@@ -128,6 +131,6 @@ export class SharedCombat {
       for (const fragment of view.explosion) fragment.mesh.dispose();
     }
     for (const damage of this.damage) { damage.flash.dispose(); for (const puff of damage.puffs) puff.dispose(); }
-    this.timeline.reset();
+    if (this.ownsTimeline) this.timeline.reset();
   }
 }

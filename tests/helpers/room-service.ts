@@ -7,7 +7,7 @@ import { hashSecret } from '../../server/room-store.js';
 import { readTurnConfig } from '../../server/turn-config.js';
 import { readFile } from 'node:fs/promises';
 
-export async function roomService(options: { turnFile?: string; connectivity?: boolean; roomControls?: boolean } = {}) {
+export async function roomService(options: { turnFile?: string; connectivity?: boolean; roomControls?: boolean; multiplayerApp?: boolean } = {}) {
   const code = 'browser-only-dummy-hosting-code-for-private-room-tests';
   let targetPort = 0;
   const html = options.connectivity ? await readFile(resolve('tests/fixtures/connectivity.html'), 'utf8') : null;
@@ -31,7 +31,8 @@ export async function roomService(options: { turnFile?: string; connectivity?: b
       response.end('<title>Private room fixture</title><link rel="icon" href="data:,">' +
         (request.url === '/rtc-fixture' ? '<script src="/rtc-fixture.js"></script>' : '')); return;
     }
-    const upstream = httpRequest({ hostname: '127.0.0.1', port: targetPort, path: request.url, method: request.method,
+    const path = options.multiplayerApp && request.url?.split('?')[0] === '/multiplayer.html' ? '/index.html' : request.url;
+    const upstream = httpRequest({ hostname: '127.0.0.1', port: targetPort, path, method: request.method,
       headers: { ...request.headers, 'x-forwarded-for': '203.0.113.10' } }, received => {
       response.writeHead(received.statusCode!, received.headers); received.pipe(response);
     });

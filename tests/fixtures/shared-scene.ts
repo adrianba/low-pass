@@ -89,6 +89,20 @@ async function show(slot: PlayerSlot, simultaneous = false, replicated = false) 
   };
 }
 const api = {
+  async prewarm(cancel: boolean) {
+    const nodes = [...world.scene.transformNodes, ...world.scene.meshes];
+    const enabled = nodes.map(node => node.isEnabled(false)), clipping = world.scene.skipFrustumClipping;
+    const abort = new AbortController(), work = world.prepareSharedScene(abort.signal);
+    if (cancel) abort.abort();
+    let cancelled = false;
+    try { await work; }
+    catch (error) {
+      if (!cancel || !(error instanceof Error) || error.message !== 'Shared scene preparation cancelled.') throw error;
+      cancelled = true;
+    }
+    return { cancelled, restored: nodes.every((node, index) => node.isEnabled(false) === enabled[index]) &&
+      clipping === world.scene.skipFrustumClipping };
+  },
   async configure(terrain: TerrainTheme, count = 13, quality: Quality = 'low') {
     await prepare(terrain, count, quality);
     const plan = scheduler!.plan();

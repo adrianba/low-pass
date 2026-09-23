@@ -7,12 +7,14 @@ import { GuestGame } from './guest-game.js';
 import { HostGame, GAME_STREAM_LIMITS } from './host-game.js';
 import type { PreparedConnection } from './lobby-connection.js';
 import { ClockError, PeerClock } from './peer-clock.js';
-import { ReplicaClock } from './replica-clock.js';
+import { ReplicaClock, REPLICA_CLOCK_LIMITS } from './replica-clock.js';
 import { SessionClock } from './session-clock.js';
 import { StartHandshake } from './start-handshake.js';
 import type { StartedSession } from './start-handshake.js';
 import type { SendResult, TransportEvent } from './transport.js';
 import { FormationWorker } from './formation-worker-client.js';
+import { snapshotMatchDisplay } from './match-display.js';
+import type { MatchDisplay } from './match-display.js';
 
 export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'held' | 'closed';
 
@@ -34,9 +36,10 @@ export class MatchController {
   private lastFrameWall: number;
   private initialDeadline = Infinity;
   private frameValue: SharedWorldFrame | null = null;
+  private displayValue: MatchDisplay | null = null;
   private anchorWall = -Infinity;
-  private displayedSequence = 0;
   private pendingRelease: { time: number; sequence: number } | null = null;
+  private startedAt = 0;
   private inbox: TransportEvent[];
   constructor(readonly prepared: PreparedConnection, view: CombatViewProvider,
     private readonly now: () => number = () => performance.now()) {
@@ -56,13 +59,15 @@ export class MatchController {
       const author = new FormationWorker();
       try {
         this.hostValue = new HostGame(prepared.authored, prepared.link.sessionId, prepared.epoch + 1, now, this.send, view,
-          prepared.lobby.state!.assistance, prepared.course.manifest, author);
+          prepared.lobby.state!.assistance, prepared.course.manifest, author, time => this.startedAt + time * 1000);
       } catch (error) { author.close(); throw error; }
     } else this.guestValue = new GuestGame(prepared, prepared.link.sessionId, prepared.epoch + 1, now, this.send);
   }
   get phase(): MatchPhase { return this.phaseValue; }
+  private get stopped(): boolean { return !this.active || this.phaseValue === 'held'; }
   get issue(): string | null { return this.issueValue; }
   get frame(): SharedWorldFrame | null { return this.frameValue; }
+  get display(): MatchDisplay | null { return this.displayValue; }
   get host(): HostGame | null { return this.hostValue; }
   get guest(): GuestGame | null { return this.guestValue; }
   get timeline() { return this.hostValue?.timeline ?? this.guestValue?.combat ?? null; }
@@ -80,7 +85,7 @@ export class MatchController {
         if (event.type === 'message') await this.receive(event.message);
         else if (event.type === 'rejected' || event.type === 'failed') throw new Error(`Match transport failed: ${event.code}.`);
       }
-      if (!this.active) return;
+      if (this.stopped) return;
       if (this.prepared.link.status !== 'open') throw new Error('The peer connection is unavailable.');
       const now = this.now();
       if (now - this.lastProbe >= 500) {
@@ -102,7 +107,7 @@ export class MatchController {
       if (this.hostValue) await this.updateHost();
       else if (this.guestValue) this.updateGuest();
     } catch (error) {
-      if (!this.active) return;
+      if (this.stopped) return;
       this.hold(error instanceof Error ? error.message : 'The private match could not continue.');
       console.error('Private match held:', this.issueValue);
     } finally { this.busy = false; }
@@ -140,6 +145,7 @@ export class MatchController {
   private start(started: StartedSession) {
     if (started.requiresPause) throw new Error('Readiness or clock synchronization changed during the countdown.');
     const prepared = this.prepared;
+    this.startedAt = started.hostStartsAt;
     if (prepared.role === 'host') {
       for (const slot of [0, 1] as const) this.hostValue!.scheduler.session.setAssistance(slot, prepared.lobby.state!.assistance[slot]);
       this.clock.start(started.epoch, started.hostStartsAt);
@@ -158,25 +164,39 @@ export class MatchController {
     const session = host.scheduler.session;
     if (session.status !== 'over') {
       const target = secondsAt(this.clock.sample().at);
-      if (target - session.time > GAME_STREAM_LIMITS.advanceSeconds) {
-        throw new Error('The host could not keep up with the shared flight clock.');
+      if (target - session.time > REPLICA_CLOCK_LIMITS.futureSeconds) {
+        throw new Error(`The host fell ${Math.round((target - session.time) * 1000)}ms behind the shared flight clock.`);
       }
-      const held = await host.pump(Math.max(session.time, target));
-      if (!this.active) return;
-      if (held) throw new Error(`Waiting for gameplay publication: ${held}.`);
+      const work = Math.max(1, Math.ceil((target - session.time) / GAME_STREAM_LIMITS.advanceSeconds));
+      for (let index = 0; index < work; index++) {
+        if (host.scheduler.session.status === 'over') break;
+        const held = await host.pump(Math.max(session.time, Math.min(target, session.time + GAME_STREAM_LIMITS.advanceSeconds)));
+        if (this.stopped) return;
+        if (held) throw new Error(`Waiting for gameplay publication: ${held}.`);
+      }
     } else await host.pump();
-    if (!this.active) return;
+    if (this.stopped) return;
     if (this.pendingRelease) {
       const input = this.pendingRelease; this.pendingRelease = null;
       host.release(input.time, input.sequence);
       await host.pump();
-      if (!this.active) return;
+      if (this.stopped) return;
     }
     const now = this.now(), elapsed = Math.max(0, (now - this.lastFrameWall) / 1000);
     const time = session.status === 'over'
       ? Math.min(session.time + FINALE_DURATION, Math.max(session.time, this.frameValue?.time ?? session.time) + elapsed) : session.time;
     this.frameValue = host.frame(time);
-    this.displayedSequence = host.scheduler.sequence;
+    const state = session.snapshot();
+    const player = (slot: 0 | 1) => {
+      const value = state.players[slot]!;
+      const result = state.encounters.flatMap(encounter => {
+        const result = encounter.attempts[slot]!.result;
+        return result ? [result] : [];
+      }).sort((a, b) => b.time - a.time)[0];
+      return { score: value.score, misses: value.misses, assistance: value.assistance, assisted: value.assisted,
+        eliminated: value.completion !== null, result: result ? { points: result.points, time: result.time } : null };
+    };
+    this.displayValue = snapshotMatchDisplay(this.frameValue, 0, [player(0), player(1)], state.winner);
     this.phaseValue = session.status === 'over' ? time >= session.time + FINALE_DURATION ? 'over' : 'ending' : 'playing';
     this.lastFrameWall = now;
   }
@@ -194,19 +214,30 @@ export class MatchController {
       ? Math.min(end + FINALE_DURATION, Math.max(end, this.frameValue?.time ?? end) + Math.max(0, (now - this.lastFrameWall) / 1000))
       : this.replicaClock.frame(now, { startAt: flights[0]!.startAt, endAt: flights.at(-1)!.handoffAt });
     this.frameValue = guest.frame(time, this.prepared.course.manifest.seed);
+    const displayed = guest.replica.presentationAt(time);
+    const player = (slot: 0 | 1) => {
+      const result = displayed.results.filter(result => result.slot === slot).sort((a, b) => b.time - a.time)[0];
+      return { ...displayed.players[slot], result: result ? { points: result.points, time: result.time } : null };
+    };
+    this.displayValue = snapshotMatchDisplay(this.frameValue, 1, [player(0), player(1)], displayed.winner);
     this.phaseValue = state.status === 'over' ? time >= end + FINALE_DURATION ? 'over' : 'ending' : 'playing';
     this.lastFrameWall = now;
   }
-  release(): boolean {
-    if (this.phaseValue !== 'playing' || !this.frameValue?.ready) return false;
+  release(displayed = this.frameValue): boolean {
+    if (this.phaseValue !== 'playing' || !displayed?.ready) return false;
     if (this.hostValue) {
       if (this.pendingRelease || this.hostValue.player(0).completion) return false;
+      const sequence = [...this.hostValue.scheduler.retainedSequences].reverse().find(sequence => {
+        const plan = this.hostValue!.scheduler.plan(sequence);
+        return plan.startAt <= displayed.time && displayed.time <= plan.handoffAt;
+      });
+      if (sequence === undefined) return false;
       if (this.busy) {
-        this.pendingRelease = { time: this.frameValue.time, sequence: this.displayedSequence }; return true;
+        this.pendingRelease = { time: displayed.time, sequence }; return true;
       }
-      return this.hostValue.release(this.frameValue.time, this.displayedSequence).accepted;
+      return this.hostValue.release(displayed.time, sequence).accepted;
     }
-    return this.guestValue!.release();
+    return this.guestValue!.release(displayed);
   }
   hold(reason: string): void {
     if (!this.active || this.phaseValue === 'held') return;

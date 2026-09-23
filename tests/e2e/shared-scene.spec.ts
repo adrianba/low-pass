@@ -31,6 +31,8 @@ for (const terrain of ['green-valley', 'desert', 'river-canyon'] as const) {
     expect(first.sharedRings).toBe(true); expect(first.soloHidden).toBe(true);
     expect(first.cameraError).toBeLessThan(0.001); expect(first.covered).toBe(true);
     expect(first.chunks).toBeLessThanOrEqual(first.chunkBudget);
+    expect(await page.evaluate(() => window.sharedScene.prewarm(true))).toEqual({ cancelled: true, restored: true });
+    expect(await page.evaluate(() => window.sharedScene.prewarm(false))).toEqual({ cancelled: false, restored: true });
     const replicated = await page.evaluate(() => window.sharedScene.replica(1));
     expect(replicated.replicated).toBe(true);
     expect(replicated.aircraft).toEqual(first.aircraft); expect(replicated.bombs).toEqual(first.bombs);

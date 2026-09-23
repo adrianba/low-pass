@@ -83,3 +83,31 @@ footer { position: absolute; bottom: 24px; left: 42px; right: 42px; display: fle
   .miss-card, .flight-tape { right: 24px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+#multiplayer-app .multiplayer-setup { background: #101d25ed; padding: 18px; width: min(480px, 90vw); }
+#multiplayer-app h1 { font-size: 32px; }
+#multiplayer-app p, #multiplayer-app label { font-size: 12px; line-height: 1.6; }
+#multiplayer-app label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+#multiplayer-app input { min-width: 0; max-width: 100%; }
+#multiplayer-app .primary { margin: 8px 0; }
+#multiplayer-app .score-card, #multiplayer-app .miss-card { padding: 12px; background: #101d25bb; }
+#match-exit { position: absolute; right: 28px; bottom: 25px; background: #101d25dd; pointer-events: auto; }
+#match-pause { position: absolute; right: 42px; top: 245px; }
+#match-message { position: absolute; top: 38%; left: 25%; width: 50%; padding: 20px; background: #342e24f5; color: #ffe3b3; font-size: 14px; pointer-events: auto; }
+#match-loading { position: absolute; inset: 0; display: grid; place-items: center; background: #101d25f5; font-size: 16px; }
+#app[data-multiplayer="true"] { background: linear-gradient(0deg, #09161e6b, transparent 28%, transparent 80%, #09161e55); }
+#app[data-multiplayer="true"] footer { display: none; }
+#match-instruments :is(.score-card, .miss-card) { width: 210px; text-align: left; border: 1px solid #d3dfd33a; }
+#match-instruments :is(.score-card, .miss-card) strong { font: 36px/1.4 Consolas, monospace; letter-spacing: -.04em; }
+#match-instruments :is(.score-card, .miss-card) > span:not(.eyebrow) { display: block; font: 10px/1.8 Consolas, monospace; letter-spacing: .08em; }
+#match-instruments .flight-tape { font-size: 10px; max-width: 210px; text-align: right; }
+#match-instruments .release-panel { width: min(440px, 94vw); min-width: 0; }
+#match-instruments .release-panel span { line-height: 1.8; }
+#match-pause { top: auto; right: auto; left: 42px; bottom: 25px; }
+@media (max-width: 600px) {
+  #match-instruments :is(.score-card, .miss-card) { width: 155px; padding: 9px; }
+  #match-instruments .eyebrow { letter-spacing: .08em; }
+  #match-instruments .flight-tape { top: 42%; max-width: 170px; }
+  #match-pause { left: 24px; }
+  #match-exit { right: 12px; font-size: 9px; }
+  #match-message { left: 6%; width: 88%; }
+}

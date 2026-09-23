@@ -11,6 +11,8 @@ import { UI } from './ui/ui';
 import type { Screen } from './ui/ui';
 import { ReleaseKey } from './input/keyboard';
 import { speedOf } from './simulation/flight-track';
+import type { MultiplayerApp } from './app/multiplayer';
+import { takeInvitationLink } from './network/invitation-link';
 
 let ui: UI | null = null;
 const warnings: string[] = [];
@@ -30,6 +32,11 @@ let predictionClock = 0;
 let runId = '';
 let pausedFrom: 'playing' | 'ending' = 'playing';
 const key = new ReleaseKey();
+let multiplayer: MultiplayerApp | null = null;
+let openingMultiplayer = false;
+const multiplayerPreview = location.pathname === '/multiplayer.html';
+let invitation = multiplayerPreview ? takeInvitationLink(location.href, url => history.replaceState(history.state, '', url)) : null;
+let resumeSoloRendering: (() => void) | null = null;
 
 function setScreen(next: Screen): void {
   screen = next;
@@ -61,6 +68,7 @@ function changeSettings(next: Settings): boolean {
 }
 
 function pause(): void {
+  if (multiplayer) { key.up(); multiplayer.pause(); return; }
   if (screen !== 'playing' && screen !== 'ending') return;
   pausedFrom = screen;
   if (screen === 'playing') run.status = 'paused';
@@ -70,6 +78,7 @@ function pause(): void {
 }
 
 function fail(error: unknown): void {
+  if (multiplayer) { multiplayer.fail(error); void audio.pause(); return; }
   console.error(error);
   screen = 'error';
   run.status = 'paused';
@@ -78,8 +87,21 @@ function fail(error: unknown): void {
 }
 
 ui = new UI(settings, {
+  ...(multiplayerPreview ? { multiplayer() {
+    if (!world || multiplayer || openingMultiplayer || screen !== 'menu' && screen !== 'over') return;
+    openingMultiplayer = true; key.up();
+    void audio.pause();
+    void import('./app/multiplayer').then(({ MultiplayerApp }) => {
+      multiplayer = new MultiplayerApp(world!, settings, () => {
+        multiplayer = null; key.up(); prediction = null; preview = new Run(7, settings.terrain); setScreen('menu');
+        resumeSoloRendering?.();
+      }, invitation);
+      world!.engine.stopRenderLoop();
+      invitation = null;
+    }).catch(fail).finally(() => { openingMultiplayer = false; });
+  } } : {}),
   start() {
-    if (!world || (screen !== 'menu' && screen !== 'over')) return;
+    if (!world || multiplayer || openingMultiplayer || (screen !== 'menu' && screen !== 'over')) return;
     try { run = new Run(crypto.getRandomValues(new Uint32Array(1))[0]!, settings.terrain); }
     catch (error) { fail(error); return; }
     preview = null;
@@ -114,6 +136,14 @@ for (const message of warnings) ui.warn(message);
 
 document.addEventListener('keydown', event => {
   const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement;
+  if (multiplayer) {
+    if (event.code === 'Space' && !editing) {
+      event.preventDefault();
+      if (key.down(event.repeat)) multiplayer.release();
+    }
+    if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); multiplayer.pause(); }
+    return;
+  }
   if (event.code === 'Space') {
     const pressed = key.down(event.repeat);
     if (screen === 'playing' || screen === 'ending') {
@@ -130,8 +160,8 @@ document.addEventListener('keydown', event => {
 document.addEventListener('keyup', event => { if (event.code === 'Space') key.up(); });
 window.addEventListener('blur', pause);
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
-window.addEventListener('resize', () => world?.engine.resize());
-window.addEventListener('pagehide', () => { void audio.pause(); });
+window.addEventListener('resize', () => { world?.engine.resize(); multiplayer?.resized(); });
+window.addEventListener('pagehide', () => { void audio.pause(); void multiplayer?.close(); });
 
 async function bootstrap(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
@@ -143,7 +173,7 @@ async function bootstrap(): Promise<void> {
   view.update(run, run.pose, null, 1 / 60);
   view.render();
   setScreen('menu');
-  view.engine.runRenderLoop(() => {
+  const renderSolo = () => {
     if (screen === 'error') return;
     try {
       const now = performance.now();
@@ -186,7 +216,9 @@ async function bootstrap(): Promise<void> {
         view.combat.finalePhase, view.combat.missileActive, view.combat.damageLevel);
       view.render();
     } catch (error) { fail(error); }
-  });
+  };
+  resumeSoloRendering = () => view.engine.runRenderLoop(renderSolo);
+  resumeSoloRendering();
 }
 
 void bootstrap().catch(fail);

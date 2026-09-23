@@ -42,9 +42,9 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
-endpoints are preparation only: opt-in private rooms and authenticated signaling
-exist, with optional temporary TURN credentials, but there is no playable
-multiplayer yet.
+endpoints support opt-in private rooms, authenticated signaling and temporary
+TURN credentials. The normal entry remains solo-only; a separate local
+multiplayer application preview is described below. It is not a finished release.
 Shared Zod protocol modules compile under `dist-server/shared`; the executable
 is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
@@ -256,7 +256,7 @@ and matches lasting beyond ten minutes need real-relay acceptance under these
 limits. The 600-second maximum allocation lifetime is a refresh interval limit,
 not an absolute match-duration limit or a substitute for REST credential expiry.
 
-### Native peer transport (not connected to the game UI)
+### Native peer transport (opt-in development integration)
 
 `RtcPeer` implements the common transport interface using native browser WebRTC:
 host-authored offers, guest answers and generation-tagged trickle ICE. Candidates
@@ -650,8 +650,8 @@ Late confirmations, send pressure or a missed start deadline cancel that attempt
 rather than silently launching late. Losing readiness just as the barrier arrives
 requires an immediate shared pause. The clock can anchor to the acknowledged
 start time without counting the loading/countdown interval as gameplay.
-Native-browser startup is exercised separately; application loading/rendering and
-the gameplay controllers are not yet connected to this handshake.
+Native-browser startup is exercised separately and by the opt-in application
+preview below. The normal solo menu does not start this handshake.
 
 `replicaWorldFrame` now builds the shared renderer input from complete snapshots
 and verified tracks/cameras. It advances active bombs from their exact canonical
@@ -661,12 +661,13 @@ require explicit frozen combat presentation. The all-terrain scene fixture
 compares host and guest aircraft, bombs, cameras and resource counts. This is
 renderer integration, not a playable native network match.
 
-The lifecycle-owned `MatchController`, `HostGame` and `GuestGame` now connect
+The lifecycle-owned `MatchController`, `HostGame` and `GuestGame` connect
 prepared lobby ownership, acknowledged countdown, reliable initial checkpoints,
 rolling plan publication, release settlement and complete guest presentation.
 Native Chromium fixtures run Valley and Canyon matches through both finales.
-They supply prepared camera views rather than a live WebGL application; the
-normal menu, HUD, shared resume/recovery and multiplayer records remain unwired.
+Those controller fixtures supply prepared camera views rather than a live
+WebGL application. The application preview below adds real scene coverage;
+shared resume/recovery and multiplayer records remain unwired.
 This is not the two-computer Edge gameplay review checkpoint.
 
 Rolling course selection and transfer encoding run in a bounded dedicated Web
@@ -674,6 +675,53 @@ Worker. Imported tracks and camera samples preserve the authored numbers; the
 main thread never reruns candidate selection during a handoff. An unavailable
 worker, missing acknowledged coverage or lost clock synchronization explicitly
 holds the match rather than silently skipping simulation time.
+
+### Local multiplayer application preview
+
+`npm run build:multiplayer-preview` adds **`/multiplayer.html`** to the normal
+build. Serve that build with the existing, privately configured local Node room
+service. This command does not provision credentials, configure coturn, start a
+server, or deploy anything. Do not publish this development entry. A subsequent
+ordinary `npm run build` removes it; `/` has no multiplayer menu action.
+
+The preview reuses the actual application canvas, room/admission panels and
+lobby. Both players select ready, load both aircraft/terrain/effects, and complete
+the acknowledged countdown. The host authors the course and outcomes; the guest
+renders verified numeric plans. Both players have equally sized scores,
+cumulative misses, damage/result indicators and sticky assisted labels. The HUD
+and scene share an owned presentation snapshot, so an asynchronously advancing
+host cannot show an outcome ahead of its drawn aircraft/effects. Your identity,
+viewed aircraft, survivor spectating and release/bomb state are explicit.
+Lobby-selected assistance uses canonical first ground/water contact from your
+drawn pose and a projected overlay; it is hidden after release, while held and
+when spectating. Water never receives an on-target indicator.
+Space records the **actually drawn** flight time, not a newer controller frame.
+Survivor and finale frames use the existing combat timeline. Leave restores the
+solo menu and rendering loop without writing or clearing solo records/settings.
+
+The lobby retains a static image while signaling and UI processing continue.
+Scene prewarming draws otherwise hidden shader variants before readiness and
+restores their enabled states, including on cancellation. Resizing or changing
+local graphics redraws a static scene without advancing gameplay. Gameplay pumping is
+independent of frame submission. A callback gap within the existing 500 ms
+freshness bound is advanced in at most five 100 ms work steps; snapshots are
+timestamped at the simulation state they represent, not at the end of catch-up.
+Longer gaps and publication/coverage failures hold explicitly. These are safety
+bounds, not a promise that a software renderer or any particular GPU can meet them.
+
+**Incomplete:** holds are terminal in this preview. Shared resume, automatic
+recovery, speculative/reconciled local bombs, in-flight assistance changes,
+audio, results/records and rematch UI are subsequent steps. No multiplayer score
+is saved yet. This is not the full two-computer Windows Edge review checkpoint.
+
+The application browser cases use two isolated browser processes, Low graphics
+and a reduced test-only device scale for software-rendered CI. A complete Canyon
+match through both finales has passed, but other runs at both higher and reduced
+pixel counts hit clock/publication holds. These intermittent failures remain
+unresolved; smaller test pixels are not a performance fix or Edge acceptance.
+The ordinary build can
+run the tests without publishing the preview HTML: the test proxy serves the
+real application HTML at that path only for its two local clients.
 
 ### Local formation preview (not networked)
 

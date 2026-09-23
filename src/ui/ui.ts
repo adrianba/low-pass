@@ -12,6 +12,7 @@ export type Screen = 'loading' | 'menu' | 'playing' | 'ending' | 'paused' | 'ove
 export interface Actions {
   start(): void; pause(): void; resume(): void; menu(): void;
   settings(settings: Settings): boolean;
+  multiplayer?(): void;
 }
 
 export class UI {
@@ -30,7 +31,7 @@ export class UI {
     this.app = app;
     app.innerHTML = `
       <header class="masthead"><a class="wordmark" href="./" aria-label="Low Pass home"><span class="wing-icon">///</span> LOW PASS<span class="edition">FLIGHT LAB / 01</span></a>
-        <div class="session-label"><span class="live-dot"></span> SOLO TRAINING RANGE</div>
+        <div class="session-label"><span class="live-dot"></span> <span id="session-name">SOLO TRAINING RANGE</span></div>
       </header>
       <main id="panel" class="panel">
         <div class="eyebrow">KESTREL / PRECISION FLIGHT</div>
@@ -84,6 +85,11 @@ export class UI {
     this.get<HTMLInputElement>('#mute').checked = settings.muted;
     this.get<HTMLInputElement>('#volume').value = String(settings.volume * 100);
     this.get('#start').onclick = actions.start;
+    if (actions.multiplayer) {
+      const button = document.createElement('button');
+      button.id = 'private-flight'; button.className = 'secondary'; button.textContent = 'PRIVATE FLIGHT PREVIEW';
+      button.onclick = actions.multiplayer; this.get('#start-actions').append(button);
+    }
     this.get('#pause').onclick = actions.pause;
     this.get('#resume').onclick = actions.resume;
     this.get('#quit').onclick = actions.menu;

@@ -17,6 +17,7 @@
     "build:combat-preview": "node scripts/build-combat-preview.mjs",
     "build:connectivity-preview": "node scripts/build-connectivity-preview.mjs",
     "build:room-controls": "node scripts/build-room-controls.mjs",
+    "build:multiplayer-preview": "npm run build && node scripts/build-multiplayer-preview.mjs",
     "start:server": "node dist-server/server/index.js",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
