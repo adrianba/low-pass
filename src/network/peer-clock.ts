@@ -3,8 +3,8 @@ import type { MessageBody } from '../../shared/protocol/messages.js';
 export const CLOCK_LIMITS = Object.freeze({ samples: 16, pending: 8, sampleAgeMs: 5000, probeAgeMs: 2000,
   driftPpm: 1000, timestampErrorMs: 1, uncertaintyMs: 150 });
 export class ClockError extends Error {
-  constructor(readonly code: 'unsynchronized' | 'stale' | 'uncertain' | 'drift' | 'coverage' | 'invalid' | 'capacity') {
-    super(`Multiplayer clock unavailable: ${code}.`);
+  constructor(readonly code: 'unsynchronized' | 'stale' | 'uncertain' | 'drift' | 'coverage' | 'invalid' | 'capacity', detail?: string) {
+    super(`Multiplayer clock unavailable: ${code}${detail ? ` (${detail})` : ''}.`);
   }
 }
 interface Sample { lower: number; upper: number; at: number }
@@ -50,7 +50,7 @@ export class PeerClock {
     // Prefer a narrow, recent interval; averaging queued packets biases the offset.
     const best = fresh.reduce((a, b) => b.upper - b.lower <= a.upper - a.lower ? b : a);
     if (Math.max(...fresh.map(sample => sample.lower)) > Math.min(...fresh.map(sample => sample.upper))) {
-      throw new ClockError('drift');
+      throw new ClockError('drift', 'peer timing intervals do not overlap');
     }
     const uncertaintyMs = (best.upper - best.lower) / 2;
     if (uncertaintyMs > CLOCK_LIMITS.uncertaintyMs) throw new ClockError('uncertain');

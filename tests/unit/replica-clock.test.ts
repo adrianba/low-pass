@@ -70,6 +70,17 @@ describe('bounded peer-clock estimation', () => {
 });
 
 describe('bounded replica presentation clock', () => {
+  it('does not treat waiting at the new epoch floor as backwards clock drift', () => {
+    const peer = new PeerClock(); sample(peer, 0, 10, 140);
+    const clock = new ReplicaClock(peer), coverage = { startAt: 0, endAt: 20 };
+    clock.observe({ epoch: 1, at: stampAt(0), monotonicMs: 650, running: true }, 150);
+    expect(clock.frame(150, coverage)).toBe(0);
+    clock.observe({ epoch: 1, at: stampAt(0.12), monotonicMs: 770, running: true }, 270);
+    expect(clock.frame(270, coverage)).toBe(0);
+    clock.observe({ epoch: 1, at: stampAt(0.25), monotonicMs: 900, running: true }, 400);
+    expect(clock.frame(400, coverage)).toBeGreaterThan(0);
+    expect(clock.frame(410, coverage)).toBeLessThan(0.1);
+  });
   it('smooths small changes without rewinding and freezes paused epochs instead of accumulating elapsed wall time', () => {
     const peer = new PeerClock(); sample(peer, 1000, 10, 10);
     const clock = new ReplicaClock(peer), coverage = { startAt: 0, endAt: 20 };
