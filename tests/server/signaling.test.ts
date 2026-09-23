@@ -114,6 +114,23 @@ describe('authenticated room-scoped WebSocket signaling', () => {
     expect(await host.next('error')).toMatchObject({ code: 'invalid_message' });
   });
 
+  it('preserves an answered generation for late candidates after signaling-only reconnection', async () => {
+    const state = await setup(), host = await state.connect(state.host.capability), guest = await state.connect(state.guest.capability);
+    state.store.admit(state.host.capability, state.guest.room.participantId, true);
+    host.send({ type: 'offer', generation: 1, sdp: 'v=0\r\n' }); await guest.next('offer');
+    guest.send({ type: 'answer', generation: 1, sdp: 'v=0\r\n' }); await host.next('answer');
+    guest.ws.close(); await once(guest.ws, 'close');
+    await vi.waitFor(() => expect(state.signal.counts.leases).toBe(1));
+    const returned = await state.connect(state.guest.capability);
+    host.send({ type: 'ice', generation: 1, candidate: null });
+    expect(await returned.next('ice')).toMatchObject({ generation: 1, from: 'host' });
+    returned.send({ type: 'ice', generation: 1, candidate: null });
+    expect(await host.next('ice')).toMatchObject({ generation: 1, from: 'guest' });
+    host.send({ type: 'offer', generation: 2, sdp: 'v=0\r\n' });
+    expect(await returned.next('offer')).toMatchObject({ generation: 2 });
+    returned.send({ type: 'ice', generation: 1, candidate: null });
+    expect(await returned.next('error')).toMatchObject({ code: 'generation' });
+  });
   it('preserves a 15-second same-member recovery lease and invalidates stale negotiations on reconnection', async () => {
     const state = await setup(), host = await state.connect(state.host.capability);
     const guest = await state.connect(state.guest.capability);

@@ -19,7 +19,8 @@ type ManifestMessage = Extract<MessageBody, { type: 'course-manifest' }>;
 class CourseError extends Error {
   constructor(readonly code: string) { super(`Course setup failed: ${code}.`); }
 }
-export type MatchLink = Pick<PeerLink, 'status' | 'failure' | 'send' | 'drain' | 'diagnostics' | 'close' | 'epoch' | 'sessionId'>;
+export type MatchLink = Pick<PeerLink, 'status' | 'failure' | 'send' | 'drain' | 'diagnostics' | 'close' | 'epoch' | 'sessionId'>
+  & Partial<Pick<PeerLink, 'signalingState'>>;
 type CourseAuthor = typeof prepareHostCourse;
 interface PreparedBase {
   link: MatchLink; lobby: Lobby; course: ManifestMessage; epoch: number; inbox: TransportEvent[];

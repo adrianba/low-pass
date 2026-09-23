@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { roomService } from '../helpers/room-service.js';
 
+declare global { interface Window { interruptTestSignaling: () => void } }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${terrain} application plays on the real canvas and restores solo`, async ({ browser }, info) => {
   test.setTimeout(180_000);
@@ -17,6 +18,15 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
       await page.addInitScript(value => {
+        const sockets: WebSocket[] = [], NativeSocket = WebSocket;
+        globalThis.WebSocket = class extends NativeSocket {
+          constructor(url: string | URL, protocols?: string | string[]) { super(url, protocols); sockets.push(this); }
+        };
+        window.interruptTestSignaling = () => {
+          const socket = sockets.find(socket => socket.readyState === WebSocket.OPEN);
+          if (!socket) throw new Error('No active test signaling socket.');
+          socket.close(4000, 'test-only signaling interruption');
+        };
         const original = crypto.getRandomValues.bind(crypto);
         Object.defineProperty(crypto, 'getRandomValues', { value: (array: ArrayBufferView<ArrayBuffer>) => {
           original(array);
@@ -117,6 +127,10 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
     } else {
       await host.locator('#match-pause').click();
       for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
+      await guest.evaluate(() => window.interruptTestSignaling());
+      await Promise.all(pages.map(page => expect(page.locator('#match-network')).toBeVisible()));
+      await guest.screenshot({ path: info.outputPath('guest-signaling-recovery.png'), scale: 'css' });
+      await Promise.all(pages.map(page => expect(page.locator('#match-network')).toBeHidden()));
       const frozen = await host.locator('#multiplayer-app').getAttribute('data-time');
       await host.locator('#match-ready').click();
       await expect(guest.locator('#match-pause-readiness')).toContainText('Player 1: ready');

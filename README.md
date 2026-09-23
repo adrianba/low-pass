@@ -735,6 +735,12 @@ recovery, in-flight assistance changes,
 audio, results/records and rematch UI are subsequent steps. No multiplayer score
 is saved yet. This is not the full two-computer Windows Edge review checkpoint.
 
+A signaling-only interruption no longer destroys a healthy peer connection.
+The existing flight continues with a degraded-service warning while the same
+in-memory membership reconnects, within one fixed 15-second deadline. The native
+game channel is not replaced by this path. Expired or changed membership fails
+explicitly; failed-peer reconstruction and full match recovery remain unfinished.
+
 The application browser cases use two isolated browser processes, Low graphics
 and a reduced test-only device scale for software-rendered CI. A complete Canyon
 match through both finales has passed, but other runs at both higher and reduced

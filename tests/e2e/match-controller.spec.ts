@@ -17,7 +17,7 @@ test.beforeAll(async () => {
   for (const output of chunks) if (output.type === 'asset') assets.set('/' + output.fileName, output.source);
 });
 
-for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${terrain} lobby starts continuous play and streams next encounters`, async ({ browser }) => {
+for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${terrain} play survives signaling replacement and streams next encounters`, async ({ browser }) => {
   test.setTimeout(180_000);
   const server = await roomService();
   const store = server.service.rooms!.store;
@@ -51,6 +51,18 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${
       { timeout: 45_000 }).toEqual(expect.arrayContaining([
       expect.objectContaining({ phase: 'playing', issue: null, players: expect.any(Array) }),
     ]));
+    for (const affected of [[pages[0]!], [pages[1]!], pages]) {
+      const previous = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+      await Promise.all(affected.map(page => page.evaluate(() => window.matchFixture.interruptSignaling())));
+      await expect.poll(async () => {
+        const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+        if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
+        return reports.map((report, index) => ({ peerConnections: report.peerConnections, phase: report.phase,
+          signaling: report.signaling, sockets: report.signalingSockets - previous[index]!.signalingSockets }));
+      }, { timeout: 10_000 }).toEqual(pages.map(page => ({
+        peerConnections: 1, phase: 'playing', signaling: 'available', sockets: affected.includes(page) ? 1 : 0,
+      })));
+    }
     await expect.poll(async () => {
       const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
       if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));

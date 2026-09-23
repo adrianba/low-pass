@@ -186,7 +186,7 @@ export class SignalingService {
     if (!this.stopped && this.rooms.store.hasDigest(peer.digest)) {
       this.leases.set(peer.digest, { roomId: peer.member.roomId, until: this.now() + SIGNAL_LIMITS.recoveryMs });
       const negotiation = this.negotiations.get(peer.member.roomId);
-      if (negotiation) negotiation.state = 'idle';
+      if (negotiation?.state === 'offered') negotiation.state = 'idle';
     }
     this.presence(peer.member.roomId);
   }

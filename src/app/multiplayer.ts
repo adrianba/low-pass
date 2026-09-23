@@ -86,6 +86,7 @@ export class MultiplayerApp {
         <button id="match-ready" class="primary" disabled>I AM READY</button>
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
+      <div id="match-network" role="status" hidden></div>
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
     app.append(this.root);
@@ -199,6 +200,8 @@ export class MultiplayerApp {
       const match = this.match, next = match.display;
       if (this.root.dataset.phase !== match.phase) this.clearInput();
       this.root.dataset.phase = match.phase;
+      this.get('#match-network').hidden = !match.serviceWarning;
+      this.text('#match-network', match.serviceWarning ?? '');
       const pause = match.pauseState;
       this.get('#match-pause-card').hidden = !pause || match.phase === 'held';
       this.get('.release-panel').hidden = !!pause && match.phase !== 'held';

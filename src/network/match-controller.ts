@@ -93,6 +93,10 @@ export class MatchController {
   get phase(): MatchPhase { return this.phaseValue; }
   private get stopped(): boolean { return !this.active || this.phaseValue === 'held'; }
   get issue(): string | null { return this.issueValue; }
+  get serviceWarning(): string | null {
+    return this.prepared.link.signalingState === 'recovering'
+      ? 'Signaling reconnecting (up to 15s). The peer flight remains connected.' : null;
+  }
   get frame(): SharedWorldFrame | null { return this.frameValue; }
   get display(): MatchDisplay | null { return this.displayValue; }
   get inputIssue(): string | null { return this.inputIssueValue; }

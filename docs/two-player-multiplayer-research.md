@@ -1234,6 +1234,15 @@ retain their exact original flight-transfer dependencies after ordinary flight
 retirement, bounded independently of course history. These APIs do not themselves
 implement the 15-second reconnect watchdog or replace a native peer connection.
 
+Signaling-only interruption now has its own bounded recovery: a healthy native
+peer remains open while the same in-memory membership reauthenticates over a new
+WebSocket. The application displays a degraded-service warning. Retries and
+buffered signaling are bounded, the original 15-second deadline does not slide,
+and a changed/expired membership cannot silently recreate the room. The service
+retains an answered negotiation for late candidates while still invalidating an
+unfinished offer after disconnection. This does not yet replace a failed WebRTC
+connection or provide full match recovery.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

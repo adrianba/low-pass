@@ -5,6 +5,15 @@ import { MatchController } from '../../src/network/match-controller.js';
 import { DEFAULT_SETTINGS } from '../../src/storage/records.js';
 import { versions } from '../unit/protocol-fixtures.js';
 
+const sockets: WebSocket[] = [];
+let peerConnections = 0;
+const NativeSocket = WebSocket, NativePeer = RTCPeerConnection;
+globalThis.WebSocket = class extends NativeSocket {
+  constructor(url: string | URL, protocols?: string | string[]) { super(url, protocols); sockets.push(this); }
+};
+globalThis.RTCPeerConnection = class extends NativePeer {
+  constructor(configuration?: RTCConfiguration) { super(configuration); peerConnections++; }
+};
 let lobby: LobbyConnection | null = null, match: MatchController | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let busy = false, drops = 0;
@@ -41,6 +50,7 @@ const fixture = {
     const state = match?.host?.scheduler.session.snapshot();
     const replica = match?.guest?.replica.presentationState;
     return { phase: match?.phase ?? 'lobby', issue: setupError ?? match?.issue ?? null, drops, time: match?.frame?.time ?? 0,
+      peerConnections, signalingSockets: sockets.length, signaling: match?.prepared.link.signalingState ?? null,
       viewedSlot: match?.frame?.viewedSlot ?? null,
       destroyed: match?.frame?.aircraft.map(aircraft => aircraft.destroyed) ?? [],
       resources: match?.host?.counts ?? { verified: match?.guest?.replica.plans.count ?? 0 },
@@ -48,6 +58,11 @@ const fixture = {
         replica?.players.map(p => ({ score: p.score, misses: p.misses, eliminated: p.eliminated })) ?? [],
       sequence: match?.host?.scheduler.sequence ?? null,
       lobby: match ? null : await lobby?.report() ?? null };
+  },
+  interruptSignaling() {
+    const open = sockets.filter(socket => socket.readyState === WebSocket.OPEN);
+    if (open.length !== 1) throw new Error('Expected one active fixture signaling socket.');
+    open[0]!.close(4000, 'test-only signaling interruption');
   },
   close() { if (timer) clearInterval(timer); match?.close(); lobby?.close(); },
 };
