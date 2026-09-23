@@ -1170,6 +1170,17 @@ frame actually drawn rather than a fresher timer-generated frame. Verified,
 immutable combat plans and the controller's timeline are reused by the renderer
 instead of reparsing the same tracks every frame.
 
+Local drops now use one bounded speculative trajectory per player, launched
+immediately from the drawn pose/time even while a host pump or remote decision
+is pending. Its fixed-step positions and first contact match authoritative
+simulation for both slots on every terrain. The presentation removes the carried
+bomb and hides the speculative bomb at contact; it never creates a score, wreck,
+splash or combat cue. Accepted replicated state replaces it without a second
+bomb. Rejection removes it, reports the reason and permits a new keypress only
+if the current authoritative attempt remains legal. Controller tests cover
+150 ms acceptance and 900 ms rejection beyond the existing 750 ms grace, exact
+position reconciliation, retry and unchanged totals.
+
 Actual-canvas work exposed a distinction between the 100 ms simulation work
 budget and elapsed wall time. Bounded catch-up now preserves up to the existing
 500 ms freshness window in at most five work steps, with snapshots stamped at
@@ -1187,8 +1198,8 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-Shared resume/recovery, in-flight assistance changes, speculative bomb
-reconciliation, audio, records/results and rematch are not complete. The local
+Shared resume/recovery, in-flight assistance changes, audio, records/results
+and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
 

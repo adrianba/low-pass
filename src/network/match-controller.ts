@@ -15,6 +15,7 @@ import type { SendResult, TransportEvent } from './transport.js';
 import { FormationWorker } from './formation-worker-client.js';
 import { snapshotMatchDisplay } from './match-display.js';
 import type { MatchDisplay } from './match-display.js';
+import { LocalDrop } from '../rendering/local-drop.js';
 
 export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'held' | 'closed';
 
@@ -37,6 +38,10 @@ export class MatchController {
   private initialDeadline = Infinity;
   private frameValue: SharedWorldFrame | null = null;
   private displayValue: MatchDisplay | null = null;
+  private captured: MatchDisplay | null = null;
+  private localDrop: { flight: LocalDrop; input: number | null } | null = null;
+  private inputIssueValue: string | null = null;
+  private inputRevisionValue = 0;
   private anchorWall = -Infinity;
   private pendingRelease: { time: number; sequence: number } | null = null;
   private startedAt = 0;
@@ -68,6 +73,8 @@ export class MatchController {
   get issue(): string | null { return this.issueValue; }
   get frame(): SharedWorldFrame | null { return this.frameValue; }
   get display(): MatchDisplay | null { return this.displayValue; }
+  get inputIssue(): string | null { return this.inputIssueValue; }
+  get inputRevision(): number { return this.inputRevisionValue; }
   get host(): HostGame | null { return this.hostValue; }
   get guest(): GuestGame | null { return this.guestValue; }
   get timeline() { return this.hostValue?.timeline ?? this.guestValue?.combat ?? null; }
@@ -136,6 +143,8 @@ export class MatchController {
     } else {
       if (message.type === 'barrier' && message.reason === 'pause') throw new Error('The host paused the shared match.');
       await this.guestValue!.receive(message);
+      if (message.type === 'ack' && message.slot === 1 && message.inputSequence === this.localDrop?.input &&
+        !message.decision.accepted) this.rejectDrop(message.decision.reason);
       const anchor = this.guestValue!.replica.clockAnchor;
       if (anchor && anchor.monotonicMs > this.anchorWall) {
         this.replicaClock.observe(anchor, this.now()); this.anchorWall = anchor.monotonicMs;
@@ -178,14 +187,15 @@ export class MatchController {
     if (this.stopped) return;
     if (this.pendingRelease) {
       const input = this.pendingRelease; this.pendingRelease = null;
-      host.release(input.time, input.sequence);
+      const decision = host.release(input.time, input.sequence);
+      if (!decision.accepted) this.rejectDrop(decision.reason);
       await host.pump();
       if (this.stopped) return;
     }
     const now = this.now(), elapsed = Math.max(0, (now - this.lastFrameWall) / 1000);
     const time = session.status === 'over'
       ? Math.min(session.time + FINALE_DURATION, Math.max(session.time, this.frameValue?.time ?? session.time) + elapsed) : session.time;
-    this.frameValue = host.frame(time);
+    const frame = host.frame(time);
     const state = session.snapshot();
     const player = (slot: 0 | 1) => {
       const value = state.players[slot]!;
@@ -196,7 +206,7 @@ export class MatchController {
       return { score: value.score, misses: value.misses, assistance: value.assistance, assisted: value.assisted,
         eliminated: value.completion !== null, result: result ? { points: result.points, time: result.time } : null };
     };
-    this.displayValue = snapshotMatchDisplay(this.frameValue, 0, [player(0), player(1)], state.winner);
+    this.present(snapshotMatchDisplay(frame, 0, [player(0), player(1)], state.winner));
     this.phaseValue = session.status === 'over' ? time >= session.time + FINALE_DURATION ? 'over' : 'ending' : 'playing';
     this.lastFrameWall = now;
   }
@@ -213,18 +223,18 @@ export class MatchController {
     const time = state.status === 'over'
       ? Math.min(end + FINALE_DURATION, Math.max(end, this.frameValue?.time ?? end) + Math.max(0, (now - this.lastFrameWall) / 1000))
       : this.replicaClock.frame(now, { startAt: flights[0]!.startAt, endAt: flights.at(-1)!.handoffAt });
-    this.frameValue = guest.frame(time, this.prepared.course.manifest.seed);
+    const frame = guest.frame(time, this.prepared.course.manifest.seed);
     const displayed = guest.replica.presentationAt(time);
     const player = (slot: 0 | 1) => {
       const result = displayed.results.filter(result => result.slot === slot).sort((a, b) => b.time - a.time)[0];
       return { ...displayed.players[slot], result: result ? { points: result.points, time: result.time } : null };
     };
-    this.displayValue = snapshotMatchDisplay(this.frameValue, 1, [player(0), player(1)], displayed.winner);
+    this.present(snapshotMatchDisplay(frame, 1, [player(0), player(1)], displayed.winner));
     this.phaseValue = state.status === 'over' ? time >= end + FINALE_DURATION ? 'over' : 'ending' : 'playing';
     this.lastFrameWall = now;
   }
   release(displayed = this.frameValue): boolean {
-    if (this.phaseValue !== 'playing' || !displayed?.ready) return false;
+    if (this.phaseValue !== 'playing' || !displayed?.ready || this.localDrop) return false;
     if (this.hostValue) {
       if (this.pendingRelease || this.hostValue.player(0).completion) return false;
       const sequence = [...this.hostValue.scheduler.retainedSequences].reverse().find(sequence => {
@@ -233,17 +243,48 @@ export class MatchController {
       });
       if (sequence === undefined) return false;
       if (this.busy) {
-        this.pendingRelease = { time: displayed.time, sequence }; return true;
+        this.pendingRelease = { time: displayed.time, sequence };
+      } else {
+        const decision = this.hostValue.release(displayed.time, sequence);
+        if (!decision.accepted) { this.rejectDrop(decision.reason); return false; }
       }
-      return this.hostValue.release(displayed.time, sequence).accepted;
+      this.startDrop(displayed, null);
+      return true;
     }
-    return this.guestValue!.release(displayed);
+    if (!this.guestValue!.release(displayed)) return false;
+    this.startDrop(displayed, this.guestValue!.lastInputSequence);
+    return true;
+  }
+  private startDrop(frame: SharedWorldFrame, input: number | null) {
+    if (!this.captured) throw new Error('Local release has no captured presentation.');
+    this.inputIssueValue = null;
+    this.inputRevisionValue++;
+    this.localDrop = { flight: new LocalDrop(frame, this.captured.localSlot), input };
+    this.present(this.captured);
+  }
+  private rejectDrop(reason: string) {
+    this.inputIssueValue = `Release not accepted: ${reason.replaceAll('_', ' ')}.`;
+    this.inputRevisionValue++;
+    this.localDrop = null;
+    if (this.captured) this.present(this.captured);
+  }
+  private present(source: MatchDisplay) {
+    this.captured = source;
+    if (this.localDrop) {
+      const { slot, releasedAt } = this.localDrop.flight, player = source.players[slot];
+      if (source.frame.aircraft[slot].released || player.eliminated ||
+        player.result && player.result.time >= releasedAt) this.localDrop = null;
+    }
+    this.frameValue = this.localDrop ? this.localDrop.flight.frame(source.frame) : source.frame;
+    this.displayValue = this.frameValue === source.frame ? source : Object.freeze({ ...source, frame: this.frameValue });
   }
   hold(reason: string): void {
     if (!this.active || this.phaseValue === 'held') return;
     this.issueValue = reason; this.phaseValue = 'held';
     this.hostValue?.scheduler.session.pause();
     this.pendingRelease = null;
+    this.localDrop = null;
+    if (this.captured) this.present(this.captured);
     if (this.started) {
       this.send(this.hostValue ? { type: 'barrier', reason: 'pause', nextEpoch: this.prepared.link.epoch + 1,
         at: stampAt(this.hostValue.scheduler.session.time) } : { type: 'resync', reason: 'drift' });
@@ -253,6 +294,7 @@ export class MatchController {
     if (!this.active) return;
     this.active = false; this.phaseValue = 'closed';
     this.pendingRelease = null;
+    this.localDrop = null; this.captured = null; this.displayValue = null; this.frameValue = null;
     this.startup.close(); this.hostValue?.close(); this.guestValue?.close(); this.prepared.link.close(); this.inbox.length = 0;
   }
 }

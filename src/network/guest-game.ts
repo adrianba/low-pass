@@ -21,8 +21,10 @@ export class GuestGame {
   private readonly verifiedWaiting: Array<Extract<MessageBody, { type: 'transfer-ready' }>> = [];
   private lastInput = 0;
   private releasedSequence = -1;
+  private lastDecision: Extract<WireMessage, { type: 'ack' }>['decision'] | null = null;
   private closed = false;
   private displayed: { time: number; sequence: number; ready: boolean; reference: { id: string; digest: string } } | null = null;
+  get lastInputSequence(): number { return this.lastInput; }
   constructor(prepared: Pick<Extract<PreparedConnection, { role: 'guest' }>, 'formations' | 'course'>,
     readonly sessionId: string, readonly epoch: number, now: () => number,
     private readonly send: (body: MessageBody) => SendResult) {
@@ -54,6 +56,13 @@ export class GuestGame {
       this.replica.receive(message);
     } else if (message.type === 'ack') {
       if (message.slot === 1 && message.inputSequence > this.lastInput) throw new Error('Unknown local release acknowledgement.');
+      if (message.slot === 1 && message.inputSequence === this.lastInput) {
+        if (this.lastDecision && JSON.stringify(this.lastDecision) !== JSON.stringify(message.decision)) {
+          throw new Error('Conflicting local release acknowledgement.');
+        }
+        if (!this.lastDecision && !message.decision.accepted) this.releasedSequence--;
+        this.lastDecision = message.decision;
+      }
     } else throw new Error('Lifecycle traffic belongs to the match controller.');
   }
   private queue(body: MessageBody) {
@@ -104,6 +113,7 @@ export class GuestGame {
     this.queue({ type: 'command', slot: 1, inputSequence: ++this.lastInput,
       command: releaseIntent(displayed.sequence, displayed.reference, displayed.time) });
     this.releasedSequence = displayed.sequence;
+    this.lastDecision = null;
     displayed.ready = false;
     return true;
   }

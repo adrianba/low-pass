@@ -88,6 +88,29 @@ async function setup(terrain: TerrainTheme = 'green-valley', sampledAt?: (time: 
 }
 
 describe('host/guest gameplay stream ownership', () => {
+  it('permits a new keypress after a rejected local drop and rejects conflicting acknowledgements', async () => {
+    const state = await setup();
+    try {
+      await state.pump(); await state.pump();
+      const time = state.host.scheduler.plan().attempts[1].releaseAt;
+      await state.advance(time);
+      const displayed = state.guest.frame(time, 7);
+      state.host.scheduler.session.pause();
+      expect(state.guest.release(displayed)).toBe(true);
+      state.guest.pump(); await state.pump();
+      expect(state.sent.find(message => message.type === 'ack' && message.slot === 1))
+        .toMatchObject({ decision: { accepted: false, reason: 'paused' } });
+      expect(state.host.scheduler.session.resume().ok).toBe(true);
+      expect(state.guest.release(displayed)).toBe(true);
+      expect(state.guest.lastInputSequence).toBe(2);
+      state.guest.pump(); await state.pump();
+      const ack = state.sent.find(message => message.type === 'ack' && message.slot === 1 && message.inputSequence === 2)!;
+      expect(ack).toMatchObject({ decision: { accepted: true } });
+      await state.guest.receive(ack);
+      await expect(state.guest.receive({ ...base, type: 'ack', slot: 1, inputSequence: 2,
+        decision: { accepted: false, reason: 'paused' } })).rejects.toThrow('Conflicting');
+    } finally { state.host.close(); state.guest.close(); }
+  });
   it('timestamps catch-up snapshots at their represented state and releases the actually displayed guest frame', async () => {
     const state = await setup('green-valley', time => 10_000 + time * 1000);
     await state.pump(); await state.pump();

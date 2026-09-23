@@ -36,6 +36,7 @@ export class MultiplayerApp {
   private lastReport = -Infinity;
   private redraw = false;
   private renderedDisplay: MatchDisplay | null = null;
+  private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
   private animation = 0;
   private readonly prewarmAbort = new AbortController();
@@ -73,7 +74,7 @@ export class MultiplayerApp {
         <div id="match-reticle" class="impact-reticle" role="img" aria-label="Your predicted bomb impact" hidden><span>IMPACT</span></div>
         <div class="flight-tape"><span id="match-speed"></span><span id="match-pass"></span></div>
         <div class="release-panel"><span id="match-view"></span><strong id="match-release"></strong>
-          <span id="match-assistance"></span><span id="match-phase" role="status"></span></div>
+          <span id="match-input" role="status"></span><span id="match-assistance"></span><span id="match-phase" role="status"></span></div>
         <button id="match-pause" class="pause-button">HOLD MATCH / ESC</button>
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
@@ -182,7 +183,8 @@ export class MultiplayerApp {
       if (!this.active) return;
       const match = this.match, next = match.display;
       this.root.dataset.phase = match.phase;
-      if (next && this.effects && (this.redraw || next.frame.time > this.lastPaint || match.phase !== this.lastPaintPhase)) {
+      if (next && this.effects && (this.redraw || match.inputRevision !== this.lastInputRevision ||
+        next.frame.time > this.lastPaint || match.phase !== this.lastPaintPhase)) {
         const frame = snapshotSharedFrame({ ...next.frame, effectPositions: this.effects.effectPositions(),
           prediction: match.phase === 'playing' ? matchPrediction(next) : null });
         this.world.updateSharedFrame(frame);
@@ -191,6 +193,7 @@ export class MultiplayerApp {
         this.lastPaint = frame.time;
         this.lastPaintPhase = match.phase;
         this.renderedDisplay = { ...next, frame };
+        this.lastInputRevision = match.inputRevision;
         this.redraw = false;
       }
       const display = this.renderedDisplay, frame = display?.frame;
@@ -214,6 +217,7 @@ export class MultiplayerApp {
         ? display.winner === 'draw' ? 'MATCH DRAW' : `PLAYER ${Number(display.winner) + 1} WINS`
         : match.phase === 'held' ? 'MATCH HELD' : display ? matchReleaseStatus(display) : 'STAND BY');
       this.text('#match-assistance', display ? display.players[display.localSlot].assistance ? 'YOUR IMPACT ASSIST: ON' : 'YOUR IMPACT ASSIST: OFF' : '');
+      this.text('#match-input', match.inputIssue ?? '');
       this.text('#match-speed', frame ? `SPD ${Math.round(speedOf(frame.aircraft[frame.viewedSlot].pose))}` : '');
       this.text('#match-pass', frame ? `${TERRAIN_THEMES[frame.terrain].label} / PASS ${frame.targets.at(-1)!.id}` : '');
       const reticle = this.get('#match-reticle');

@@ -76,7 +76,11 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
       }, { timeout: 20_000 }).toBe('SPACE TO RELEASE');
       if (terrain === 'green-valley' && page === guest) await expect(page.locator('#match-reticle')).toBeVisible();
       else await expect(page.locator('#match-reticle')).toBeHidden();
-      await page.keyboard.press('Space');
+      await page.keyboard.down('Space');
+      await page.keyboard.down('Space');
+      await page.keyboard.up('Space');
+      await expect(page.locator('#match-release')).toHaveText('BOMB IN FLIGHT');
+      await expect(page.locator('#match-input')).toHaveText('');
       await expect(page.locator('#match-reticle')).toBeHidden();
     }
     await expect.poll(async () => {

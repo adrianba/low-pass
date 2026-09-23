@@ -696,6 +696,13 @@ Lobby-selected assistance uses canonical first ground/water contact from your
 drawn pose and a projected overlay; it is hidden after release, while held and
 when spectating. Water never receives an on-target indicator.
 Space records the **actually drawn** flight time, not a newer controller frame.
+Local release immediately removes the carried bomb and draws one speculative
+trajectory, including while host work or the remote acknowledgement is pending.
+It uses the same fixed-step physics and first contact as the host. Contact only
+hides that speculative bomb: scores, wrecks, splashes and combat effects still
+require authoritative results. Accepted state replaces the prediction; rejection
+removes it, shows the reason and permits a fresh keypress if the attempt remains
+legal. Key repeat never creates another drop.
 Survivor and finale frames use the existing combat timeline. Leave restores the
 solo menu and rendering loop without writing or clearing solo records/settings.
 
@@ -710,7 +717,7 @@ Longer gaps and publication/coverage failures hold explicitly. These are safety
 bounds, not a promise that a software renderer or any particular GPU can meet them.
 
 **Incomplete:** holds are terminal in this preview. Shared resume, automatic
-recovery, speculative/reconciled local bombs, in-flight assistance changes,
+recovery, in-flight assistance changes,
 audio, results/records and rematch UI are subsequent steps. No multiplayer score
 is saved yet. This is not the full two-computer Windows Edge review checkpoint.
 
