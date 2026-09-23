@@ -18,7 +18,7 @@ test.beforeAll(async () => {
   for (const output of chunks) if (output.type === 'asset') assets.set('/' + output.fileName, output.source);
 });
 
-for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${terrain} play recovers peers, survivor and finale without resetting the match`, async ({ browser }) => {
+for (const [terrain, first] of [['green-valley', 0], ['river-canyon', 1]] as const) test(`native ${terrain} play recovers peers, survivor and finale without resetting the match`, async ({ browser }) => {
   test.setTimeout(210_000);
   const server = await roomService();
   const store = server.service.rooms!.store;
@@ -42,8 +42,8 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${
       await page.goto(server.origin + '/rtc-fixture');
     }
     const members = [host, guest].map(value => ({ capability: value.capability, room: store.status(value.capability) }));
-    await Promise.all(pages.map((page, index) => page.evaluate(({ member, terrain }) => window.matchFixture.connect(member, terrain),
-      { member: members[index]!, terrain })));
+    await Promise.all(pages.map((page, index) => page.evaluate(({ member, terrain, first }) => window.matchFixture.connect(member, terrain, first),
+      { member: members[index]!, terrain, first })));
     await expect.poll(async () => {
       const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
       if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
@@ -88,11 +88,15 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`native ${
       const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
       if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
       return reports.map(report => ({ drops: report.drops, scores: report.players.map(player => player.score > 0), later: report.time > 42 }));
-    }, { timeout: 70_000 }).toEqual([{ drops: 2, scores: [true, true], later: true }, { drops: 3, scores: [true, true], later: true }]);
+    }, { timeout: 70_000 }).toEqual(pages.map((_page, slot) => ({ drops: slot === first ? 2 : 3, scores: [true, true], later: true })));
     await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
       window.matchFixture.report().then(report => report.players.filter(player => player.eliminated).length)))),
     { timeout: 90_000 }).toEqual([1, 1]);
     await recover([pages[0]!]);
+    const survivor = first === 0 ? 1 : 0;
+    await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
+      window.matchFixture.report().then(report => report.viewedSlot)))), { timeout: 10_000 }).toEqual([survivor, survivor]);
+    expect(await pages[first]!.evaluate(() => window.matchFixture.release())).toBe(false);
     await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
       window.matchFixture.report().then(report => report.phase)))), { timeout: 40_000 }).toEqual(['ending', 'ending']);
     await recover(pages);

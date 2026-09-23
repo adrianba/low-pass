@@ -1,17 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { FormationScheduler } from '../../src/game/multiplayer/scheduler.js';
 import { snapshotMatchDisplay } from '../../src/network/match-display.js';
-import type { MatchPlayerDisplay } from '../../src/network/match-display.js';
+import type { MatchDisplay, MatchPlayerDisplay } from '../../src/network/match-display.js';
 import { hostWorldFrame } from '../../src/rendering/host-frame.js';
 import { snapshotSharedFrame } from '../../src/rendering/shared-frame.js';
 import { predictImpact } from '../../src/simulation/ballistics.js';
 import { launchFrom } from '../../src/simulation/pose.js';
 import { surfaceFor } from '../../src/terrain/surface.js';
-import { matchPlayerStatus, matchPrediction, matchReleaseStatus } from '../../src/ui/match-hud.js';
+import { matchParticipationStatus, matchPlayerStatus, matchPrediction, matchReleaseStatus, matchViewStatus } from '../../src/ui/match-hud.js';
 
 const player = (): MatchPlayerDisplay => ({ score: 0, misses: 0, assistance: true, assisted: true, eliminated: false, result: null });
 
 describe('frame-aligned multiplayer instruments', () => {
+  it.each([0, 1] as const)('distinguishes player %i finale, spectator and survivor without switching their slot', localSlot => {
+    const scheduler = new FormationScheduler('green-valley', 7);
+    const frame = hostWorldFrame(scheduler, localSlot), other = localSlot === 0 ? 1 : 0;
+    const players: [MatchPlayerDisplay, MatchPlayerDisplay] = [player(), player()];
+    players[localSlot] = { ...player(), misses: 3, eliminated: true };
+    const finale = snapshotMatchDisplay(frame, localSlot, players, null);
+    expect(matchViewStatus(finale)).toBe(`FINAL FLIGHT / PLAYER ${localSlot + 1}`);
+    expect(matchParticipationStatus(finale)).toContain(`Following Player ${other + 1} after your finale.`);
+    const spectator: MatchDisplay = { ...finale, frame: { ...frame, viewedSlot: other } };
+    expect(matchViewStatus(spectator)).toBe(`SPECTATING / PLAYER ${other + 1}`);
+    expect(matchParticipationStatus(spectator).includes('Keep this tab open')).toBe(localSlot === 0);
+    expect(matchPrediction(spectator)).toBeNull();
+    const survivor: MatchDisplay = { ...spectator, localSlot: other };
+    expect(matchViewStatus(survivor)).toBe(`YOUR AIRCRAFT / PLAYER ${other + 1}`);
+    expect(matchParticipationStatus(survivor)).toContain('Your flight continues on the same path.');
+    const ended = { ...spectator, players: [players[localSlot], players[localSlot]] as const };
+    expect(matchViewStatus(ended)).toBe(`FINAL FLIGHT / PLAYER ${other + 1}`);
+    expect(matchReleaseStatus(ended)).toBe('FINAL FLIGHT');
+    expect(matchParticipationStatus(ended)).toBe('Both flights have ended.');
+  });
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('predicts canonical %s contact from each drawn aircraft pose', terrain => {
     const scheduler = new FormationScheduler(terrain, 7), plan = scheduler.plan();
     for (const slot of [0, 1] as const) {

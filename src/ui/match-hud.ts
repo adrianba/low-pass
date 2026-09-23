@@ -18,10 +18,26 @@ export function matchPrediction(display: MatchDisplay): SharedWorldFrame['predic
 
 export function matchReleaseStatus(display: MatchDisplay): string {
   const { frame, localSlot, players } = display;
+  if (players.every(player => player.eliminated)) return 'FINAL FLIGHT';
   if (players[localSlot].eliminated) return frame.viewedSlot === localSlot ? 'AIRCRAFT LOST' : 'SPECTATING';
   if (frame.aircraft[localSlot].bomb) return 'BOMB IN FLIGHT';
   if (frame.aircraft[localSlot].released) return 'BOMB RELEASED';
   return frame.ready && frame.viewedSlot === localSlot ? 'SPACE TO RELEASE' : 'STAND BY';
+}
+
+export function matchViewStatus({ frame, localSlot, players }: MatchDisplay): string {
+  const label = players[frame.viewedSlot].eliminated ? 'FINAL FLIGHT'
+    : frame.viewedSlot === localSlot ? 'YOUR AIRCRAFT' : 'SPECTATING';
+  return `${label} / PLAYER ${frame.viewedSlot + 1}`;
+}
+
+export function matchParticipationStatus({ frame, localSlot, players }: MatchDisplay): string {
+  if (players.every(player => player.eliminated)) return 'Both flights have ended.';
+  const other = localSlot === 0 ? 1 : 0;
+  if (!players[localSlot].eliminated) return players[other].eliminated
+    ? `Player ${other + 1} is out. Your flight continues on the same path.` : '';
+  const next = frame.viewedSlot === localSlot ? `Following Player ${other + 1} after your finale.` : `Watch Player ${other + 1} finish their flight.`;
+  return `You are out. ${next}${localSlot === 0 ? ' Keep this tab open: it still runs the shared flight.' : ''}`;
 }
 
 export function matchPlayerStatus(player: MatchPlayerDisplay, time: number): string {

@@ -1270,6 +1270,15 @@ repeatability issue remains open, now with explicit clock diagnostics. No timing
 geometry or scoring threshold was relaxed. These checks are not full-game TURN,
 sustained renderer, Windows Edge or production acceptance.
 
+The spectator HUD now distinguishes the local finale, survivor chase and dual
+finales. A surviving player keeps the same slot/path; eliminated players cannot
+release or display an impact reticle, but retain shared pause/readiness. The host
+sees an explicit keep-tab-open instruction after elimination because authority
+does not migrate. Native matches cover either death order and rejected spectator
+input. A complete real-canvas Valley match demonstrates the host spectating an
+independently scoring guest through the guest's final encounter and winning result,
+followed by returning to solo with the original solo records unchanged.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

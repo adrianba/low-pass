@@ -14,7 +14,7 @@ import { FormationPlayback } from '../network/replica-plans.js';
 import { formationData } from '../network/formation-data.js';
 import { hash } from '../simulation/math.js';
 import type { MatchDisplay } from '../network/match-display.js';
-import { matchPlayerStatus, matchPrediction, matchReleaseStatus } from '../ui/match-hud.js';
+import { matchParticipationStatus, matchPlayerStatus, matchPrediction, matchReleaseStatus, matchViewStatus } from '../ui/match-hud.js';
 import { TERRAIN_THEMES } from '../config/terrain.js';
 import { speedOf } from '../simulation/flight-track.js';
 import { FORMATION_PROFILE } from '../config/multiplayer.js';
@@ -76,6 +76,7 @@ export class MultiplayerApp {
         <div id="match-reticle" class="impact-reticle" role="img" aria-label="Your predicted bomb impact" hidden><span>IMPACT</span></div>
         <div class="flight-tape"><span id="match-speed"></span><span id="match-pass"></span></div>
         <div class="release-panel"><span id="match-view"></span><strong id="match-release"></strong>
+          <span id="match-participation" role="status"></span>
           <span id="match-input" role="status"></span><span id="match-assistance"></span><span id="match-phase" role="status"></span></div>
         <button id="match-pause" class="pause-button">PAUSE MATCH / ESC</button>
       </div>
@@ -253,8 +254,8 @@ export class MultiplayerApp {
         this.text(`#match-assist-${slot}`, player.assisted ? 'ASSISTED' : 'UNASSISTED');
         this.text(`#match-status-${slot}`, matchPlayerStatus(player, display.frame.time));
       }
-      this.text('#match-view', frame && display
-        ? `${frame.viewedSlot === display.localSlot ? 'YOUR AIRCRAFT' : 'SPECTATING'} / PLAYER ${frame.viewedSlot + 1}` : '');
+      this.text('#match-view', display ? matchViewStatus(display) : '');
+      this.text('#match-participation', display ? matchParticipationStatus(display) : '');
       this.text('#match-phase', match.phase === 'countdown' ? `Starting in ${Math.ceil((pause?.remainingMs ?? match.startup.remainingMs ?? 0) / 1000)}`
         : match.phase === 'over' ? 'MATCH COMPLETE / NO RECORDS SAVED IN THIS PREVIEW' : match.phase.toUpperCase());
       this.text('#match-release', match.phase === 'over' && display

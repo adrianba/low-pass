@@ -692,6 +692,11 @@ cumulative misses, damage/result indicators and sticky assisted labels. The HUD
 and scene share an owned presentation snapshot, so an asynchronously advancing
 host cannot show an outcome ahead of its drawn aircraft/effects. Your identity,
 viewed aircraft, survivor spectating and release/bomb state are explicit.
+After your own finale the camera follows the survivor without changing their
+slot or flight path. Eliminated players cannot release bombs; both retain pause
+and readiness controls. An eliminated host must keep its tab open because it
+still runs the shared simulation. Once both players are out, the HUD identifies
+the remaining finale rather than calling a destroyed aircraft a survivor.
 Lobby-selected assistance uses canonical first ground/water contact from your
 drawn pose and a projected overlay; it is hidden after release, while held and
 when spectating. Water never receives an on-target indicator.

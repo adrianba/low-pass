@@ -19,6 +19,7 @@ globalThis.RTCPeerConnection = class extends NativePeer {
 let lobby: LobbyConnection | null = null, match: MatchController | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let busy = false, drops = 0;
+let firstEliminated: 0 | 1 = 0;
 let setupError: string | null = null;
 async function tick() {
   if (busy) return;
@@ -32,11 +33,12 @@ async function tick() {
     if (match.phase !== 'playing' || !match.frame) return;
     const slot = match.prepared.role === 'host' ? 0 : 1;
     const flight = match.host?.scheduler.plan() ?? match.guest!.replica.plans.at(match.frame.time).toData();
-    if (drops < (slot === 0 ? 2 : 3) && match.frame.time >= flight.attempts[slot].releaseAt && match.frame.ready && match.release()) drops++;
+    if (drops < (slot === firstEliminated ? 2 : 3) && match.frame.time >= flight.attempts[slot].releaseAt && match.frame.ready && match.release()) drops++;
   } finally { busy = false; }
 }
 const fixture = {
-  async connect(member: RoomMembership, terrain: TerrainTheme) {
+  async connect(member: RoomMembership, terrain: TerrainTheme, first: 0 | 1 = 0) {
+    firstEliminated = first;
     lobby = await LobbyConnection.connect(member, { ...DEFAULT_SETTINGS, terrain, assist: false }, 'direct', 7, versions, prepared => {
       try {
         match = new MatchController(prepared, (_slot, view, range) => ({ ...view, range, aspect: 1.15 }), undefined,
@@ -75,6 +77,7 @@ const fixture = {
     latest.close();
   },
   ready() { match!.setReady(true); },
+  release() { return match!.release(); },
   close() { if (timer) clearInterval(timer); match?.close(); lobby?.close(); },
 };
 declare global { interface Window { matchFixture: typeof fixture } }

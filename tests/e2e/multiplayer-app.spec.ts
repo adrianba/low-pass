@@ -209,6 +209,30 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
         }, [...image]);
       }).toBeGreaterThan(64);
       await guest.screenshot({ path: info.outputPath('guest-compact-instruments.png'), scale: 'css' });
+      for (const page of pages) await page.locator('#match-ready').click();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 10_000 });
+      await expect(guest.locator('#match-reticle.on-target')).toBeVisible({ timeout: 45_000 });
+      await guest.keyboard.press('Space');
+      await expect.poll(async () => Number(await guest.locator('#match-score-1').innerText()), { timeout: 10_000 }).toBeGreaterThan(0);
+      await expect.poll(async () => {
+        const phase = await host.locator('#multiplayer-app').getAttribute('data-phase');
+        if (phase === 'paused' || phase === 'pausing' || phase === 'held' || phase === 'recovering') {
+          throw new Error(JSON.stringify({ phase, warnings, reason: await host.locator('#match-pause-reason').textContent() }));
+        }
+        return host.locator('#match-view').textContent();
+      }, { timeout: 80_000 }).toBe('SPECTATING / PLAYER 2');
+      await expect(host.locator('#match-participation')).toContainText('Keep this tab open');
+      await expect(guest.locator('#match-participation')).toContainText('Your flight continues on the same path.');
+      await host.keyboard.press('Space');
+      await expect(host.locator('#match-release')).toHaveText('SPECTATING');
+      await expect(host.locator('#match-reticle')).toBeHidden();
+      await host.screenshot({ path: info.outputPath('host-spectating-survivor.png'), scale: 'css' });
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 45_000 });
+      await expect(host.locator('#match-score-0')).toHaveText('0');
+      for (const page of pages) {
+        await expect(page.locator('#match-release')).toHaveText('PLAYER 2 WINS');
+        await expect(page.locator('#match-participation')).toHaveText('Both flights have ended.');
+      }
     }
     expect(errors.filter(error => !error.startsWith('Private match held:'))).toEqual([]);
     await host.getByRole('button', { name: 'LEAVE PRIVATE FLIGHT', exact: true }).click();
