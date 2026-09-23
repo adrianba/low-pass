@@ -64,6 +64,9 @@ export class ReplicaPlans {
   private pinned = new Set<string>();
   private retired = new Set<string>();
   get count(): number { return this.values.size; }
+  inventory(): Reference[] {
+    return [...this.values.values()].filter(value => this.has(value.reference)).map(value => ({ ...value.reference }));
+  }
   has(value: Reference): boolean {
     const stored = this.values.get(value.id);
     return stored?.reference.digest === value.digest && (stored.playback !== null || stored.combat !== null);

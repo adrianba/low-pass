@@ -1,6 +1,6 @@
-import { combat, counter, identifier } from '../../shared/protocol/game.js';
+import { combat, counter, identifier, reference } from '../../shared/protocol/game.js';
 import type { Snapshot } from '../../shared/protocol/game.js';
-import { PROTOCOL_VERSION } from '../../shared/protocol/limits.js';
+import { MAX_RECOVERY_REFERENCES, PROTOCOL_VERSION } from '../../shared/protocol/limits.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { formationSampler, HostCombat, spectatorSlot } from '../game/multiplayer/host-combat.js';
 import type { CombatViewProvider } from '../game/multiplayer/host-combat.js';
@@ -22,6 +22,7 @@ import type { AuthoredFlight, FormationAuthoring } from './formation-worker-clie
 type Reference = { id: string; digest: string };
 type Pending = { transfer: OutgoingTransfer; index: number; sent: boolean; acknowledged: boolean };
 type Flight = Pending & { data: FormationData };
+type Effect = Pending & { dependencies: Flight[] };
 export const GAME_STREAM_LIMITS = Object.freeze({ work: 16, advanceSeconds: 0.1, snapshotMs: 50, stallMs: 400 });
 export type HostGameWait = 'publication' | 'coverage' | 'backpressure' | 'not_open' | null;
 
@@ -33,7 +34,7 @@ export class HostGame {
   readonly timeline = new CombatTimeline();
   readonly scheduler: PreparedHostCourse['scheduler'];
   private readonly flights = new Map<number, Flight>();
-  private readonly effects = new Map<string, Pending>();
+  private readonly effects = new Map<string, Effect>();
   private commit: Extract<MessageBody, { type: 'plan-commit' }> | null;
   private checkpoint: Pending | null = null;
   private checkpointState: Snapshot | null = null;
@@ -73,18 +74,53 @@ export class HostGame {
   get waitReason(): HostGameWait { return this.wait; }
   get epoch(): number { return this.journal.authority.epoch; }
   get ready(): boolean { return this.initialized && !this.closed; }
-  get counts() { return { flights: this.flights.size, effects: this.effects.size, pendingEvents: this.journal.pendingCount }; }
+  get counts() { return { flights: this.flights.size, effects: this.effects.size,
+    retainedFlights: this.retainedFlights().length, pendingEvents: this.journal.pendingCount }; }
   advanceEpoch(nextEpoch: number, resume: boolean): void {
     if (this.closed || this.busy || !this.ready || !this.journal.canSnapshot || this.commit) {
       throw new Error('Publish and settle the current host epoch before replacing its checkpoint.');
     }
     if (resume) this.journal.authority.resume(nextEpoch);
     else this.journal.authority.advancePausedEpoch(nextEpoch);
-    this.checkpoint = null; this.checkpointState = null; this.checkpointCommitted = false;
-    this.initialized = false; this.lastSnapshot = -Infinity; this.wait = null;
+    this.resetCheckpoint();
     for (const pending of [...this.flights.values(), ...this.effects.values()]) if (!pending.acknowledged) {
       pending.index = -1; pending.sent = false;
     }
+  }
+  recoverEpoch(nextEpoch: number, inventory: readonly Reference[]): void {
+    if (this.closed || this.busy || inventory.length > MAX_RECOVERY_REFERENCES) throw new Error('Invalid host recovery boundary.');
+    const known = new Map(inventory.map(value => { const ref = reference.parse(value); return [ref.id, ref.digest]; }));
+    if (known.size !== inventory.length) throw new Error('Duplicate recovery cache reference.');
+    const retained = [...this.retainedFlights(), ...this.effects.values()];
+    for (const value of retained) {
+      const offer = value.transfer.offer, digest = known.get(offer.id);
+      if (digest !== undefined && digest !== offer.digest) throw new Error('Recovery cache identity conflict.');
+    }
+    this.journal.authority.advancePausedEpoch(nextEpoch);
+    this.resetCheckpoint();
+    this.commit = { type: 'plan-commit', planRevision: this.plans.revision, plans: [...this.plans.references.values()] };
+    const needed = new Set([...this.effects.values()].filter(value => !known.has(value.transfer.offer.id))
+      .flatMap(value => value.dependencies.map(flight => flight.transfer.offer.id)));
+    for (const value of retained) {
+      const offer = value.transfer.offer;
+      const liveFlight = [...this.flights.values()].some(flight => flight.transfer.offer.id === offer.id);
+      const acknowledged = known.get(offer.id) === offer.digest ||
+        offer.kind === 'formation' && !liveFlight && !needed.has(offer.id);
+      value.acknowledged = value.sent = acknowledged;
+      value.index = acknowledged ? value.transfer.chunks.length : -1;
+      if (acknowledged && offer.kind === 'combat') this.journal.acknowledgeEffect({ id: offer.id, digest: offer.digest });
+      if (acknowledged && liveFlight) this.plans.acknowledge({ id: offer.id, digest: offer.digest });
+    }
+  }
+  private resetCheckpoint() {
+    this.checkpoint = null; this.checkpointState = null; this.checkpointCommitted = false;
+    this.initialized = false; this.lastSnapshot = -Infinity; this.wait = null;
+  }
+  private retainedFlights(): Flight[] {
+    const values = new Map([...this.flights.values()].map(value => [value.transfer.offer.id, value]));
+    for (const effect of this.effects.values()) for (const flight of effect.dependencies) values.set(flight.transfer.offer.id, flight);
+    if (values.size > 10) throw new Error('Frozen effect flight retention budget exhausted.');
+    return [...values.values()];
   }
   private readNow() {
     const time = this.now();
@@ -100,13 +136,15 @@ export class HostGame {
       this.journal.receiveRelease('guest', message, receivedAt); return;
     }
     const ref = message.transfer;
-    const flight = [...this.flights.values()].find(value => value.transfer.offer.id === ref.id);
+    const flight = this.retainedFlights().find(value => value.transfer.offer.id === ref.id);
     const checkpoint = this.checkpoint?.transfer.offer.id === ref.id ? this.checkpoint : null;
     const pending = checkpoint ?? flight ?? this.effects.get(ref.id);
     if (!pending?.sent || pending.transfer.offer.digest !== ref.digest) throw new Error('Unexpected or premature game transfer acknowledgement.');
     if (pending.acknowledged) return;
     pending.acknowledged = true;
-    if (flight) this.plans.acknowledge(ref);
+    if (flight) {
+      if (this.flights.has(flight.data.sequence)) this.plans.acknowledge(ref);
+    }
     else if (!checkpoint) this.journal.acknowledgeEffect(ref);
   }
   release(displayedAt: number, sequence = this.scheduler.sequence, receivedAt?: number) {
@@ -174,7 +212,14 @@ export class HostGame {
       const transfer = await createTransfer({ kind: 'combat', data: ready ? compact : combat.parse(data) }, `combat-${data.id}`);
       if (this.closed) return;
       if (this.effects.size >= 8) throw new Error('Host combat transfer budget exhausted.');
-      this.effects.set(transfer.offer.id, { transfer, index: -1, sent: false, acknowledged: false });
+      const dependencies = ready ? combatDependencies(compact).map(ref => {
+        const flight = [...this.flights.values()].find(value =>
+          value.transfer.offer.id === ref.id && value.transfer.offer.digest === ref.digest);
+        if (!flight) throw new Error('Missing original combat transfer dependency.');
+        return flight;
+      }) : [];
+      this.effects.set(transfer.offer.id, { transfer, dependencies, index: -1, sent: false, acknowledged: false });
+      this.retainedFlights();
       this.journal.prepareOutcome(event.eventId, { reference: { id: transfer.offer.id, digest: transfer.offer.digest }, data });
     }
   }
@@ -225,7 +270,7 @@ export class HostGame {
     if (publication.blocked === 'not_open') return publication.blocked;
     // Small outcome payloads precede large rolling flights on the paced reliable channel.
     for (let work = 0; work < GAME_STREAM_LIMITS.work; work++) {
-      const pending = [...(this.checkpoint ? [this.checkpoint] : []), ...this.effects.values(), ...this.flights.values()].find(value => !value.sent);
+      const pending = [...(this.checkpoint ? [this.checkpoint] : []), ...this.effects.values(), ...this.retainedFlights()].find(value => !value.sent);
       if (!pending) break;
       const body: MessageBody = pending.index < 0 ? { type: 'transfer-offer', transfer: pending.transfer.offer }
         : { type: 'transfer-chunk', ...pending.transfer.chunks[pending.index]! };
@@ -238,6 +283,10 @@ export class HostGame {
       if (!this.checkpoint!.acknowledged) return held ?? 'publication';
       const offer = this.checkpoint!.transfer.offer;
       const state = this.checkpointState!;
+      const pending = [...this.flights.values(), ...this.effects.values()];
+      if (this.retainedFlights().some(flight => !this.flights.has(flight.data.sequence) && !flight.acknowledged)) return held ?? 'publication';
+      if ([...state.plans, ...state.effects].some(ref => !pending.some(value =>
+        value.acknowledged && value.transfer.offer.id === ref.id && value.transfer.offer.digest === ref.digest))) return held ?? 'publication';
       const result = this.send({ type: 'checkpoint-commit', checkpoint: { id: offer.id, digest: offer.digest },
         planRevision: state.planRevision, eventSequence: state.eventSequence, snapshotSequence: 0 });
       if (!result.ok) return result.reason;

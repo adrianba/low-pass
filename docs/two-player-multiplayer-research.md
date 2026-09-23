@@ -1224,6 +1224,16 @@ conservative visibility requirement survives differently sized windows and later
 supported resizes without changing flight geometry or reauthoring frozen effects.
 Connection replacement and the bounded reconnect/abort UI are still subsequent work.
 
+The recovery stream foundation now preserves the same journal even when its last
+outcome was not acknowledged or only part of an event group arrived. A verified
+cache inventory avoids resending known plans/effects; the recovered checkpoint
+waits for any missing required payloads. A replacement connection can establish a
+newer authority epoch despite a lost earlier barrier or interrupted checkpoint.
+Guest score/completion regression checks remain active. Active frozen effects
+retain their exact original flight-transfer dependencies after ordinary flight
+retirement, bounded independently of course history. These APIs do not themselves
+implement the 15-second reconnect watchdog or replace a native peer connection.
+
 ### 7.1 Do not score by arrival time
 
 At the top speed, a 100 ms input delay corresponds to approximately 35 world

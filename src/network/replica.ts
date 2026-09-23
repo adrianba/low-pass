@@ -40,14 +40,18 @@ export class GuestReplica {
   }
   get epoch(): number { return this.epochValue; }
   advanceEpoch(nextEpoch: number): void {
-    counter.parse(nextEpoch);
     if (nextEpoch !== this.epoch + 1 || !this.stateValue || this.needsCheckpoint) throw new Error('Replica epoch requires a restored prior state.');
+    this.recoverEpoch(nextEpoch);
+  }
+  recoverEpoch(nextEpoch: number): void {
+    counter.parse(nextEpoch);
+    if (nextEpoch <= this.epoch) throw new Error('Recovery requires a newer authority epoch.');
     this.epochValue = nextEpoch; this.gate = new DeliveryBarrier(this.sessionId, nextEpoch);
     this.controls.length = 0; this.pendingSnapshot = null; this.checkpoint = undefined;
     // A verified pause may rewind presentation, never authoritative scores or completed outcomes.
     this.history.length = 0; this.presentationValue = null; this.anchor = null;
     this.needsCheckpoint = true; this.waiting = 'initial_state';
-    this.plans.pin([...this.stateValue.plans, ...this.stateValue.effects]);
+    this.plans.pin(this.stateValue ? [...this.stateValue.plans, ...this.stateValue.effects] : []);
   }
   get state(): Snapshot | null { return this.stateValue ? structuredClone(this.stateValue) : null; }
   get presentationState(): Snapshot | null { return this.presentationValue ? structuredClone(this.presentationValue) : null; }

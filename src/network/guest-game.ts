@@ -38,6 +38,14 @@ export class GuestGame {
   advanceEpoch(nextEpoch: number): void {
     if (this.closed) throw new Error('Guest game is closed.');
     this.replica.advanceEpoch(nextEpoch);
+    this.resetEpoch();
+  }
+  recoverEpoch(nextEpoch: number): void {
+    if (this.closed) throw new Error('Guest game is closed.');
+    this.replica.recoverEpoch(nextEpoch);
+    this.resetEpoch();
+  }
+  private resetEpoch(): void {
     this.receiver.reset(); this.outgoing.length = 0; this.verifiedWaiting.length = 0;
     this.displayed = null; this.releasedSequence = -1; this.lastReleaseInput = null;
     this.lastDecision = null; this.resetPresentation = true;

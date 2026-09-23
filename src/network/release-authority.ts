@@ -37,6 +37,7 @@ export class ReleaseAuthority {
     this.readNow();
   }
   get epoch(): number { return this.currentEpoch; }
+  get pauseState() { return this.phase; }
   get lastInputs(): [number, number] { return [...this.highest]; }
   get rememberedDecisions(): number { return this.decisions[0].size + this.decisions[1].size; }
   private readNow(): number {
