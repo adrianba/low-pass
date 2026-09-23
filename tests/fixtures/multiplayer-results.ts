@@ -17,7 +17,11 @@ function render() {
   store.observe([{ score: 100, misses: 3, eliminated: true, assisted: false },
     { score: select.value === 'draw' ? 100 : 200, misses: incomplete ? 2 : 3, eliminated: !incomplete, assisted: true }]);
   if (incomplete) store.finish('connection_lost');
-  new MultiplayerResultsPanel(root, store).render(store.current!, incomplete ? '<b>Connection unavailable.</b>' : null);
+  const panel = new MultiplayerResultsPanel(root, store, ready => panel.renderRematch({
+    ready: [ready, false], selectedReady: ready, canReady: true, remainingMs: null,
+  }));
+  panel.render(store.current!, incomplete ? '<b>Connection unavailable.</b>' : null);
+  panel.renderRematch(incomplete ? null : { ready: [false, false], selectedReady: false, canReady: true, remainingMs: null });
 }
 select.onchange = render;
 render();

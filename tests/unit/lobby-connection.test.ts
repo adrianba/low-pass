@@ -21,6 +21,29 @@ const authored = (revision = 0): PreparedHostCourse => ({
 });
 
 describe('connection preparation ownership', () => {
+  it('adopts the unread new-epoch inbox and requires fresh lobby readiness after a rematch', async () => {
+    vi.useFakeTimers();
+    const host = new LobbyConnection({
+      status: 'open', failure: null, epoch: 8, sessionId: base.sessionId,
+      send: () => ({ ok: true }), drain: () => [], close() {},
+      diagnostics: async () => ({ status: 'open' as const, failure: null, peer: null }),
+    }, DEFAULT_SETTINGS, versions, 7, 'host', async () => authored());
+    connections.push(host);
+    const state = host.lobby.state!;
+    const received: TransportEvent[] = [{ type: 'message', receivedAt: performance.now(), channel: 'control',
+      message: { ...base, epoch: 8, type: 'lobby-state', state } }];
+    const connection = new LobbyConnection({
+      status: 'open', failure: null, epoch: 8, sessionId: base.sessionId,
+      send: () => ({ ok: true }), drain: () => [], close() {},
+      diagnostics: async () => ({ status: 'open' as const, failure: null, peer: null }),
+    }, DEFAULT_SETTINGS, versions, 7, 'guest', undefined, undefined, received);
+    connections.push(connection);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(connection.lobby.state?.ready).toEqual([false, false]);
+    expect(connection.lobby.state?.terrain).toBe('green-valley');
+    expect(connection.lobby.canReady).toBe(false);
+    expect((await connection.report()).error).toBeNull();
+  });
   it('does not report an obsolete asynchronous failure after intentional closure', async () => {
     vi.useFakeTimers();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});

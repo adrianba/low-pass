@@ -31,6 +31,10 @@ interface Recovery {
   drop: LocalDrop | null;
 }
 type PauseNotice = Extract<MessageBody, { type: 'pause-state' }>;
+type RematchNotice = Extract<MessageBody, { type: 'rematch-state' }>;
+export interface RematchState {
+  ready: [boolean, boolean]; selectedReady: boolean; canReady: boolean; remainingMs: number | null;
+}
 export type PauseReason = PauseNotice['reason'];
 type StartupMessage = Extract<WireMessage, { type: 'loading-ready' | 'start-offer' | 'start-ready' | 'start-commit' | 'start-cancel' | 'barrier' }>;
 function startupMessage(value: WireMessage): value is StartupMessage {
@@ -74,6 +78,10 @@ export class MatchController {
   private available = true;
   private preflightPause: PauseReason | null = null;
   private resumeHandshake: StartHandshake | null = null;
+  private rematchHandshake: StartHandshake | null = null;
+  private rematchNotice: RematchNotice | null = null;
+  private rematchDirty = false;
+  private rematchStarted: StartedSession | null = null;
   private peerPauseInput = 0;
   private recovery: Recovery | null = null;
   private lastPeerAt: number;
@@ -94,7 +102,7 @@ export class MatchController {
       } catch (error) { author.close(); throw error; }
     } else this.guestValue = new GuestGame(prepared, prepared.link.sessionId, prepared.epoch + 1, now, this.send);
   }
-  private handshake(epoch: number, at: Stamp): StartHandshake {
+  private handshake(epoch: number, at: Stamp, purpose: 'resume' | 'rematch' = 'resume'): StartHandshake {
     return new StartHandshake(this.prepared.role, this.prepared.link.sessionId, epoch, at, this.now, () => {
       try {
         const estimate = this.peerClock.estimate(this.now());
@@ -103,7 +111,7 @@ export class MatchController {
         if (!(error instanceof ClockError)) throw error;
         return null;
       }
-    });
+    }, purpose);
   }
   get phase(): MatchPhase { return this.phaseValue; }
   private get stopped(): boolean { return !this.active || this.phaseValue === 'held'; }
@@ -135,6 +143,59 @@ export class MatchController {
       canReady: !this.recovery && this.available && this.loaded && (!this.started || this.pauseRestored) && notice.stage === 'ready' && !this.stopped,
       remainingMs: (this.started ? this.resumeHandshake : this.startup)?.remainingMs ?? null } : null;
   }
+  get rematchState(): RematchState | null {
+    if (this.phaseValue !== 'over' || this.stopped || !this.rematchHandshake || this.rematchStarted) return null;
+    return {
+      ready: [...(this.rematchNotice?.ready ?? [false, false])],
+      selectedReady: this.rematchHandshake.readiness.local,
+      canReady: this.available && this.loaded && this.prepared.link.status === 'open',
+      remainingMs: this.rematchHandshake.remainingMs,
+    };
+  }
+  setRematchReady(ready: boolean): void {
+    if (!this.rematchState || ready && !this.rematchState.canReady) throw new Error('This match is not ready for another lobby.');
+    this.rematchHandshake!.setReady(ready, this.hostValue?.epoch ?? this.guestValue!.epoch);
+    this.updateRematchReadiness();
+  }
+  private ensureRematch(): void {
+    if (this.rematchHandshake || this.pauseRequested || this.stopped) return;
+    const over = this.hostValue ? this.hostValue.scheduler.session.status === 'over'
+      : this.guestValue?.replica.presentationState?.status === 'over';
+    if (!over) return;
+    this.rematchHandshake = this.handshake(this.hostValue?.epoch ?? this.guestValue!.epoch, stampAt(0), 'rematch');
+    if (this.hostValue) {
+      this.rematchNotice = { type: 'rematch-state', update: 0, ready: [false, false] };
+      this.rematchDirty = true;
+    }
+  }
+  private updateRematchReadiness(): void {
+    if (!this.hostValue || !this.rematchHandshake || !this.rematchNotice) return;
+    const { local, peer } = this.rematchHandshake.readiness, previous = this.rematchNotice;
+    if (previous.ready[0] === local && previous.ready[1] === peer) return;
+    this.rematchNotice = { ...previous, update: previous.update + 1, ready: [local, peer] };
+    this.rematchDirty = true;
+  }
+  private updateRematch(): void {
+    if (!this.rematchHandshake) return;
+    this.updateRematchReadiness();
+    if (this.rematchDirty) {
+      if (!this.send(this.rematchNotice!).ok) return;
+      this.rematchDirty = false;
+    }
+    this.rematchHandshake.pump(this.send);
+    this.rematchStarted = this.rematchHandshake.takeStart();
+  }
+  private clearRematch(): void {
+    this.rematchHandshake?.close(); this.rematchHandshake = null;
+    this.rematchNotice = null; this.rematchDirty = false; this.rematchStarted = null;
+  }
+  takeRematch(): { link: MatchLink; inbox: TransportEvent[] } | null {
+    if (!this.rematchStarted || !this.active) return null;
+    if (this.prepared.link.epoch !== this.rematchStarted.epoch) throw new Error('Rematch ownership requires the new transport epoch.');
+    const next = { link: this.prepared.link, inbox: this.inbox.splice(0) };
+    this.dispose(false);
+    return next;
+  }
   setAvailable(available: boolean, reason: PauseReason = 'focus'): void {
     this.available = available;
     if (!available) this.pause(reason);
@@ -155,7 +216,7 @@ export class MatchController {
     return this.prepared.link.send(body);
   };
   async update(): Promise<void> {
-    if (!this.active || this.busy || this.phaseValue === 'held') return;
+    if (!this.active || this.busy || this.phaseValue === 'held' || this.rematchStarted) return;
     this.busy = true;
     try {
       if (this.recovery) { await this.updateRecovery(); return; }
@@ -165,7 +226,7 @@ export class MatchController {
         if (event.type === 'message') await this.receive(event.message, event.receivedAt);
         else if (event.type === 'failed' && RECOVERABLE.has(event.code) && this.reconnect) { this.beginRecovery(); return; }
         else if (event.type === 'rejected' || event.type === 'failed') throw new Error(`Match transport failed: ${event.code}.`);
-        if (this.stopped) return;
+        if (this.stopped || this.rematchStarted) return;
       }
       if (this.stopped) return;
       if (this.prepared.link.status !== 'open') {
@@ -197,6 +258,8 @@ export class MatchController {
       if (this.pauseRequested) { await this.updatePause(); return; }
       if (this.hostValue) await this.updateHost();
       else if (this.guestValue) this.updateGuest();
+      this.ensureRematch();
+      if (this.phaseValue === 'over') this.updateRematch();
     } catch (error) {
       if (this.stopped) return;
       if (error instanceof ClockError && this.started && !this.pauseRequested) {
@@ -232,7 +295,7 @@ export class MatchController {
   private beginRecovery(): void {
     if (this.recovery || this.stopped) return;
     if (!this.reconnect) { this.hold('The peer connection could not be recovered.'); return; }
-    this.startup.close(); this.resumeHandshake?.close(); this.resumeHandshake = null;
+    this.startup.close(); this.resumeHandshake?.close(); this.resumeHandshake = null; this.clearRematch();
     this.selectedReady = false; this.pauseRequested = true; this.pauseRestored = false;
     const host = this.hostValue, session = host?.scheduler.session;
     if (host && session) {
@@ -407,6 +470,20 @@ export class MatchController {
       if (start) this.resume(start);
       return;
     }
+    this.ensureRematch();
+    if (message.type === 'rematch-state' && this.guestValue) {
+      const previous = this.rematchNotice;
+      if (previous && (message.update < previous.update || message.update === previous.update &&
+        message.ready.some((ready, slot) => ready !== previous.ready[slot]))) throw new Error('Rematch readiness regressed.');
+      this.rematchNotice = { type: 'rematch-state', update: message.update, ready: [...message.ready] };
+      return;
+    }
+    if (this.rematchHandshake && startupMessage(message)) {
+      this.rematchHandshake.receive(message);
+      this.updateRematchReadiness();
+      this.rematchStarted = this.rematchHandshake.takeStart();
+      return;
+    }
     if (this.hostValue) {
       if (message.type === 'resync') { this.pause('clock', 1); return; }
       if (message.type !== 'command' && message.type !== 'transfer-ready') throw new Error('Unexpected host gameplay message.');
@@ -439,7 +516,11 @@ export class MatchController {
     if (started.requiresPause || !this.available) this.pause('clock');
   }
   pause(reason: PauseReason = 'manual', by: 0 | 1 = this.hostValue ? 0 : 1): void {
-    if (this.stopped || this.phaseValue === 'over') return;
+    if (this.stopped) return;
+    if (this.phaseValue === 'over') {
+      if (this.rematchState?.selectedReady) this.setRematchReady(false);
+      return;
+    }
     if (!this.started) {
       this.preflightPause = reason;
       this.prepared.lobby.setReady(false);
@@ -454,6 +535,7 @@ export class MatchController {
       }
       return;
     }
+    this.clearRematch();
     this.pauseRequested = true; this.phaseValue = 'pausing'; this.selectedReady = false;
     this.pauseRestored = false; this.pauseSealed = false; this.pauseTimeout = this.now() + 15_000;
     if (this.hostValue) {
@@ -467,6 +549,7 @@ export class MatchController {
     } else this.guestValue!.requestPause(reason);
   }
   private receivePause(message: Extract<WireMessage, { type: 'pause-state' }>) {
+    this.clearRematch();
     const previous = this.pauseNotice;
     if (previous && (message.barrier !== previous.barrier || compareStamps(message.at, previous.at) !== 0 ||
       message.update < previous.update)) throw new Error('Shared pause state regressed.');
@@ -683,7 +766,7 @@ export class MatchController {
   }
   hold(reason: string, notify = true, terminal: NonNullable<MatchController['terminalReason']> = 'error'): void {
     if (!this.active || this.phaseValue === 'held') return;
-    this.issueValue = reason; this.phaseValue = 'held'; this.terminalReasonValue = terminal;
+    this.issueValue = reason; this.phaseValue = 'held'; this.terminalReasonValue = terminal; this.clearRematch();
     if (this.recovery) {
       clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
     }
@@ -697,13 +780,18 @@ export class MatchController {
   close(): void {
     if (!this.active) return;
     if (this.started && this.phaseValue !== 'held') this.send({ type: 'match-abort', reason: 'left' });
+    this.dispose(true);
+  }
+  private dispose(closeLink: boolean): void {
     this.active = false; this.phaseValue = 'closed';
     if (this.recovery) {
       clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
     }
     this.pendingRelease = null;
     this.localDrop = null; this.captured = null; this.displayValue = null; this.frameValue = null;
-    this.startup.close(); this.resumeHandshake?.close();
-    this.hostValue?.close(); this.guestValue?.close(); this.prepared.link.close(); this.inbox.length = 0;
+    this.startup.close(); this.resumeHandshake?.close(); this.clearRematch();
+    this.hostValue?.close(); this.guestValue?.close();
+    if (closeLink) this.prepared.link.close();
+    this.inbox.length = 0;
   }
 }

@@ -1198,7 +1198,17 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-In-flight assistance changes, audio and rematch are not complete. The local
+Completed matches can now return both admitted players to a fresh lobby without
+closing their healthy WebRTC/signaling connection. Both explicitly confirm a
+cancelable three-second countdown; the host commits a distinct rematch epoch.
+The new lobby clears readiness, verifies a newly authored course and requires
+both players to ready again. Local preferences survive, but scores, damage,
+presentation/input caches and course owners do not. New game epochs distinguish
+record identities. A canceled/late readiness transition never starts gameplay
+without that new lobby's explicit readiness. Terminal connection failures still
+require leaving, not an attempted handoff of a closed link.
+
+In-flight assistance changes and audio are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
 

@@ -22,11 +22,17 @@ test('bounded multiplayer results display winner, draw, incomplete and empty rec
   await expect(page.locator('#match-result-title')).toHaveText('PLAYER 2 WINS');
   await expect(page.locator('#match-result-title')).toBeFocused();
   await expect(page.getByRole('table', { name: 'Private match player results' })).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('#match-rematch-ready')).toBeInViewport({ ratio: 1 });
+  await page.locator('#match-rematch-ready').focus(); await page.keyboard.press('Space');
+  await expect(page.locator('#match-rematch-status')).toContainText('Player 1: ready');
+  await page.keyboard.press('Space');
+  await expect(page.locator('#match-rematch-status')).toContainText('Player 1: not ready');
   await page.screenshot({ path: info.outputPath('complete-results.png') });
   await page.getByLabel('Fixture outcome').selectOption('draw');
   await expect(page.locator('#match-result-title')).toHaveText('MATCH DRAW');
   await page.getByLabel('Fixture outcome').selectOption('incomplete');
   await expect(page.locator('#match-result-title')).toHaveText('MATCH INCOMPLETE');
+  await expect(page.locator('#match-rematch')).toBeHidden();
   await expect(page.locator('#match-result-description')).toContainText('No winner.');
   await expect(page.locator('#match-result-players tr[data-slot="1"]')).toContainText('200');
   await expect(page.locator('#match-result-players tr[data-slot="1"]')).toContainText('UNFINISHED');

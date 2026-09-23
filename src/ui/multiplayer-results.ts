@@ -1,5 +1,6 @@
 import { TERRAIN_THEMES } from '../config/terrain.js';
 import type { MultiplayerRecordStore, MultiplayerSummary } from '../storage/multiplayer-records.js';
+import type { RematchState } from '../network/match-controller.js';
 
 const reasons = {
   left: 'A player left the private flight.',
@@ -53,16 +54,26 @@ export class MultiplayerRecordsPanel {
 export class MultiplayerResultsPanel {
   private readonly history: MultiplayerRecordsPanel;
   private shown = '';
-  constructor(private readonly root: HTMLElement, store: MultiplayerRecordStore) {
+  private selectedReady = false;
+  constructor(private readonly root: HTMLElement, store: MultiplayerRecordStore, onRematch?: (ready: boolean) => void) {
     root.innerHTML = `<h2 id="match-result-title" tabindex="-1"></h2>
       <p id="match-result-description" role="status"></p>
       <p id="match-result-error" role="alert" hidden></p>
       <table aria-label="Private match player results"><thead><tr>
         <th scope="col">Player</th><th scope="col">Score</th><th scope="col">Flight</th><th scope="col">Assistance</th>
       </tr></thead><tbody id="match-result-players"></tbody></table>
+      <div id="match-rematch" hidden>
+        <p id="match-rematch-status" role="status"></p>
+        <button id="match-rematch-ready" class="primary">NEW MATCH LOBBY</button>
+        <p class="fine-print">Both players confirm to return to the lobby. The host can then change terrain; both must ready again before flying.</p>
+      </div>
       <div id="match-result-records"></div>`;
     root.setAttribute('aria-labelledby', 'match-result-title');
     this.history = new MultiplayerRecordsPanel(this.get('#match-result-records'), store);
+    this.get('#match-rematch-ready').onclick = () => {
+      if (!onRematch) throw new Error('Rematch controls are not connected.');
+      onRematch(!this.selectedReady);
+    };
   }
   private get<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.root.querySelector<T>(selector);
@@ -93,5 +104,19 @@ export class MultiplayerResultsPanel {
     this.root.hidden = false;
     if (!this.shown) { this.root.scrollTop = 0; this.get('#match-result-title').focus({ preventScroll: true }); }
     this.shown = key;
+  }
+  renderRematch(state: RematchState | null): void {
+    this.get('#match-rematch').hidden = !state;
+    if (!state) return;
+    this.selectedReady = state.selectedReady;
+    this.get('#match-rematch-status').textContent = state.remainingMs === null
+      ? `Player 1: ${state.ready[0] ? 'ready' : 'not ready'} / Player 2: ${state.ready[1] ? 'ready' : 'not ready'}`
+      : `Returning to the lobby in ${Math.ceil(state.remainingMs / 1000)}...`;
+    this.get<HTMLButtonElement>('#match-rematch-ready').disabled = !state.canReady && !state.selectedReady;
+    this.get('#match-rematch-ready').textContent = state.selectedReady ? 'CANCEL MY READINESS' : 'NEW MATCH LOBBY';
+  }
+  reset(): void {
+    this.shown = ''; this.selectedReady = false; this.root.hidden = true;
+    this.renderRematch(null);
   }
 }

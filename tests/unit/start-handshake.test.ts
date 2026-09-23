@@ -7,11 +7,11 @@ import { SessionClock } from '../../src/network/session-clock.js';
 import { base } from './protocol-fixtures.js';
 
 type Incoming = Parameters<StartHandshake['receive']>[0];
-function setup() {
+function setup(purpose: 'resume' | 'rematch' = 'resume') {
   const wall = { time: 0, clock: true };
-  const host = new StartHandshake('host', base.sessionId, 7, { tick: 0, fraction: 0 }, () => wall.time, () => null);
+  const host = new StartHandshake('host', base.sessionId, 7, { tick: 0, fraction: 0 }, () => wall.time, () => null, purpose);
   const guest = new StartHandshake('guest', base.sessionId, 7, { tick: 0, fraction: 0 }, () => wall.time + 80_000,
-    () => wall.clock ? { lower: wall.time - 10, upper: wall.time + 10 } : null);
+    () => wall.clock ? { lower: wall.time - 10, upper: wall.time + 10 } : null, purpose);
   const incoming: { host: Incoming[]; guest: Incoming[] } = { host: [], guest: [] };
   const sent: WireMessage[] = [];
   let sequence = 1;
@@ -31,6 +31,23 @@ function setup() {
 }
 
 describe('acknowledged match startup', () => {
+  it('uses an independently acknowledged rematch barrier and rejects a resume barrier in its place', () => {
+    const state = setup('rematch');
+    state.host.setReady(true, 7); state.round();
+    expect(state.host.phase).toBe('waiting');
+    state.guest.setReady(true, 7); state.round();
+    state.wall.time = 2000; state.guest.setReady(false, 7); state.round();
+    expect(state.host.phase).toBe('waiting');
+    state.wall.time = 4000; state.guest.setReady(true, 7); state.round();
+    state.wall.time = 7000; state.pump('host');
+    const barrier = state.sent.find(message => message.type === 'barrier')!;
+    expect(barrier).toMatchObject({ reason: 'rematch', epoch: 7, nextEpoch: 8, at: { tick: 0, fraction: 0 } });
+    expect(() => state.guest.receive({ ...barrier, type: 'barrier', nextEpoch: 8, at: { tick: 0, fraction: 0 }, reason: 'resume' }))
+      .toThrow('acknowledged countdown');
+    state.drain('guest');
+    expect(state.host.takeStart()?.epoch).toBe(8); expect(state.guest.takeStart()?.epoch).toBe(8);
+    expect(() => encodeMessage({ ...base, sender: 'guest', type: 'rematch-state', update: 0, ready: [false, false] })).toThrow('role');
+  });
   it('waits for both loaded revisions and an acknowledged countdown, independent of local clock offsets', () => {
     const state = setup();
     const clock = new SessionClock(() => state.wall.time, 0, 7);

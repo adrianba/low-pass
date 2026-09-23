@@ -735,8 +735,17 @@ authoring uses each aircraft's real camera pose at the narrowest supported aspec
 so the host's wider window cannot hide a guest missile launch. Resizing requires
 fresh readiness; unsupported sizes disable it until corrected.
 
-**Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes,
-audio and rematch UI are subsequent steps.
+After a completed match, both players can choose **NEW MATCH LOBBY**. An
+acknowledged, cancelable three-second countdown transfers the existing admitted
+peer connection to a fresh lobby in a new epoch; it does not send leave or open
+another room. The host can change terrain, and both must choose ready again after
+the new course is verified. Scores, damage, effects, cameras and input start
+fresh, while local multiplayer preferences and earlier match records remain.
+Each new match has a distinct record identity. Incomplete/disconnected matches
+cannot rematch through a closed connection; return to the menu instead.
+
+**Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes
+and audio are subsequent steps.
 This is not the full two-computer Windows Edge review checkpoint.
 
 Confirmed eliminations are saved immediately, before their visual finales, under

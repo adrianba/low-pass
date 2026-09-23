@@ -5,6 +5,7 @@ import { roomService } from '../helpers/room-service.js';
 declare global { interface Window {
   interruptTestSignaling: () => void; interruptTestPeer: () => void;
   readTestPhases: () => Array<{ phase: string; time: string; at: number }>;
+  readTestConnections: () => number;
 } }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 test('multiplayer storage failure warns without blocking room controls or changing solo data', async ({ browser }) => {
@@ -42,7 +43,7 @@ test('multiplayer storage failure warns without blocking room controls or changi
 });
 for (const [terrain, interrupted] of [['green-valley', false], ['river-canyon', false], ['green-valley', true]] as const)
 test(`opt-in ${terrain} application plays on the real canvas and restores solo${interrupted ? ' after survivor disconnect' : ''}`, async ({ browser }, info) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const server = await roomService({ multiplayerApp: true });
   const guestBrowser = await browser.browserType().launch({ channel: info.project.name === 'edge' ? 'msedge' : 'chromium' });
   const contexts = await Promise.all([browser.newContext({ viewport: { width: 840, height: 732 }, deviceScaleFactor: 0.25 }),
@@ -72,6 +73,7 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['data-phase'] }));
         const sockets: WebSocket[] = [], NativeSocket = WebSocket;
         const peers: RTCPeerConnection[] = [], NativePeer = RTCPeerConnection;
+        window.readTestConnections = () => peers.length;
         globalThis.RTCPeerConnection = class extends NativePeer {
           constructor(configuration?: RTCConfiguration) { super(configuration); peers.push(this); }
         };
@@ -344,6 +346,54 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
     }
     await (interrupted ? host : guest).screenshot({ path: info.outputPath('multiplayer-results.png'), scale: 'css' });
     expect(errors.filter(error => !error.startsWith('Private match held:'))).toEqual([]);
+    if (terrain === 'green-valley' && !interrupted) {
+      const connections = await Promise.all(pages.map(page => page.evaluate(() => window.readTestConnections())));
+      await host.locator('#match-rematch-ready').click();
+      await expect(guest.locator('#match-rematch-status')).toContainText('Player 1: ready');
+      await expect(guest.locator('#match-rematch-ready')).toBeInViewport({ ratio: 1 });
+      await guest.locator('#match-rematch-ready').click();
+      await expect(guest.locator('#match-rematch-status')).toContainText('Returning to the lobby');
+      await guest.keyboard.press('Escape');
+      await expect(host.locator('#match-rematch-status')).toContainText('Player 2: not ready');
+      await guest.locator('#match-rematch-ready').click();
+      for (const page of pages) {
+        await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'lobby', { timeout: 10_000 });
+        await expect(page.locator('#match-results')).toBeHidden();
+        await expect(page.getByLabel('I am ready')).not.toBeChecked();
+        await expect(page.getByLabel('My graphics quality')).toHaveValue('low');
+        await expect(page.getByLabel('Mute my sound')).toBeChecked();
+      }
+      await host.getByLabel('Shared terrain').selectOption('desert');
+      await guest.getByLabel('My impact assistance', { exact: true }).uncheck();
+      for (const page of pages) {
+        await expect(page.getByLabel('Shared terrain')).toHaveValue('desert');
+        await expect(page.getByLabel('I am ready')).toBeEnabled({ timeout: 45_000 });
+      }
+      for (const page of pages) await page.getByLabel('I am ready').check();
+      for (const page of pages) {
+        await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 15_000 });
+        await expect(page.locator('#match-score-0')).toHaveText('0');
+        await expect(page.locator('#match-score-1')).toHaveText('0');
+        await expect(page.locator('#match-misses-0')).toHaveText('0 / 3 MISSES');
+        await expect(page.locator('#match-assist-1')).toHaveText('UNASSISTED');
+      }
+      expect(await Promise.all(pages.map(page => page.evaluate(() => window.readTestConnections())))).toEqual(connections);
+      for (const page of pages) {
+        await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 80_000 });
+        await expect(page.locator('#match-result-title')).toHaveText('MATCH DRAW');
+        await expect(page.locator('#match-result-title')).toBeFocused();
+        const saved = await page.evaluate(() => {
+          const value = JSON.parse(localStorage.getItem('low-pass.multiplayer-records.v1')!);
+          return { scores: value.scores.length, matches: value.matches.map((match: { matchId: string; status: string }) =>
+            ({ id: match.matchId, status: match.status })) };
+        });
+        expect(saved.scores).toBe(4); expect(saved.matches).toHaveLength(2);
+        expect(new Set(saved.matches.map((match: { id: string }) => match.id)).size).toBe(2);
+        expect(saved.matches.every((match: { status: string }) => match.status === 'complete')).toBe(true);
+      }
+      await guest.screenshot({ path: info.outputPath('rematch-draw-results.png'), scale: 'css' });
+      expect(errors).toEqual([]);
+    }
     await host.getByRole('button', { name: 'RETURN TO MENU', exact: true }).focus();
     await host.keyboard.press('Space');
     await expect(host.locator('#multiplayer-app')).toHaveCount(0);

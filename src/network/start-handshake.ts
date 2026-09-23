@@ -26,7 +26,8 @@ export class StartHandshake {
   private started: StartedSession | null = null;
   private readonly at: Stamp;
   constructor(readonly role: Role, private readonly sessionId: string, readonly epoch: number, at: Stamp,
-    private readonly now: () => number, private readonly hostTime: () => { lower: number; upper: number } | null) {
+    private readonly now: () => number, private readonly hostTime: () => { lower: number; upper: number } | null,
+    private readonly purpose: 'resume' | 'rematch' = 'resume') {
     identifier.parse(sessionId); counter.parse(epoch);
     if (role !== 'host' && role !== 'guest') throw new Error('Invalid startup role.');
     this.at = stamp.parse(at); this.readNow();
@@ -125,7 +126,7 @@ export class StartHandshake {
     }
     if (message.type === 'barrier' && this.role === 'guest') {
       const active = this.active;
-      if (!active?.committed || message.reason !== 'resume' || message.nextEpoch !== active.offer.nextEpoch ||
+      if (!active?.committed || message.reason !== this.purpose || message.nextEpoch !== active.offer.nextEpoch ||
         compareStamps(message.at, active.offer.at) !== 0) throw new Error('Start requires the acknowledged countdown barrier.');
       const remote = this.estimate();
       const requiresPause = active.invalidated || !this.local.ready || this.local.revision !== active.offer.revision ||
@@ -176,7 +177,7 @@ export class StartHandshake {
       if (!active.committed && now >= active.offer.startsAt - START_LIMITS.confirmationMs ||
         now > active.offer.startsAt + START_LIMITS.overshootMs) { this.cancel('late'); return; }
       if (active.committed && now >= active.offer.startsAt && !this.outgoing.some(body => body.type === 'barrier')) {
-        this.queue({ type: 'barrier', nextEpoch: active.offer.nextEpoch, reason: 'resume', at: active.offer.at });
+        this.queue({ type: 'barrier', nextEpoch: active.offer.nextEpoch, reason: this.purpose, at: active.offer.at });
       }
     } else if (!this.outgoing.length && this.local.ready && this.remote.ready &&
       this.local.revision === this.remote.revision && now >= this.retryAt) {

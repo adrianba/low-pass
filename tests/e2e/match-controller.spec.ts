@@ -19,7 +19,7 @@ test.beforeAll(async () => {
 });
 
 for (const [terrain, first] of [['green-valley', 0], ['river-canyon', 1]] as const) test(`native ${terrain} play recovers peers, survivor and finale without resetting the match`, async ({ browser }) => {
-  test.setTimeout(210_000);
+  test.setTimeout(360_000);
   const server = await roomService();
   const store = server.service.rooms!.store;
   const host = store.create(store.authorize(server.code, 'match-host').capability, 'match-host');
@@ -108,6 +108,34 @@ for (const [terrain, first] of [['green-valley', 0], ['river-canyon', 1]] as con
       { phase: 'over', misses: [3, 3], destroyed: [true, true] },
       { phase: 'over', misses: [3, 3], destroyed: [true, true] },
     ]);
+    if (terrain === 'green-valley') for (const nextTerrain of ['desert', 'river-canyon'] as const) {
+      const previous = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+      await pages[0]!.evaluate(() => window.matchFixture.rematchReady(true));
+      await expect.poll(() => pages[1]!.evaluate(() => window.matchFixture.report().then(report => report.rematch?.ready)))
+        .toEqual([true, false]);
+      await pages[1]!.evaluate(() => window.matchFixture.rematchReady(true));
+      await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
+        window.matchFixture.report().then(report => report.phase)))), { timeout: 10_000 }).toEqual(['lobby', 'lobby']);
+      await pages[0]!.evaluate(terrain => window.matchFixture.terrain(terrain), nextTerrain);
+      await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() =>
+        window.matchFixture.report().then(report => ({ ready: report.lobbyReady, terrain: report.terrain, chosen: report.lobbyState?.ready }))))),
+      { timeout: 45_000 }).toEqual(pages.map(() => ({ ready: true, terrain: nextTerrain, chosen: [false, false] })));
+      await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.lobbyReady())));
+      await expect.poll(async () => Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report().then(report =>
+        ({ phase: report.phase, players: report.players }))))), { timeout: 15_000 })
+        .toEqual(pages.map(() => ({ phase: 'playing', players: [0, 1].map(() => ({ score: 0, misses: 0, eliminated: false })) })));
+      const restarted = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+      for (const [slot, report] of restarted.entries()) {
+        expect(report.peerConnections).toBe(previous[slot]!.peerConnections);
+        expect(report.signalingSockets).toBe(previous[slot]!.signalingSockets);
+        expect(report.epoch).toBe(previous[slot]!.epoch! + 2);
+      }
+      await expect.poll(async () => {
+        const reports = await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture.report())));
+        if (reports.some(report => report.issue)) throw new Error(JSON.stringify(reports));
+        return reports.map(report => ({ phase: report.phase, misses: report.players.map(player => player.misses) }));
+      }, { timeout: 80_000 }).toEqual(pages.map(() => ({ phase: 'over', misses: [3, 3] })));
+    }
     expect(errors).toEqual([]);
   } finally {
     await Promise.all(pages.map(page => page.evaluate(() => window.matchFixture?.close())));

@@ -46,6 +46,8 @@ export const wireMessage = z.discriminatedUnion('type', [
   z.strictObject({ ...envelope, type: z.literal('start-ready'), attempt: counter.min(1), revision: counter, ready: z.boolean() }),
   z.strictObject({ ...envelope, type: z.literal('start-commit'), attempt: counter.min(1) }),
   z.strictObject({ ...envelope, type: z.literal('start-cancel'), attempt: counter.min(1) }),
+  z.strictObject({ ...envelope, type: z.literal('rematch-state'), update: counter,
+    ready: z.tuple([z.boolean(), z.boolean()]) }),
   z.strictObject({ ...envelope, type: z.literal('lobby-state'), state: lobbyState }),
   z.strictObject({ ...envelope, type: z.literal('lobby-input'), input: lobbyInput }),
   z.strictObject({ ...envelope, type: z.literal('pause-state'), barrier: counter.min(1), update: counter,
@@ -98,7 +100,7 @@ export const HOST_ONLY = new Set<WireMessage['type']>([
   'lobby-state',
   'course-manifest',
   'start-offer', 'start-commit', 'start-cancel',
-  'pause-state',
+  'pause-state', 'rematch-state',
 ]);
 export function messageChannel(message: WireMessage): 'control' | 'state' {
   return message.type === 'snapshot' || message.type === 'ping' || message.type === 'pong' ? 'state' : 'control';

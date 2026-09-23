@@ -53,12 +53,14 @@ export class LobbyConnection {
   private rtts: number[] = [];
   private readonly identity: Compatibility;
   private readonly timer: ReturnType<typeof setInterval>;
+  private readonly inbox: TransportEvent[];
   constructor(private readonly link: MatchLink, settings: Settings,
     identity: Compatibility, private readonly seed: number, role: RoomMembership['room']['role'],
     private readonly author: CourseAuthor = prepareHostCourse,
-    private readonly onPrepared?: (connection: PreparedConnection) => void) {
+    private readonly onPrepared?: (connection: PreparedConnection) => void, inbox: TransportEvent[] = []) {
     this.identity = Object.freeze({ ...identity });
     this.lobby = new Lobby(role, settings);
+    this.inbox = [...inbox];
     this.timer = setInterval(() => { void this.pump(); }, 20);
   }
   static async connect(member: RoomMembership, settings: Settings, mode: IceMode, seed = 7,
@@ -156,7 +158,7 @@ export class LobbyConnection {
     this.busy = true;
     let phase = 'receiving';
     try {
-      const incoming = this.link.drain();
+      const incoming = [...this.inbox.splice(0), ...this.link.drain()];
       for (let index = 0; index < incoming.length; index++) {
         const event = incoming[index]!;
         if (event.type === 'message') {
@@ -243,5 +245,6 @@ export class LobbyConnection {
     if (this.disposed) return;
     this.disposed = true; this.complete = false; clearInterval(this.timer); this.lobby.allowReady(false);
     this.link.close(); this.receiver.reset(); this.authored = null; this.received.clear(); this.outgoing = []; this.urgent = [];
+    this.inbox.length = 0;
   }
 }

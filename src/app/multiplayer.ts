@@ -42,6 +42,8 @@ export class MultiplayerApp {
   private renderedDisplay: MatchDisplay | null = null;
   private readonly records: MultiplayerRecordStore;
   private readonly results: MultiplayerResultsPanel;
+  private readonly setupRecords: MultiplayerRecordsPanel;
+  private mode: IceMode = 'auto';
   private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
   private animation = 0;
@@ -62,7 +64,7 @@ export class MultiplayerApp {
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration with shared pause and 15-second connection recovery. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes, audio and rematches are not available yet.</p>
+        <p>Network gameplay integration with shared pause, 15-second connection recovery and completed-match rematches. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes and audio are not available yet.</p>
         <div id="match-setup-records"></div>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
@@ -99,8 +101,11 @@ export class MultiplayerApp {
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
     app.append(this.root);
-    new MultiplayerRecordsPanel(this.get('#match-setup-records'), this.records);
-    this.results = new MultiplayerResultsPanel(this.get('#match-results'), this.records);
+    this.setupRecords = new MultiplayerRecordsPanel(this.get('#match-setup-records'), this.records);
+    this.results = new MultiplayerResultsPanel(this.get('#match-results'), this.records, ready => {
+      try { this.clearInput(); this.match!.setRematchReady(ready); }
+      catch (error) { this.fail(error); }
+    });
     this.panel = invitation ? new GuestRoomPanel(this.get('#match-room'), invitation) : new HostRoomPanel(this.get('#match-room'));
     this.get<HTMLSelectElement>('#match-role').value = invitation ? 'guest' : 'host';
     this.get('#match-role').onchange = () => { void this.changeRole(); };
@@ -114,7 +119,11 @@ export class MultiplayerApp {
     this.timer = setInterval(() => {
       const match = this.match;
       if (match) void match.update().then(() => {
-        if (this.active && this.match === match) this.recordMatch();
+        if (this.active && this.match === match) {
+          this.recordMatch();
+          const next = match.takeRematch();
+          if (next) this.returnToLobby(match.prepared, next);
+        }
       }).catch(error => { if (this.active) this.fail(error); });
     }, 10);
     this.animation = requestAnimationFrame(this.animate);
@@ -148,44 +157,66 @@ export class MultiplayerApp {
     this.get<HTMLSelectElement>('#match-role').disabled = true;
     try {
       const mode = this.get<HTMLSelectElement>('#match-route').value;
-      if (!['auto', 'direct', 'udp', 'tcp', 'tls'].includes(mode)) throw new Error('Invalid connection mode.');
+      if (mode !== 'auto' && mode !== 'direct' && mode !== 'udp' && mode !== 'tcp' && mode !== 'tls') throw new Error('Invalid connection mode.');
+      this.mode = mode;
       const seed = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff;
-      const connection = await LobbyConnection.connect(this.panel.session.admittedMember(), this.settings, mode as IceMode, seed,
-        undefined, prepared => {
-          if (!this.active || this.failed) { prepared.link.close(); return; }
-          this.world.setTerrain(prepared.course.manifest.terrain);
-          this.app.dataset.terrain = prepared.course.manifest.terrain;
-          this.world.configure(prepared.lobby.settings.quality);
-          this.world.reset();
-          // Author for the narrowest supported viewport, not the host's window on behalf of the guest.
-          this.match = new MatchController(prepared, (_slot, view, range) =>
-            this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect), undefined,
-          signal => connectPeer(this.panel.session.admittedMember(), prepared.course.manifest.compatibility,
-            FORMATION_PROFILE.viewport.minAspect, mode as IceMode, 0, signal));
-          this.records.begin({ matchId: `${prepared.link.sessionId}:${prepared.epoch + 1}`,
-            localSlot: prepared.role === 'host' ? 0 : 1, terrain: prepared.course.manifest.terrain,
-            compatibility: prepared.course.manifest.compatibility, startedAt: new Date().toISOString() });
-          this.availability();
-          this.effects = new SharedCombat(this.world.combat, this.match.timeline!);
-          this.lobbyPanel?.dispose(); this.lobbyPanel = null;
-          this.get('#match-loading').hidden = false;
-          this.prewarming = this.prewarm(prepared).catch(error => {
-            if (!this.active || this.failed) return;
-            const message = error instanceof Error ? error.message : 'The shared scene could not finish loading.';
-            this.match?.hold(message);
-            this.error(message);
-          }).finally(() => { this.get('#match-loading').hidden = true; });
-        });
+      const connection = await LobbyConnection.connect(this.panel.session.admittedMember(), this.settings, mode, seed,
+        undefined, prepared => this.acceptPrepared(prepared));
       if (!this.active || this.failed) { connection.close(); return; }
-      this.lobby = connection;
-      this.lobbyPanel = new LobbyPanel(this.get('#match-lobby'), connection.lobby, () => {
-        const next = connection.lobby.settings;
-        this.world.configure(next.quality);
-        this.resized();
-      });
+      this.showLobby(connection);
     } catch (error) {
       if (this.active) this.error(error instanceof Error ? error.message : 'Could not connect the private flight.');
     } finally { this.connecting = false; }
+  }
+  private showLobby(connection: LobbyConnection): void {
+    this.lobby = connection;
+    this.lobbyPanel = new LobbyPanel(this.get('#match-lobby'), connection.lobby, () => {
+      this.world.configure(connection.lobby.settings.quality);
+      this.resized();
+    });
+  }
+  private acceptPrepared(prepared: PreparedConnection): void {
+    if (!this.active || this.failed) { prepared.link.close(); return; }
+    this.world.setTerrain(prepared.course.manifest.terrain);
+    this.app.dataset.terrain = prepared.course.manifest.terrain;
+    this.world.configure(prepared.lobby.settings.quality);
+    this.world.reset();
+    // Author for the narrowest supported viewport, not the host's window on behalf of the guest.
+    this.match = new MatchController(prepared, (_slot, view, range) =>
+      this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect), undefined,
+    signal => connectPeer(this.panel.session.admittedMember(), prepared.course.manifest.compatibility,
+      FORMATION_PROFILE.viewport.minAspect, this.mode, 0, signal));
+    this.records.begin({ matchId: `${prepared.link.sessionId}:${prepared.epoch + 1}`,
+      localSlot: prepared.role === 'host' ? 0 : 1, terrain: prepared.course.manifest.terrain,
+      compatibility: prepared.course.manifest.compatibility, startedAt: new Date().toISOString() });
+    this.availability();
+    this.effects = new SharedCombat(this.world.combat, this.match.timeline!);
+    this.lobbyPanel?.dispose(); this.lobbyPanel = null;
+    this.get('#match-loading').hidden = false;
+    this.prewarming = this.prewarm(prepared).catch(error => {
+      if (!this.active || this.failed) return;
+      const message = error instanceof Error ? error.message : 'The shared scene could not finish loading.';
+      this.match?.hold(message);
+      this.error(message);
+    }).finally(() => { this.get('#match-loading').hidden = true; });
+  }
+  private returnToLobby(previous: PreparedConnection, next: NonNullable<ReturnType<MatchController['takeRematch']>>): void {
+    this.clearInput(); this.match = null;
+    this.effects?.dispose(); this.effects = null;
+    this.lobbyPanel?.dispose(); this.lobbyPanel = null; this.lobby?.close();
+    this.renderedDisplay = null; this.lastPaint = -Infinity; this.lastPaintPhase = ''; this.lastInputRevision = -1;
+    this.results.reset(); this.setupRecords.render();
+    this.world.reset(); this.redraw = true;
+    this.get('.multiplayer-setup').hidden = false; this.get('#match-connect').hidden = true;
+    for (const id of ['match-instruments', 'match-pause-card', 'match-message', 'match-network']) this.get(`#${id}`).hidden = true;
+    this.text('#match-exit', 'LEAVE PRIVATE FLIGHT');
+    this.root.dataset.phase = 'lobby'; delete this.root.dataset.time;
+    const settings = { ...previous.lobby.settings, terrain: previous.course.manifest.terrain };
+    const seed = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff;
+    try {
+      this.showLobby(new LobbyConnection(next.link, settings, previous.course.manifest.compatibility, seed, previous.role,
+        undefined, prepared => this.acceptPrepared(prepared), next.inbox));
+    } catch (error) { next.link.close(); throw error; }
   }
   private async prewarm(prepared: PreparedConnection): Promise<void> {
     const payload = prepared.role === 'guest' ? prepared.formations[0].payload : null;
@@ -330,6 +361,7 @@ export class MultiplayerApp {
     const result = this.records.current;
     if (!result || result.status === 'active') return false;
     this.results.render(result, this.match?.issue ?? null);
+    this.results.renderRematch(this.match?.rematchState ?? null);
     this.get('#match-instruments').hidden = true;
     this.get('#match-pause-card').hidden = true;
     this.get('#match-message').hidden = true;

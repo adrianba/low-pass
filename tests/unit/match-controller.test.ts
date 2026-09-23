@@ -7,20 +7,30 @@ import { Lobby } from '../../src/network/lobby.js';
 import { prepareHostCourse } from '../../src/network/prepared-course.js';
 import { DEFAULT_SETTINGS } from '../../src/storage/records.js';
 import type { TransportEvent } from '../../src/network/transport.js';
-import { TransferReceiver } from '../../src/network/transfer.js';
+import { createTransfer, TransferReceiver } from '../../src/network/transfer.js';
 import type { CompletedTransfer } from '../../src/network/transfer.js';
 import { base, versions } from './protocol-fixtures.js';
 import type { MatchLink } from '../../src/network/lobby-connection.js';
 import { encodeMessage } from '../../shared/protocol/codec.js';
+import { planFormation } from '../../src/game/formation/approved.js';
+import type { FormationRequest } from '../../src/game/formation/approved.js';
+import { formationData } from '../../src/network/formation-data.js';
 
+let authorLookahead = false;
 vi.mock('../../src/network/formation-worker-client.js', () => ({
   FormationWorker: class {
-    author() { return new Promise<never>(() => {}); }
+    async author(request: FormationRequest) {
+      if (!authorLookahead) return new Promise<never>(() => {});
+      const result = planFormation(request);
+      if (!result.ok) throw new Error('Could not author test lookahead.');
+      const data = formationData(result.plan, request.count);
+      return { plan: result.plan, data, transfer: await createTransfer({ kind: 'formation', data }, `flight-${request.count}`) };
+    }
     close() {}
   },
 }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { authorLookahead = false; vi.restoreAllMocks(); vi.useRealTimers(); });
 
 type Reconnect = (signal: AbortSignal) => Promise<MatchLink>;
 async function host(reconnect?: Reconnect, deferStart = false) {
@@ -149,6 +159,46 @@ async function recoverable(drop: (body: MessageBody) => boolean = () => false, d
   const state = await paired({ host: factory('host'), guest: factory('guest') }, deferStart);
   return { ...state, rounds };
 }
+
+describe('completed match ownership', () => {
+  it('requires fresh mutual readiness, cancels on focus loss and hands off without closing membership or sending leave', async () => {
+    authorLookahead = true;
+    const state = await paired();
+    try {
+      expect(state.match.rematchState).toBeNull();
+      expect(() => state.match.setRematchReady(true)).toThrow('not ready');
+      for (let step = 0; step < 2000 && (state.match.phase !== 'over' || state.guest.phase !== 'over'); step++) {
+        await state.advance(50);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      expect([state.match.phase, state.guest.phase]).toEqual(['over', 'over']);
+      const totals = state.match.host!.scheduler.session.playerTotals;
+      expect(totals.every(player => player.eliminated && player.misses === 3)).toBe(true);
+      state.match.setRematchReady(true); await state.advance();
+      expect(state.match.rematchState!.ready).toEqual([true, false]);
+      expect(state.match.takeRematch()).toBeNull();
+      state.guest.setRematchReady(true);
+      for (let step = 0; step < 10; step++) await state.advance(20);
+      expect(state.guest.rematchState!.remainingMs).not.toBeNull();
+      state.guest.setAvailable(false);
+      for (let step = 0; step < 10; step++) await state.advance(20);
+      expect(state.match.rematchState!.ready).toEqual([true, false]);
+      expect(state.match.rematchState!.remainingMs).toBeNull();
+      state.guest.setAvailable(true); state.guest.setRematchReady(true);
+      for (let step = 0; step < 100 && state.match.prepared.link.epoch < 2; step++) await state.advance(50);
+      expect(state.match.host!.scheduler.session.playerTotals).toEqual(totals);
+      const hostNext = state.match.takeRematch(), guestNext = state.guest.takeRematch();
+      expect(hostNext?.link).toBe(state.match.prepared.link);
+      expect(guestNext?.link).toBe(state.guest.prepared.link);
+      expect(hostNext!.link.epoch).toBe(2); expect(guestNext!.link.epoch).toBe(2);
+      expect(state.match.takeRematch()).toBeNull();
+      state.close();
+      expect(state.match.prepared.link.close).not.toHaveBeenCalled();
+      expect(state.sent.some(body => body.type === 'match-abort')).toBe(false);
+      expect(state.match.phase).toBe('closed'); expect(state.match.frame).toBeNull();
+    } finally { state.close(); }
+  }, 20_000);
+});
 
 describe('bounded failed-peer recovery', () => {
   it.each(['signaling_recovery_expired', 'recovery_expired'])('records %s as connection loss without starting another deadline', async failure => {
