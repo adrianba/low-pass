@@ -115,11 +115,14 @@ footer { position: absolute; bottom: 24px; left: 42px; right: 42px; display: fle
 #match-instruments .release-panel { width: min(440px, 94vw); min-width: 0; }
 #match-instruments .release-panel span { line-height: 1.8; }
 #match-pause { top: auto; right: auto; left: 42px; bottom: 25px; }
+#match-assistance-toggle { position: absolute; left: 42px; bottom: 65px; }
+#match-local-settings summary { cursor: pointer; font: 10px Consolas, monospace; margin-top: 12px; }
 @media (max-width: 600px) {
   #match-instruments :is(.score-card, .miss-card) { width: 155px; padding: 9px; }
   #match-instruments .eyebrow { letter-spacing: .08em; }
   #match-instruments .flight-tape { top: 42%; max-width: 170px; }
   #match-pause { left: 24px; }
+  #match-assistance-toggle { left: 24px; }
   #match-exit { right: 12px; font-size: 9px; }
   #match-message { left: 6%; width: 88%; }
 }

@@ -33,6 +33,7 @@ export interface PlayerCompletion {
 }
 type EventPayload =
   | { type: 'released'; slot: PlayerSlot; sequence: number; time: number }
+  | { type: 'assistance'; slot: PlayerSlot; enabled: boolean; assisted: boolean; time: number }
   | { type: 'resolved'; result: AttemptResult }
   | { type: 'eliminated'; completion: PlayerCompletion }
   | { type: 'ended'; time: number; winner: PlayerSlot | 'draw' };
@@ -218,6 +219,15 @@ export class HostSession {
     this.players[slot].assistance = enabled;
     this.players[slot].assisted ||= enabled;
     return { ok: true };
+  }
+  changeAssistance(slot: PlayerSlot, enabled: boolean): CommandResult {
+    validSlot(slot);
+    if (this.state !== 'running') return { ok: false, reason: this.state };
+    if (this.players[slot].completion) return { ok: false, reason: 'eliminated' };
+    this.reserveEvents(1);
+    const result = this.setAssistance(slot, enabled);
+    if (result.ok) this.emit({ type: 'assistance', slot, enabled, assisted: this.players[slot].assisted, time: this.clock });
+    return result;
   }
 
   pause(): void { if (this.state === 'running') this.state = 'paused'; }

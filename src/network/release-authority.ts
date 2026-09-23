@@ -12,7 +12,7 @@ type Reference = { id: string; digest: string };
 type CommandMessage = Extract<WireMessage, { type: 'command' }>;
 type ReleaseIntent = Extract<CommandMessage['command'], { action: 'release' }>;
 type Rejection = Extract<MessageBody, { type: 'ack' }>['decision'] & { accepted: false };
-export type ReleaseDecision = { accepted: true; releaseEventId: number } | Rejection;
+export type ReleaseDecision = { accepted: true; coreEventId: number } | Rejection;
 interface Remembered { intent: string; decision: ReleaseDecision }
 
 /** Capture the actual displayed plan time, never a fresh arrival/input wall time. */
@@ -55,7 +55,7 @@ export class ReleaseAuthority {
   }
   receive(peer: Role, value: CommandMessage, receivedAt?: number): ReleaseDecision {
     const message = decodeMessage(encodeMessage(value), { sessionId: this.sessionId, epoch: value.epoch, peer, channel: 'control' });
-    if (message.type !== 'command' || message.command.action !== 'release') throw new ProtocolError('invalid_message');
+    if (message.type !== 'command' || message.command.action !== 'release' && message.command.action !== 'assistance') throw new ProtocolError('invalid_message');
     const now = this.readNow();
     const arrival = receivedAt ?? now;
     if (!Number.isFinite(arrival) || arrival > now) throw new Error('Invalid local command receipt time.');
@@ -65,8 +65,19 @@ export class ReleaseAuthority {
     if (remembered) return remembered.intent === intent ? structuredClone(remembered.decision) : { accepted: false, reason: 'duplicate' };
     if (input <= this.highest[slot]) return { accepted: false, reason: 'duplicate' };
     let decision: ReleaseDecision;
-    const plan = this.plans.get(message.command.sequence);
-    if (this.phase === 'paused' || this.phase === 'settling' && arrival > this.pauseDeadline) {
+    const plan = message.command.action === 'release' ? this.plans.get(message.command.sequence) : undefined;
+    if (message.command.action === 'assistance') {
+      const coreEventId = this.session.lastEventId + 1;
+      const result = this.phase === 'running' ? this.session.changeAssistance(slot, message.command.enabled)
+        : { ok: false as const, reason: 'paused' as const };
+      if (result.ok) decision = { accepted: true, coreEventId };
+      else {
+        if (result.reason !== 'paused' && result.reason !== 'over' && result.reason !== 'blocked' && result.reason !== 'eliminated') {
+          throw new Error('Unexpected assistance failure.');
+        }
+        decision = { accepted: false, reason: result.reason };
+      }
+    } else if (this.phase === 'paused' || this.phase === 'settling' && arrival > this.pauseDeadline) {
       decision = { accepted: false, reason: 'paused' };
     } else if (!plan || !this.session.planSequences.includes(message.command.sequence) ||
       plan.id !== message.command.plan.id || plan.digest !== message.command.plan.digest) {
@@ -78,9 +89,9 @@ export class ReleaseAuthority {
         ? this.session.time : decoded;
       if (time < this.epochStart) decision = { accepted: false, reason: 'epoch' };
       else {
-        const releaseEventId = this.session.lastEventId + 1;
+        const coreEventId = this.session.lastEventId + 1;
         const result = this.session.releaseAt(slot, message.command.sequence, time, this.phase === 'settling');
-        if (result.ok) decision = { accepted: true, releaseEventId };
+        if (result.ok) decision = { accepted: true, coreEventId };
         else {
           const reason = result.reason;
           if (reason === 'coverage' || reason === 'events_full' || reason === 'bomb_lifetime' || reason === 'unsettled_attempt') {
@@ -128,8 +139,8 @@ export class ReleaseAuthority {
 }
 
 export function releaseAcknowledgement(slot: PlayerSlot, inputSequence: number, decision: ReleaseDecision,
-  publishedSequence: (releaseEventId: number) => number): Extract<MessageBody, { type: 'ack' }> {
+  publishedSequence: (coreEventId: number) => number): Extract<MessageBody, { type: 'ack' }> {
   const result = decision.accepted
-    ? { accepted: true as const, eventSequence: counter.min(1).parse(publishedSequence(decision.releaseEventId)) } : decision;
+    ? { accepted: true as const, eventSequence: counter.min(1).parse(publishedSequence(decision.coreEventId)) } : decision;
   return { type: 'ack', slot, inputSequence: counter.min(1).parse(inputSequence), decision: result };
 }

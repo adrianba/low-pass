@@ -6,6 +6,8 @@ declare global { interface Window {
   interruptTestSignaling: () => void; interruptTestPeer: () => void;
   readTestPhases: () => Array<{ phase: string; time: string; at: number }>;
   readTestConnections: () => number;
+  readTestAudio: () => { contexts: number; states: AudioContextState[] };
+  readTestTiming: () => Array<{ kind: string; duration: number; at: number; phase: string; time: string }>;
 } }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 test('multiplayer storage failure warns without blocking room controls or changing solo data', async ({ browser }) => {
@@ -61,6 +63,32 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         if (message.type() === 'warning' && message.text().startsWith('Private match ')) warnings.push(message.text());
       });
       await page.addInitScript(value => {
+        const timing: ReturnType<Window['readTestTiming']> = [];
+        window.readTestTiming = () => structuredClone(timing);
+        const slow = (kind: string, start: number, duration: number) => {
+          if (duration < 100) return;
+          const root = document.querySelector<HTMLElement>('#multiplayer-app');
+          timing.push({ kind, duration, at: performance.timeOrigin + start, phase: root?.dataset.phase ?? '', time: root?.dataset.time ?? '' });
+          if (timing.length > 128) timing.shift();
+        };
+        new PerformanceObserver(list => {
+          for (const entry of list.getEntries()) slow('longtask', entry.startTime, entry.duration);
+        }).observe({ entryTypes: ['longtask'] });
+        for (const method of ['drawElements', 'drawElementsInstanced', 'drawArrays', 'drawArraysInstanced',
+          'bufferData', 'bufferSubData', 'texImage2D', 'getShaderParameter', 'getProgramParameter', 'finish', 'flush'] as const) {
+          const original = WebGL2RenderingContext.prototype[method];
+          Object.defineProperty(WebGL2RenderingContext.prototype, method, { configurable: true, writable: true,
+            value: new Proxy(original, { apply(target, receiver, args) {
+              const start = performance.now();
+              try { return Reflect.apply(target, receiver, args); }
+              finally { slow(method, start, performance.now() - start); }
+            } }) });
+        }
+        const audio: AudioContext[] = [], NativeAudio = AudioContext;
+        window.AudioContext = class extends NativeAudio {
+          constructor(options?: AudioContextOptions) { super(options); audio.push(this); }
+        };
+        window.readTestAudio = () => ({ contexts: audio.length, states: audio.map(context => context.state) });
         const phases: ReturnType<Window['readTestPhases']> = [];
         window.readTestPhases = () => structuredClone(phases);
         document.addEventListener('DOMContentLoaded', () => new MutationObserver(changes => {
@@ -135,6 +163,16 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         message: await page.locator('#match-message').innerText(),
         timing: await page.locator('#multiplayer-app').evaluate(element => ({ ...((element as HTMLElement).dataset) })), errors,
       }));
+      await expect.poll(() => page.evaluate(() => window.readTestAudio())).toEqual({ contexts: 1, states: ['running'] });
+    }
+    if (terrain === 'green-valley') {
+      await guest.locator('#scene').focus();
+      await guest.keyboard.down('KeyA'); await guest.keyboard.down('KeyA'); await guest.keyboard.up('KeyA');
+      await expect(guest.locator('#match-assistance')).toHaveText('YOUR IMPACT ASSIST: OFF');
+      await expect(guest.locator('#match-assist-1')).toHaveText('ASSISTED');
+      await guest.keyboard.press('KeyA');
+      await expect(guest.locator('#match-assistance')).toHaveText('YOUR IMPACT ASSIST: ON');
+      await expect(host.locator('#match-assist-0')).toHaveText('UNASSISTED');
     }
     for (const page of pages) {
       const localSlot = page === host ? 0 : 1;
@@ -231,6 +269,17 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
     }
     await guest.screenshot({ path: info.outputPath('guest-native-canvas.png') });
+    for (const page of pages) await expect.poll(() => page.evaluate(() => window.readTestAudio().states)).toEqual(['suspended']);
+    if (terrain === 'green-valley') {
+      await guest.locator('#match-local-settings summary').click();
+      await guest.getByLabel('Mute my flight sound', { exact: true }).uncheck();
+      await guest.getByLabel('My flight volume', { exact: true }).focus();
+      await guest.keyboard.press('Home'); await guest.keyboard.press('ArrowRight');
+      await expect(guest.getByLabel('My flight volume', { exact: true })).toHaveValue('1');
+      await expect(host.getByLabel('Mute my flight sound', { exact: true })).toBeChecked();
+      await guest.getByLabel('Mute my flight sound', { exact: true }).check();
+      await guest.locator('#match-local-settings summary').click();
+    }
     for (const page of pages) {
       await expect(page.locator('#match-reticle')).toBeHidden();
       const selectors = await page.locator('#match-results').isVisible()
@@ -313,7 +362,11 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         await expect(host.locator('#match-release')).toHaveText('SPECTATING');
         await expect(host.locator('#match-reticle')).toBeHidden();
         await host.screenshot({ path: info.outputPath('host-spectating-survivor.png'), scale: 'css' });
-        for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 45_000 });
+        for (const page of pages) await expect.poll(async () => {
+          const phase = await page.locator('#multiplayer-app').getAttribute('data-phase');
+          if (['held', 'paused', 'pausing', 'recovering'].includes(phase ?? '')) throw new Error(`Finale interrupted: ${phase}; ${warnings.join('; ')}`);
+          return phase;
+        }, { timeout: 45_000 }).toBe('over');
         await expect(host.locator('#match-score-0')).toHaveText('0');
         for (const page of pages) {
           await expect(page.locator('#match-release')).toHaveText('PLAYER 2 WINS');
@@ -362,6 +415,7 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
         await expect(page.getByLabel('I am ready')).not.toBeChecked();
         await expect(page.getByLabel('My graphics quality')).toHaveValue('low');
         await expect(page.getByLabel('Mute my sound')).toBeChecked();
+        await expect.poll(() => page.evaluate(() => window.readTestAudio().states)).toEqual(['suspended']);
       }
       await host.getByLabel('Shared terrain').selectOption('desert');
       await guest.getByLabel('My impact assistance', { exact: true }).uncheck();
@@ -379,7 +433,11 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       }
       expect(await Promise.all(pages.map(page => page.evaluate(() => window.readTestConnections())))).toEqual(connections);
       for (const page of pages) {
-        await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 80_000 });
+        await expect.poll(async () => {
+          const phase = await page.locator('#multiplayer-app').getAttribute('data-phase');
+          if (['held', 'paused', 'pausing', 'recovering'].includes(phase ?? '')) throw new Error(`Rematch interrupted: ${phase}; ${warnings.join('; ')}`);
+          return phase;
+        }, { timeout: 80_000 }).toBe('over');
         await expect(page.locator('#match-result-title')).toHaveText('MATCH DRAW');
         await expect(page.locator('#match-result-title')).toBeFocused();
         const saved = await page.evaluate(() => {
@@ -399,6 +457,7 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
     await expect(host.locator('#multiplayer-app')).toHaveCount(0);
     await expect(host.locator('#start')).toBeVisible();
     await expect(host.locator('#session-name')).toHaveText('SOLO TRAINING RANGE');
+    await expect.poll(() => host.evaluate(() => window.readTestAudio())).toEqual({ contexts: 1, states: ['suspended'] });
     await host.locator('#start').click();
     await expect(host.locator('#app')).toHaveAttribute('data-screen', 'playing');
     await expect(host.locator('#hud')).toBeVisible();
@@ -408,6 +467,7 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       const root = document.querySelector<HTMLElement>('#multiplayer-app');
       return { phase: root?.dataset.phase, time: root?.dataset.time,
         phases: window.readTestPhases?.() ?? [],
+        timing: window.readTestTiming?.() ?? [], audio: window.readTestAudio?.(),
         pause: document.querySelector('#match-pause-reason')?.textContent,
         release: document.querySelector('#match-release')?.textContent,
         input: document.querySelector('#match-input')?.textContent,

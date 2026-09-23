@@ -90,6 +90,9 @@ export class GuestGame {
   requestPause(reason: Extract<MessageBody, { type: 'pause-state' }>['reason'] = 'manual'): void {
     this.queueCommand({ action: 'pause', reason });
   }
+  requestAssistance(enabled: boolean): number {
+    return this.queueCommand({ action: 'assistance', enabled });
+  }
   private queueCommand(command: Extract<MessageBody, { type: 'command' }>['command']): number {
     if (this.closed) throw new Error('Guest game is closed.');
     const input = counter.min(1).parse(this.lastInput + 1);

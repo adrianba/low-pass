@@ -200,6 +200,59 @@ describe('completed match ownership', () => {
   }, 20_000);
 });
 
+describe('in-flight assistance', () => {
+  it.each(['host', 'guest'] as const)('publishes %s choices independently and never repairs assisted status', async role => {
+    const state = await paired(), actor = role === 'host' ? state.match : state.guest, slot = role === 'host' ? 0 : 1;
+    try {
+      expect(actor.setAssistance(true)).toBe(true);
+      expect(actor.assistanceState.pending).toBe(true);
+      expect(actor.setAssistance(false)).toBe(false);
+      for (let work = 0; work < 8; work++) await state.advance(20);
+      for (const match of [state.match, state.guest]) {
+        expect(match.display!.players[slot]).toMatchObject({ assistance: true, assisted: true });
+        expect(match.display!.players[slot === 0 ? 1 : 0]).toMatchObject({ assistance: false, assisted: false });
+      }
+      expect(actor.assistanceState.pending).toBe(false);
+      expect(actor.setAssistance(false)).toBe(true);
+      for (let work = 0; work < 8; work++) await state.advance(20);
+      for (const match of [state.match, state.guest]) expect(match.display!.players[slot]).toMatchObject({ assistance: false, assisted: true });
+      actor.pause();
+      expect(actor.setAssistance(true)).toBe(false);
+    } finally { state.close(); }
+  });
+  it('keeps release acknowledgements correlated around an assistance request', async () => {
+    const state = await paired();
+    try {
+      for (let work = 0; work < 400 && !state.guest.frame?.ready; work++) await state.advance(50);
+      expect(state.guest.setAssistance(true)).toBe(true);
+      expect(state.guest.release()).toBe(true);
+      for (let work = 0; work < 10; work++) await state.advance(20);
+      expect(state.commands).toHaveLength(1);
+      expect(state.commands[0]!.inputSequence).toBe(2);
+      expect(state.guest.assistanceState.enabled).toBe(true);
+      expect(state.guest.frame!.aircraft[1].bomb).not.toBeNull();
+      expect(state.guest.setAssistance(false)).toBe(true);
+      state.match.host!.receive(state.commands.shift()!);
+      for (let work = 0; work < 10; work++) await state.advance(20);
+      expect(state.guest.inputIssue).toBeNull();
+      expect(state.guest.display!.players[1]).toMatchObject({ assistance: false, assisted: true });
+      expect(state.match.host!.player(1).bomb).not.toBeNull();
+    } finally { state.close(); }
+  });
+  it('reports an unconfirmed assistance command after restoration instead of leaving a pending control', async () => {
+    const state = await recoverable();
+    try {
+      expect(state.guest.setAssistance(true)).toBe(true);
+      state.disconnect();
+      for (let work = 0; work < 200 && !(state.match.phase === 'paused' && state.guest.phase === 'paused'); work++) await state.advance(50);
+      expect(state.guest.phase).toBe('paused');
+      expect(state.guest.assistanceState.pending).toBe(false);
+      expect(state.guest.inputIssue).toContain('not confirmed after restoration');
+      expect(state.guest.display!.players[1]).toMatchObject({ assistance: false, assisted: false });
+    } finally { state.close(); }
+  });
+});
+
 describe('bounded failed-peer recovery', () => {
   it.each(['signaling_recovery_expired', 'recovery_expired'])('records %s as connection loss without starting another deadline', async failure => {
     const reconnect = vi.fn<Reconnect>(() => new Promise(() => {}));

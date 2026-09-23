@@ -147,6 +147,7 @@ export class HostGame {
       throw new Error('Unexpected host game message identity.');
     }
     if (message.type === 'command') {
+      if (message.command.action === 'assistance') { this.journal.receiveAssistance('guest', message); return; }
       if (message.command.action !== 'release') throw new Error('Lifecycle commands belong to the match controller.');
       this.journal.receiveRelease('guest', message, receivedAt); return;
     }
@@ -169,6 +170,12 @@ export class HostGame {
     return this.journal.receiveRelease('host', { version: PROTOCOL_VERSION, sessionId: this.sessionId,
       epoch: this.epoch, sender: 'host', sequence: 0, type: 'command', slot: 0, inputSequence: ++this.localInput,
       command: releaseIntent(sequence, ref, displayedAt) }, receivedAt);
+  }
+  setAssistance(enabled: boolean) {
+    if (!this.ready || this.busy) throw new Error('Host game is not ready for local input.');
+    return this.journal.receiveAssistance('host', { version: PROTOCOL_VERSION, sessionId: this.sessionId,
+      epoch: this.epoch, sender: 'host', sequence: 0, type: 'command', slot: 0, inputSequence: ++this.localInput,
+      command: { action: 'assistance', enabled } });
   }
   /** Returns a hold reason; the lifecycle owner must not discard elapsed time or catch up unseen flight. */
   async pump(target = this.scheduler.session.time): Promise<HostGameWait> {

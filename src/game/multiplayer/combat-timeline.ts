@@ -21,6 +21,25 @@ export interface CombatEntry {
 }
 export const MAX_COMBAT_VIEWS = MAX_SESSION_PLANS * 2;
 export const DAMAGE_SMOKE_LIFE = 1.1;
+export type CombatCueSource = Pick<CombatPlanData, 'id' | 'slot' | 'bornAt'> & {
+  missile: Pick<CombatPlanData['missile'], 'kind'>;
+};
+export function combatCues(plans: readonly CombatCueSource[], previous: number | null, time: number) {
+  const cues: Array<{ id: number; slot: PlayerSlot; cue: CombatCue }> = [];
+  if (previous === null) return cues;
+  for (const data of plans) {
+    const age = time - data.bornAt, impactAt = data.bornAt + MISSILE_INTERCEPT_TIME;
+    if (previous < data.bornAt && time >= data.bornAt && age < MISSILE_INTERCEPT_TIME) {
+      cues.push({ id: data.id, slot: data.slot, cue: 'missile' });
+    }
+    const kind = data.missile.kind;
+    if (previous < impactAt && time >= impactAt &&
+      time - impactAt < (kind === 'finale' ? 1.6 : kind === 'damage' ? 0.4 : FLYBY_DURATION - MISSILE_INTERCEPT_TIME)) {
+      cues.push({ id: data.id, slot: data.slot, cue: kind === 'finale' ? 'destroyed' : kind === 'damage' ? 'damaged' : 'flyby' });
+    }
+  }
+  return cues;
+}
 
 export class CombatTimeline {
   private entries = new Map<number, CombatEntry>();
@@ -68,17 +87,7 @@ export class CombatTimeline {
     if (actors.some((actor, slot) => actor.eliminated && !finales[slot])) {
       throw new Error('Eliminated players require their frozen finale.');
     }
-    const cues: Array<{ id: number; slot: PlayerSlot; cue: CombatCue }> = [];
-    if (this.clock !== null) for (const { data } of next.values()) {
-      const age = time - data.bornAt, impactAt = data.bornAt + MISSILE_INTERCEPT_TIME;
-      if (this.clock < data.bornAt && time >= data.bornAt && age < MISSILE_INTERCEPT_TIME) {
-        cues.push({ id: data.id, slot: data.slot, cue: 'missile' });
-      }
-      const kind = data.missile.kind;
-      if (this.clock < impactAt && time >= impactAt && time - impactAt < (kind === 'finale' ? 1.6 : kind === 'damage' ? 0.4 : FLYBY_DURATION - MISSILE_INTERCEPT_TIME)) {
-        cues.push({ id: data.id, slot: data.slot, cue: kind === 'finale' ? 'destroyed' : kind === 'damage' ? 'damaged' : 'flyby' });
-      }
-    }
+    const cues = combatCues([...next.values()].map(entry => entry.data), this.clock, time);
     this.entries = next; this.sources = sources; this.finales = finales;
     this.actors = structuredClone(actors); this.sampler = sampler; this.clock = time;
     return cues;

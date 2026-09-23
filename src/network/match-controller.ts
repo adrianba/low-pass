@@ -67,6 +67,7 @@ export class MatchController {
   private inputRevisionValue = 0;
   private anchorWall = -Infinity;
   private pendingRelease: { time: number; sequence: number; receivedAt: number } | null = null;
+  private pendingAssistance: { enabled: boolean; input: number | null; epoch: number; applied: boolean } | null = null;
   private pauseNotice: PauseNotice | null = null;
   private pauseRequested = false;
   private pauseDirty = false;
@@ -125,6 +126,19 @@ export class MatchController {
   get display(): MatchDisplay | null { return this.displayValue; }
   get inputIssue(): string | null { return this.inputIssueValue; }
   get inputRevision(): number { return this.inputRevisionValue; }
+  get assistanceState() {
+    const player = this.displayValue?.players[this.displayValue.localSlot];
+    return { enabled: player?.assistance ?? false, pending: this.pendingAssistance !== null,
+      canChange: this.phaseValue === 'playing' && this.available && !!player && !player.eliminated && !this.pendingAssistance };
+  }
+  setAssistance(enabled: boolean): boolean {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid local assistance setting.');
+    if (!this.assistanceState.canChange) return false;
+    this.inputIssueValue = null;
+    this.pendingAssistance = { enabled, input: this.guestValue?.requestAssistance(enabled) ?? null,
+      epoch: this.hostValue?.epoch ?? this.guestValue!.epoch, applied: false };
+    return true;
+  }
   get recoveryState() {
     return this.recovery ? { remainingMs: Math.max(0, this.recovery.deadline - this.now()),
       attempt: this.recovery.attempt, stage: this.recovery.stage } : null;
@@ -497,6 +511,8 @@ export class MatchController {
       await this.guestValue!.receive(message);
       if (message.type === 'ack' && message.slot === 1 && message.inputSequence === this.localDrop?.input &&
         !message.decision.accepted) this.rejectDrop(message.decision.reason);
+      if (message.type === 'ack' && message.slot === 1 && message.inputSequence === this.pendingAssistance?.input &&
+        !message.decision.accepted) this.rejectAssistance(message.decision.reason);
       const anchor = this.guestValue!.replica.clockAnchor;
       if (!this.pauseRequested && anchor && anchor.monotonicMs > this.anchorWall) {
         this.replicaClock.observe(anchor, this.now()); this.anchorWall = anchor.monotonicMs;
@@ -577,6 +593,7 @@ export class MatchController {
       if (!this.flushPause()) return;
       const host = this.hostValue;
       this.settleLocalRelease();
+      this.applyLocalAssistance();
       await host.pump();
       if (this.stopped) return;
       if (this.pauseNotice!.stage === 'settling') {
@@ -642,6 +659,18 @@ export class MatchController {
     const decision = this.hostValue!.release(input.time, input.sequence, input.receivedAt);
     if (!decision.accepted) this.rejectDrop(decision.reason);
   }
+  private applyLocalAssistance(): void {
+    const pending = this.pendingAssistance;
+    if (!this.hostValue?.ready || !pending || pending.applied) return;
+    pending.applied = true;
+    const decision = this.hostValue.setAssistance(pending.enabled);
+    if (!decision.accepted) this.rejectAssistance(decision.reason);
+  }
+  private rejectAssistance(reason: string): void {
+    this.pendingAssistance = null;
+    this.inputIssueValue = `Assistance change not accepted: ${reason.replaceAll('_', ' ')}.`;
+    this.inputRevisionValue++;
+  }
   private async updateHost() {
     const host = this.hostValue!;
     if (!host.ready) {
@@ -650,6 +679,7 @@ export class MatchController {
       return;
     }
     const session = host.scheduler.session;
+    this.applyLocalAssistance();
     if (session.status !== 'over') {
       const target = secondsAt(this.clock.sample().at);
       if (target - session.time > REPLICA_CLOCK_LIMITS.futureSeconds) {
@@ -756,6 +786,11 @@ export class MatchController {
   }
   private present(source: MatchDisplay) {
     this.captured = source;
+    if (this.pendingAssistance) {
+      const pending = this.pendingAssistance, enabled = source.players[source.localSlot].assistance;
+      if (source.epoch !== pending.epoch && enabled !== pending.enabled) this.rejectAssistance('not confirmed after restoration');
+      else if (enabled === pending.enabled) this.pendingAssistance = null;
+    }
     if (this.localDrop) {
       const { slot, releasedAt } = this.localDrop.flight, player = source.players[slot];
       if (source.frame.aircraft[slot].released || player.eliminated ||
@@ -772,6 +807,7 @@ export class MatchController {
     }
     this.hostValue?.scheduler.session.pause();
     this.pendingRelease = null;
+    this.pendingAssistance = null;
     this.localDrop = null;
     if (this.captured) this.present(this.captured);
     if (notify && this.started) this.send({ type: 'match-abort', reason: terminal === 'connection_lost' ? 'recovery_expired' : terminal });
@@ -788,6 +824,7 @@ export class MatchController {
       clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
     }
     this.pendingRelease = null;
+    this.pendingAssistance = null;
     this.localDrop = null; this.captured = null; this.displayValue = null; this.frameValue = null;
     this.startup.close(); this.resumeHandshake?.close(); this.clearRematch();
     this.hostValue?.close(); this.guestValue?.close();

@@ -21,6 +21,8 @@ import { FORMATION_PROFILE } from '../config/multiplayer.js';
 import { connectPeer } from '../network/connect-peer.js';
 import { MultiplayerRecordStore } from '../storage/multiplayer-records.js';
 import { MultiplayerRecordsPanel, MultiplayerResultsPanel } from '../ui/multiplayer-results.js';
+import type { FlightAudio } from '../audio/audio.js';
+import { MultiplayerAudio } from '../audio/multiplayer.js';
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -44,6 +46,8 @@ export class MultiplayerApp {
   private readonly results: MultiplayerResultsPanel;
   private readonly setupRecords: MultiplayerRecordsPanel;
   private mode: IceMode = 'auto';
+  private readonly sound: MultiplayerAudio;
+  private preferredAssistance: boolean | null = null;
   private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
   private animation = 0;
@@ -52,11 +56,13 @@ export class MultiplayerApp {
   private readonly app: HTMLElement;
   private readonly sessionName: HTMLElement;
   constructor(private readonly world: World, private readonly settings: Settings, private readonly leave: () => void,
-    warn: (message: string) => void, invitation: InvitationLink | null = null, private readonly clearInput: () => void = () => {}) {
+    warn: (message: string) => void, private readonly audio: FlightAudio,
+    invitation: InvitationLink | null = null, private readonly clearInput: () => void = () => {}) {
     const app = document.querySelector<HTMLElement>('#app');
     const sessionName = app?.querySelector<HTMLElement>('#session-name');
     if (!app || !sessionName) throw new Error('Missing application UI.');
     this.app = app; this.sessionName = sessionName;
+    this.sound = new MultiplayerAudio(audio);
     this.records = new MultiplayerRecordStore(() => localStorage, warn);
     app.dataset.multiplayer = 'true'; sessionName.textContent = 'PRIVATE TWO-PLAYER FLIGHT';
     for (const element of app.querySelectorAll<HTMLElement>('#panel, #hud')) element.hidden = true;
@@ -64,7 +70,7 @@ export class MultiplayerApp {
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration with shared pause, 15-second connection recovery and completed-match rematches. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes and audio are not available yet.</p>
+        <p>Private host-authoritative play with shared pause, 15-second connection recovery and completed-match rematches. Scores are saved separately from solo. A toggles your impact assistance during flight; any use marks your score assisted. Sound follows the viewed aircraft. Local graphics and sound settings are available while paused.</p>
         <div id="match-setup-records"></div>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
@@ -86,6 +92,7 @@ export class MultiplayerApp {
         <div class="release-panel"><span id="match-view"></span><strong id="match-release"></strong>
           <span id="match-participation" role="status"></span>
           <span id="match-input" role="status"></span><span id="match-assistance"></span><span id="match-phase" role="status"></span></div>
+        <button id="match-assistance-toggle" class="pause-button">TOGGLE ASSIST / A</button>
         <button id="match-pause" class="pause-button">PAUSE MATCH / ESC</button>
       </div>
       <div id="match-pause-card" class="panel" aria-label="Shared pause" hidden>
@@ -94,6 +101,11 @@ export class MultiplayerApp {
         <p id="match-pause-readiness" role="status"></p>
         <p id="match-pause-input" role="status" hidden></p>
         <button id="match-ready" class="primary" disabled>I AM READY</button>
+        <details id="match-local-settings"><summary>MY GRAPHICS AND SOUND</summary>
+          <label>My flight graphics quality <select id="match-local-quality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+          <label>Mute my flight sound <input id="match-local-muted" type="checkbox"></label>
+          <label>My flight volume <input id="match-local-volume" type="range" min="0" max="100"></label>
+        </details>
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
       <section id="match-results" class="panel" hidden></section>
@@ -112,10 +124,23 @@ export class MultiplayerApp {
     this.get('#match-connect-button').onclick = () => { void this.connect(); };
     this.get('#match-exit').onclick = () => { void this.close(); };
     this.get('#match-pause').onclick = () => this.pause();
+    this.get('#match-assistance-toggle').onclick = () => this.toggleAssistance();
     this.get('#match-ready').onclick = () => {
+      void this.audio.unlock();
       try { this.clearInput(); this.match!.setReady(!this.match!.pauseState!.selectedReady); }
       catch (error) { this.fail(error); }
     };
+    for (const id of ['quality', 'muted', 'volume']) this.get(`#match-local-${id}`).addEventListener(id === 'volume' ? 'input' : 'change', () => {
+      try {
+        const quality = this.get<HTMLSelectElement>('#match-local-quality').value;
+        if (quality !== 'low' && quality !== 'medium' && quality !== 'high') throw new Error('Invalid local graphics setting.');
+        const model = this.lobby!.lobby, previous = model.settings;
+        model.setLocal({ quality, muted: this.get<HTMLInputElement>('#match-local-muted').checked,
+          volume: Number(this.get<HTMLInputElement>('#match-local-volume').value) / 100 });
+        this.audio.configure(model.settings); void this.audio.unlock();
+        if (quality !== previous.quality) { this.world.configure(quality); this.resized(); }
+      } catch (error) { this.fail(error); }
+    });
     this.timer = setInterval(() => {
       const match = this.match;
       if (match) void match.update().then(() => {
@@ -172,6 +197,7 @@ export class MultiplayerApp {
     this.lobby = connection;
     this.lobbyPanel = new LobbyPanel(this.get('#match-lobby'), connection.lobby, () => {
       this.world.configure(connection.lobby.settings.quality);
+      this.audio.configure(connection.lobby.settings); void this.audio.unlock();
       this.resized();
     });
   }
@@ -180,6 +206,8 @@ export class MultiplayerApp {
     this.world.setTerrain(prepared.course.manifest.terrain);
     this.app.dataset.terrain = prepared.course.manifest.terrain;
     this.world.configure(prepared.lobby.settings.quality);
+    this.audio.configure(prepared.lobby.settings);
+    this.preferredAssistance = prepared.lobby.settings.assist;
     this.world.reset();
     // Author for the narrowest supported viewport, not the host's window on behalf of the guest.
     this.match = new MatchController(prepared, (_slot, view, range) =>
@@ -202,6 +230,7 @@ export class MultiplayerApp {
   }
   private returnToLobby(previous: PreparedConnection, next: NonNullable<ReturnType<MatchController['takeRematch']>>): void {
     this.clearInput(); this.match = null;
+    this.sound.reset();
     this.effects?.dispose(); this.effects = null;
     this.lobbyPanel?.dispose(); this.lobbyPanel = null; this.lobby?.close();
     this.renderedDisplay = null; this.lastPaint = -Infinity; this.lastPaintPhase = ''; this.lastInputRevision = -1;
@@ -211,7 +240,8 @@ export class MultiplayerApp {
     for (const id of ['match-instruments', 'match-pause-card', 'match-message', 'match-network']) this.get(`#${id}`).hidden = true;
     this.text('#match-exit', 'LEAVE PRIVATE FLIGHT');
     this.root.dataset.phase = 'lobby'; delete this.root.dataset.time;
-    const settings = { ...previous.lobby.settings, terrain: previous.course.manifest.terrain };
+    const settings = { ...previous.lobby.settings, terrain: previous.course.manifest.terrain,
+      assist: this.preferredAssistance ?? previous.lobby.settings.assist };
     const seed = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff;
     try {
       this.showLobby(new LobbyConnection(next.link, settings, previous.course.manifest.compatibility, seed, previous.role,
@@ -250,6 +280,7 @@ export class MultiplayerApp {
     if (this.match) {
       if (!this.active) return;
       const match = this.match, next = match.display;
+      this.sound.setActive((match.phase === 'playing' || match.phase === 'ending') && !document.hidden && document.hasFocus());
       if (this.root.dataset.phase !== match.phase) this.clearInput();
       this.root.dataset.phase = match.phase;
       this.get('#match-network').hidden = !match.serviceWarning;
@@ -259,6 +290,12 @@ export class MultiplayerApp {
       this.get('.release-panel').hidden = (!!pause || !!recovery) && match.phase !== 'held';
       this.get('#match-ready').hidden = !!recovery;
       this.text('#match-pause-card h2', recovery ? 'RECONNECTING' : 'SHARED PAUSE');
+      if (pause || recovery) {
+        const settings = this.lobby!.lobby.settings;
+        this.get<HTMLSelectElement>('#match-local-quality').value = settings.quality;
+        this.get<HTMLInputElement>('#match-local-muted').checked = settings.muted;
+        this.get<HTMLInputElement>('#match-local-volume').value = String(settings.volume * 100);
+      }
       if (recovery) {
         this.text('#match-pause-reason', `Up to ${Math.ceil(recovery.remainingMs / 1000)} seconds remaining. Flight is frozen.`);
         this.text('#match-pause-readiness', `Attempt ${recovery.attempt} / ${recovery.stage.toUpperCase()}. Both players must confirm when restored.`);
@@ -286,6 +323,8 @@ export class MultiplayerApp {
         this.lastPaint = frame.time;
         this.lastPaintPhase = match.phase;
         this.renderedDisplay = { ...next, frame };
+        this.sound.update(this.renderedDisplay, match.timeline!.effects.map(effect => effect.data));
+        this.preferredAssistance = next.players[next.localSlot].assistance;
         this.lastInputRevision = match.inputRevision;
         this.redraw = false;
       }
@@ -310,6 +349,9 @@ export class MultiplayerApp {
         ? display.winner === 'draw' ? 'MATCH DRAW' : `PLAYER ${Number(display.winner) + 1} WINS`
         : ['held', 'pausing', 'paused', 'countdown'].includes(match.phase) ? 'MATCH PAUSED' : display ? matchReleaseStatus(display) : 'STAND BY');
       this.text('#match-assistance', display ? display.players[display.localSlot].assistance ? 'YOUR IMPACT ASSIST: ON' : 'YOUR IMPACT ASSIST: OFF' : '');
+      this.get<HTMLButtonElement>('#match-assistance-toggle').disabled = !match.assistanceState.canChange;
+      this.text('#match-assistance-toggle', match.assistanceState.pending ? 'ASSIST CHANGE PENDING' : 'TOGGLE ASSIST / A');
+      this.get('#match-assistance-toggle').hidden = match.phase !== 'playing' || !!display?.players[display.localSlot].eliminated;
       this.text('#match-input', match.inputIssue ?? '');
       this.text('#match-speed', frame ? `SPD ${Math.round(speedOf(frame.aircraft[frame.viewedSlot].pose))}` : '');
       this.text('#match-pass', frame ? `${TERRAIN_THEMES[frame.terrain].label} / PASS ${frame.targets.at(-1)!.id}` : '');
@@ -346,6 +388,9 @@ export class MultiplayerApp {
     }
   }
   release(): void { if (this.renderedDisplay) this.match?.release(this.renderedDisplay.frame, this.renderedDisplay.epoch); }
+  toggleAssistance(): void {
+    if (this.match?.assistanceState.canChange) this.match.setAssistance(!this.match.assistanceState.enabled);
+  }
   private recordMatch(): void {
     if (!this.match || !this.records.active) return;
     try {
@@ -371,6 +416,7 @@ export class MultiplayerApp {
   availability(): void {
     const valid = this.viewportValid(), available = valid && !document.hidden && document.hasFocus();
     if (!available) this.clearInput();
+    if (!available) this.sound.setActive(false);
     this.match?.setAvailable(available, valid ? 'focus' : 'viewport');
     if (!available && this.lobby?.lobby.selectedReady && !this.match) this.lobby.lobby.setReady(false);
   }
@@ -386,6 +432,7 @@ export class MultiplayerApp {
   fail(error: unknown): void {
     if (!this.active || this.failed) return;
     this.failed = true;
+    this.sound.reset();
     clearInterval(this.timer); cancelAnimationFrame(this.animation); this.prewarmAbort.abort();
     const message = error instanceof Error ? error.message : 'The multiplayer scene could not continue.';
     this.match?.hold(message);
@@ -406,6 +453,7 @@ export class MultiplayerApp {
     try { this.recordMatch(); }
     catch (error) { this.fail(error); }
     this.records.finish('left');
+    this.sound.reset(); this.audio.configure(this.settings);
     this.active = false; clearInterval(this.timer); cancelAnimationFrame(this.animation);
     this.prewarmAbort.abort();
     this.match?.close(); this.lobby?.close(); this.lobbyPanel?.dispose();

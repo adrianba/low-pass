@@ -18,7 +18,7 @@ type Command = Extract<WireMessage, { type: 'command' }>;
 type Acknowledgement = Extract<MessageBody, { type: 'ack' }>;
 type EventBody = Extract<MessageBody, { type: 'event' }>;
 interface Accepted {
-  coreId: number; slot: PlayerSlot; inputSequence: number; epoch: number; intent: string; plan: Reference;
+  coreId: number; slot: PlayerSlot; inputSequence: number; epoch: number; intent: string; plan: Reference | null;
 }
 interface Published extends Accepted { eventSequence: number }
 interface Pending { source: SessionEvent; index: number }
@@ -54,8 +54,16 @@ export class SessionJournal {
     for (const [sequence, ref] of this.plans.references) this.authority.registerPlan(sequence, ref);
   }
   receiveRelease(role: Role, value: Command, receivedAt?: number): ReleaseDecision {
+    if (value.command.action !== 'release') throw new Error('Expected a release command.');
+    return this.receiveInput(role, value, receivedAt);
+  }
+  receiveAssistance(role: Role, value: Command): ReleaseDecision {
+    if (value.command.action !== 'assistance') throw new Error('Expected an assistance command.');
+    return this.receiveInput(role, value);
+  }
+  private receiveInput(role: Role, value: Command, receivedAt?: number): ReleaseDecision {
     const message = decodeMessage(encodeMessage(value), { sessionId: this.sessionId, epoch: value.epoch, peer: role, channel: 'control' });
-    if (message.type !== 'command' || message.command.action !== 'release') throw new Error('Expected a release command.');
+    if (message.type !== 'command' || message.command.action !== 'release' && message.command.action !== 'assistance') throw new Error('Expected a gameplay input.');
     if (this.acknowledgements.length >= 64) throw new Error('Release acknowledgement budget exhausted.');
     const intent = JSON.stringify(message.command);
     const published = this.published[message.slot].get(message.inputSequence);
@@ -63,7 +71,7 @@ export class SessionJournal {
       record.slot === message.slot && record.inputSequence === message.inputSequence);
     if (message.epoch === this.authority.epoch && remembered?.epoch === message.epoch) {
       const decision: ReleaseDecision = remembered.intent === intent
-        ? { accepted: true, releaseEventId: remembered.coreId } : { accepted: false, reason: 'duplicate' };
+        ? { accepted: true, coreEventId: remembered.coreId } : { accepted: false, reason: 'duplicate' };
       if (!decision.accepted || published) this.acknowledgements.push(
         releaseAcknowledgement(message.slot, message.inputSequence, decision, () => published!.eventSequence));
       return decision;
@@ -71,9 +79,10 @@ export class SessionJournal {
     if (this.accepted.size >= MAX_PLANS * 2) throw new Error('Unpublished release budget exhausted.');
     const decision = this.authority.receive(role, message, receivedAt);
     if (decision.accepted) {
-      if (this.accepted.has(decision.releaseEventId)) throw new Error('Release publication identity conflict.');
-      this.accepted.set(decision.releaseEventId, { coreId: decision.releaseEventId, slot: message.slot,
-        inputSequence: message.inputSequence, epoch: message.epoch, intent, plan: structuredClone(message.command.plan) });
+      if (this.accepted.has(decision.coreEventId)) throw new Error('Input publication identity conflict.');
+      this.accepted.set(decision.coreEventId, { coreId: decision.coreEventId, slot: message.slot,
+        inputSequence: message.inputSequence, epoch: message.epoch, intent,
+        plan: message.command.action === 'release' ? structuredClone(message.command.plan) : null });
     } else this.acknowledgements.push(releaseAcknowledgement(message.slot, message.inputSequence, decision,
       () => { throw new Error('Rejected releases have no published event.'); }));
     return decision;
@@ -117,11 +126,14 @@ export class SessionJournal {
   private bodies(source: SessionEvent): EventBody['event'][] | null {
     if (source.type === 'released') {
       const accepted = this.accepted.get(source.eventId), plan = this.plans.references.get(source.sequence);
-      if (!accepted || !plan || accepted.plan.id !== plan.id || accepted.plan.digest !== plan.digest) {
+      if (!accepted?.plan || !plan || accepted.plan.id !== plan.id || accepted.plan.digest !== plan.digest) {
         throw new Error('Release publication lost its input or retained plan.');
       }
       return [{ action: 'released', slot: source.slot, sequence: source.sequence, at: stampAt(source.time),
         inputSequence: accepted.inputSequence, plan: accepted.plan }];
+    }
+    if (source.type === 'assistance') {
+      return [{ action: 'assistance', slot: source.slot, enabled: source.enabled, assisted: source.assisted }];
     }
     if (source.type === 'resolved') {
       if (!this.plans.references.has(source.result.sequence)) throw new Error('Keep the result flight until its outcome is published.');
@@ -160,13 +172,13 @@ export class SessionJournal {
       const result = send(structuredClone(body));
       if (!result.ok) return { sent, blocked: result.reason };
       this.publishedEvent = eventSequence; pending.index++; sent++;
-      if (pending.source.type === 'released') {
+      if (pending.source.type === 'released' || pending.source.type === 'assistance') {
         const accepted = this.accepted.get(pending.source.eventId)!;
         const cache = this.published[accepted.slot];
         cache.set(accepted.inputSequence, { ...accepted, eventSequence });
         if (cache.size > RELEASE_DECISIONS) cache.delete(cache.keys().next().value!);
         this.acknowledgements.push(releaseAcknowledgement(accepted.slot, accepted.inputSequence,
-          { accepted: true, releaseEventId: accepted.coreId }, () => eventSequence));
+          { accepted: true, coreEventId: accepted.coreId }, () => eventSequence));
         this.accepted.delete(accepted.coreId);
       }
       if (pending.index === bodies.length) {

@@ -8,18 +8,24 @@ export class FlightAudio {
   private whine: OscillatorNode | null = null;
   private noise: AudioBuffer | null = null;
   private settings: Settings;
-  private voices = 0;
+  private readonly voices = new Map<AudioScheduledSourceNode, () => void>();
+  private playing = false;
   private falling: OscillatorNode | null = null;
   private fallingGain: GainNode | null = null;
 
   constructor(settings: Settings, private readonly warn: (message: string) => void) { this.settings = settings; }
 
   async start(): Promise<void> {
+    this.playing = true;
+    await this.unlock();
+  }
+  async unlock(): Promise<void> {
     try {
       if (!this.context) {
         const ctx = new AudioContext();
         this.context = ctx;
         const master = ctx.createGain();
+        master.gain.value = 0;
         this.master = master;
         this.engineGain = ctx.createGain();
         this.engineGain.connect(master);
@@ -53,15 +59,17 @@ export class FlightAudio {
       }
       this.configure(this.settings);
       await this.context.resume();
+      if (!this.playing) await this.context.suspend();
     } catch (error) {
       this.warn(`Audio unavailable: ${error instanceof Error ? error.message : String(error)} You can continue without sound.`);
     }
   }
   configure(settings: Settings): void {
     this.settings = settings;
-    if (this.master && this.context) this.master.gain.setTargetAtTime(settings.muted ? 0 : settings.volume, this.context.currentTime, 0.03);
+    if (this.master && this.context) this.master.gain.setTargetAtTime(!this.playing || settings.muted ? 0 : settings.volume, this.context.currentTime, 0.03);
   }
   async pause(): Promise<void> {
+    this.playing = false;
     try { await this.context?.suspend(); }
     catch (error) { this.warn(`Could not pause audio: ${String(error)}`); }
   }
@@ -79,32 +87,37 @@ export class FlightAudio {
     }
     if (this.falling && bombAge !== null) this.falling.frequency.setTargetAtTime(Math.max(120, 1500 - bombAge * 380), ctx.currentTime, 0.04);
     if (this.falling && bombAge === null) {
-      this.falling.stop();
-      this.falling.disconnect();
-      this.fallingGain?.disconnect();
-      this.falling = null;
-      this.fallingGain = null;
+      this.stopFalling();
     }
+  }
+  private stopFalling(): void {
+    this.falling?.stop(); this.falling?.disconnect(); this.fallingGain?.disconnect();
+    this.falling = null; this.fallingGain = null;
+  }
+  reset(): void {
+    this.stopFalling();
+    for (const [source, release] of this.voices) { source.stop(); release(); }
+    if (this.context) this.engineGain?.gain.setTargetAtTime(0, this.context.currentTime, 0.01);
   }
   cue(type: 'release' | 'hit' | 'miss' | 'splash' | 'over' | 'target' | CombatCue): void {
     const ctx = this.context, master = this.master;
-    if (!ctx || !master || ctx.state !== 'running' || this.voices > 6) return;
+    if (!ctx || !master || !this.playing || ctx.state !== 'running' || this.voices.size >= 7) return;
     const gain = ctx.createGain();
     const now = ctx.currentTime;
     const impact = type === 'hit' || type === 'miss' || type === 'splash' || type === 'destroyed' || type === 'damaged';
     const duration = type === 'destroyed' ? 2.6 : type === 'damaged' ? 0.65 : impact ? 1.2 : type === 'flyby' ? 0.5
       : type === 'over' || type === 'missile' ? 0.8 : 0.18;
     let source: OscillatorNode | AudioBufferSourceNode;
+    let filter: BiquadFilterNode | null = null;
     if (impact || type === 'flyby') {
       const noise = ctx.createBufferSource();
       noise.buffer = this.noise;
       noise.loop = true;
       source = noise;
-      const filter = ctx.createBiquadFilter();
+      filter = ctx.createBiquadFilter();
       filter.type = type === 'flyby' || type === 'splash' ? 'bandpass' : 'lowpass';
       filter.frequency.value = type === 'splash' ? 2800 : type === 'flyby' ? 1800 : type === 'destroyed' ? 1100 : 700;
       source.connect(filter).connect(gain);
-      source.onended = () => { this.voices--; source.disconnect(); filter.disconnect(); gain.disconnect(); };
     } else {
       const tone = ctx.createOscillator();
       tone.type = type === 'over' || type === 'missile' ? 'triangle' : 'sine';
@@ -113,13 +126,17 @@ export class FlightAudio {
       tone.frequency.exponentialRampToValueAtTime(frequency * (type === 'missile' ? 4 : 0.55), now + duration);
       source = tone;
       source.connect(gain);
-      source.onended = () => { this.voices--; source.disconnect(); gain.disconnect(); };
     }
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(type === 'destroyed' ? 2.5 : type === 'damaged' ? 1.4 : impact ? 1 : type === 'flyby' ? 0.9 : 0.10, now + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
     gain.connect(master);
-    this.voices++;
+    const release = () => {
+      if (!this.voices.delete(source)) return;
+      source.onended = null; source.disconnect(); filter?.disconnect(); gain.disconnect();
+    };
+    this.voices.set(source, release);
+    source.onended = release;
     source.start(now);
     source.stop(now + duration);
   }

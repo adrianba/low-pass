@@ -94,6 +94,35 @@ function setup(terrain: TerrainTheme = 'green-valley') {
 }
 
 describe('authoritative publication journal', () => {
+  it('orders and acknowledges sticky assistance with the same input namespace as releases', () => {
+    const state = setup();
+    const input = (inputSequence: number, enabled: boolean): Extract<WireMessage, { type: 'command' }> => ({
+      ...base, sender: 'guest', type: 'command', slot: 1, inputSequence, command: { action: 'assistance', enabled },
+    });
+    const accepted = state.journal.receiveAssistance('guest', input(1, true));
+    expect(accepted).toEqual({ accepted: true, coreEventId: 1 });
+    expect(state.journal.receiveAssistance('guest', input(1, true))).toEqual(accepted);
+    expect(state.journal.collect()).toHaveLength(1);
+    state.journal.flush(state.send, 1);
+    expect(state.journal.canSnapshot).toBe(false);
+    expect(state.sent.at(-1)).toMatchObject({ type: 'event', event: { action: 'assistance', slot: 1, enabled: true, assisted: true } });
+    state.journal.flush(state.send);
+    expect(state.sent.at(-1)).toMatchObject({ type: 'ack', inputSequence: 1, decision: { accepted: true, eventSequence: 1 } });
+    state.send(state.journal.snapshot(0));
+    expect(state.replica.presentationState!.players[1]).toMatchObject({ assistance: true, assisted: true });
+    expect(state.journal.receiveAssistance('guest', input(2, false)).accepted).toBe(true);
+    expect(state.journal.receiveAssistance('guest', input(1, true))).toEqual(accepted);
+    state.journal.collect(); state.journal.flush(state.send); state.send(state.journal.snapshot(0));
+    expect(state.replica.presentationState!.players[1]).toMatchObject({ assistance: false, assisted: true });
+    expect(state.replica.presentationState!.lastInputs).toEqual([0, 2]);
+    expect(state.journal.receiveRelease('guest', state.command(1, 3)).accepted).toBe(false);
+    expect(state.journal.receiveAssistance('guest', input(3, true))).toEqual({ accepted: false, reason: 'duplicate' });
+    expect(state.journal.receiveAssistance('guest', input(4, true)).accepted).toBe(true);
+    state.journal.collect(); state.journal.flush(state.send);
+    state.journal.authority.beginPause();
+    expect(state.journal.receiveAssistance('guest', input(5, false))).toEqual({ accepted: false, reason: 'paused' });
+    expect(() => state.journal.receiveAssistance('host', input(6, true))).toThrow('role');
+  });
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('maps %s releases to actual wire events after combat inserts extra events', async terrain => {
     const state = setup(terrain), plan = state.plans[0]!;
     state.session.advanceTo(plan.attempts[0].acquireAt);
@@ -107,7 +136,7 @@ describe('authoritative publication journal', () => {
     const command = state.command(1);
     state.session.advanceTo(Math.max(state.session.time, plan.attempts[1].releaseAt + 0.2));
     const decision = state.journal.receiveRelease('guest', command);
-    expect(decision).toEqual({ accepted: true, releaseEventId: coreBefore + 1 });
+    expect(decision).toEqual({ accepted: true, coreEventId: coreBefore + 1 });
     state.journal.collect();
     expect(() => state.journal.snapshot(100)).toThrow('complete');
     const before = state.journal.eventSequence;

@@ -697,7 +697,10 @@ slot or flight path. Eliminated players cannot release bombs; both retain pause
 and readiness controls. An eliminated host must keep its tab open because it
 still runs the shared simulation. Once both players are out, the HUD identifies
 the remaining finale rather than calling a destroyed aircraft a survivor.
-Lobby-selected assistance uses canonical first ground/water contact from your
+Each player can change their own assistance with **A** or **TOGGLE ASSIST** while
+flying. The control waits for the host's published decision; both browsers see
+the confirmed setting, and turning it off never removes an assisted record flag.
+Rejected or unconfirmed changes are reported. Assistance uses canonical first ground/water contact from your
 drawn pose and a projected overlay; it is hidden after release, while held and
 when spectating. Water never receives an on-target indicator.
 Space records the **actually drawn** flight time, not a newer controller frame.
@@ -744,9 +747,17 @@ fresh, while local multiplayer preferences and earlier match records remain.
 Each new match has a distinct record identity. Incomplete/disconnected matches
 cannot rematch through a closed connection; return to the menu instead.
 
-**Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes
-and audio are subsequent steps.
-This is not the full two-computer Windows Edge review checkpoint.
+Audio unlocks silently on the initial private-flight gesture and follows the
+viewed aircraft's actual 3D speed, falling bomb and confirmed outcome/combat
+cues, including survivor spectating. Pause suspends sound. Restored epochs,
+camera handoffs and rematches discard stale one-shots rather than replaying
+old events. Voices remain bounded and are disconnected on reset. Open
+**MY GRAPHICS AND SOUND** while paused to change local quality, mute or volume;
+these choices do not affect the other player or saved solo preferences.
+
+**Incomplete:** unrecoverable errors still require leaving the preview, and
+sustained rendering/failure acceptance remains open. This is not the full
+two-computer Windows Edge review checkpoint.
 
 Confirmed eliminations are saved immediately, before their visual finales, under
 `low-pass.multiplayer-records.v1`. Each browser keeps up to ten completed individual

@@ -1208,9 +1208,21 @@ record identities. A canceled/late readiness transition never starts gameplay
 without that new lobby's explicit readiness. Terminal connection failures still
 require leaving, not an attempted handoff of a closed link.
 
-In-flight assistance changes and audio are not complete. The local
-preview labels these limitations; no production deployment or publication is
-implied by the opt-in build command.
+In-flight assistance now uses the same bounded authoritative input sequence and
+publication journal as release commands. Its reliable event and acknowledgement
+precede snapshots, changes affect only the requesting slot, and assisted status
+is sticky. The UI waits for verified presentation; restoration reports commands
+that were not confirmed. Initial lobby configuration remains separate from
+in-flight events.
+
+Viewed-player audio uses the existing local Web Audio synthesizer, silently
+unlocked by the initial user gesture. Full-3D engine speed, bomb tone and
+canonical result/combat cues follow the selected aircraft. Checkpoint/view
+changes suppress old cues, pause suspends audio, and reset disconnects bounded
+transient voices. Local quality/mute/volume controls are available while paused;
+leaving restores the original solo preferences. Sustained rendering and failure
+acceptance remains open; no production deployment or publication is implied by
+the opt-in build command.
 
 The pause foundation can now rotate a sealed host journal into a new paused
 checkpoint and then a resumed epoch without recreating the scheduler or seeded

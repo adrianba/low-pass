@@ -90,12 +90,12 @@ ui = new UI(settings, {
   ...(multiplayerPreview ? { multiplayer() {
     if (!world || multiplayer || openingMultiplayer || screen !== 'menu' && screen !== 'over') return;
     openingMultiplayer = true; key.up();
-    void audio.pause();
+    void audio.pause(); audio.reset(); void audio.unlock();
     void import('./app/multiplayer').then(({ MultiplayerApp }) => {
       multiplayer = new MultiplayerApp(world!, settings, () => {
         multiplayer = null; key.up(); prediction = null; preview = new Run(7, settings.terrain); setScreen('menu');
         resumeSoloRendering?.();
-      }, warn, invitation, () => key.up());
+      }, warn, audio, invitation, () => key.up());
       world!.engine.stopRenderLoop();
       invitation = null;
     }).catch(fail).finally(() => { openingMultiplayer = false; });
@@ -143,6 +143,7 @@ document.addEventListener('keydown', event => {
       if (key.down(event.repeat)) multiplayer.release();
     }
     if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); key.up(); multiplayer.pause(); }
+    if (event.code === 'KeyA' && !event.repeat && !editing && !control) multiplayer.toggleAssistance();
     return;
   }
   if (event.code === 'Space') {
