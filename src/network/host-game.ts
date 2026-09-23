@@ -91,13 +91,13 @@ export class HostGame {
     if (!Number.isFinite(time) || time < this.lastWall) throw new Error('Invalid host game clock.');
     this.lastWall = time; return time;
   }
-  receive(message: Extract<WireMessage, { type: 'command' | 'transfer-ready' }>): void {
+  receive(message: Extract<WireMessage, { type: 'command' | 'transfer-ready' }>, receivedAt?: number): void {
     if (this.closed || message.sessionId !== this.sessionId || message.epoch !== this.epoch || message.sender !== 'guest') {
       throw new Error('Unexpected host game message identity.');
     }
     if (message.type === 'command') {
       if (message.command.action !== 'release') throw new Error('Lifecycle commands belong to the match controller.');
-      this.journal.receiveRelease('guest', message); return;
+      this.journal.receiveRelease('guest', message, receivedAt); return;
     }
     const ref = message.transfer;
     const flight = [...this.flights.values()].find(value => value.transfer.offer.id === ref.id);
@@ -109,13 +109,13 @@ export class HostGame {
     if (flight) this.plans.acknowledge(ref);
     else if (!checkpoint) this.journal.acknowledgeEffect(ref);
   }
-  release(displayedAt: number, sequence = this.scheduler.sequence) {
+  release(displayedAt: number, sequence = this.scheduler.sequence, receivedAt?: number) {
     if (!this.ready || this.busy) throw new Error('Host game is not ready for local input.');
     const ref = this.plans.references.get(sequence);
     if (!ref) throw new Error('Local release requires its published flight.');
     return this.journal.receiveRelease('host', { version: PROTOCOL_VERSION, sessionId: this.sessionId,
       epoch: this.epoch, sender: 'host', sequence: 0, type: 'command', slot: 0, inputSequence: ++this.localInput,
-      command: releaseIntent(sequence, ref, displayedAt) });
+      command: releaseIntent(sequence, ref, displayedAt) }, receivedAt);
   }
   /** Returns a hold reason; the lifecycle owner must not discard elapsed time or catch up unseen flight. */
   async pump(target = this.scheduler.session.time): Promise<HostGameWait> {

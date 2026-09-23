@@ -7,6 +7,7 @@ import { FormationScheduler } from '../../src/game/multiplayer/scheduler';
 import { latestBombSettlement } from '../../src/game/multiplayer/schedule-bounds';
 import { distance } from '../../src/simulation/math';
 import { surfaceFor } from '../../src/terrain/surface';
+import { FORMATION_PROFILE } from '../../src/config/multiplayer';
 
 describe('host-authored per-player combat events', () => {
   it.each(['green-valley', 'desert', 'river-canyon'] as const)('authors both %s damage sequences and finales from the result-time state', terrain => {
@@ -20,7 +21,7 @@ describe('host-authored per-player combat events', () => {
         expect(result.misses).toBe(sequence + 1);
         expect(result.score).toBe(0);
         const attempt = plan.attempts[result.slot];
-        const view = { ...attempt.camera.at(result.time - attempt.releaseAt), aspect: sequence % 2 ? 0.75 : 16 / 9, range: 2200 };
+        const view = { ...attempt.camera.at(result.time - attempt.releaseAt), aspect: FORMATION_PROFILE.viewport.minAspect, range: 2200 };
         const event = authorCombatPlan(result, plan, 7, view)!;
         expect(event).toMatchObject({ id: result.id, slot: result.slot, sequence, bornAt: result.time,
           damageLevel: Math.min(2, sequence + 1) });

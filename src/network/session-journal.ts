@@ -53,7 +53,7 @@ export class SessionJournal {
   authorizePlans(): void {
     for (const [sequence, ref] of this.plans.references) this.authority.registerPlan(sequence, ref);
   }
-  receiveRelease(role: Role, value: Command): ReleaseDecision {
+  receiveRelease(role: Role, value: Command, receivedAt?: number): ReleaseDecision {
     const message = decodeMessage(encodeMessage(value), { sessionId: this.sessionId, epoch: value.epoch, peer: role, channel: 'control' });
     if (message.type !== 'command' || message.command.action !== 'release') throw new Error('Expected a release command.');
     if (this.acknowledgements.length >= 64) throw new Error('Release acknowledgement budget exhausted.');
@@ -69,7 +69,7 @@ export class SessionJournal {
       return decision;
     }
     if (this.accepted.size >= MAX_PLANS * 2) throw new Error('Unpublished release budget exhausted.');
-    const decision = this.authority.receive(role, message);
+    const decision = this.authority.receive(role, message, receivedAt);
     if (decision.accepted) {
       if (this.accepted.has(decision.releaseEventId)) throw new Error('Release publication identity conflict.');
       this.accepted.set(decision.releaseEventId, { coreId: decision.releaseEventId, slot: message.slot,

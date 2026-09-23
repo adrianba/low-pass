@@ -6,7 +6,7 @@ import { lobbyInput, lobbyState } from './lobby.js';
 export const command = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('release'), sequence, plan: reference, displayedAt: stamp }),
   z.strictObject({ action: z.literal('assistance'), enabled: z.boolean() }),
-  z.strictObject({ action: z.literal('pause') }),
+  z.strictObject({ action: z.literal('pause'), reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication']).optional() }),
   z.strictObject({ action: z.literal('ready'), barrier: counter }),
   z.strictObject({ action: z.literal('leave') }),
 ]);
@@ -48,6 +48,11 @@ export const wireMessage = z.discriminatedUnion('type', [
   z.strictObject({ ...envelope, type: z.literal('start-cancel'), attempt: counter.min(1) }),
   z.strictObject({ ...envelope, type: z.literal('lobby-state'), state: lobbyState }),
   z.strictObject({ ...envelope, type: z.literal('lobby-input'), input: lobbyInput }),
+  z.strictObject({ ...envelope, type: z.literal('pause-state'), barrier: counter.min(1), update: counter,
+    at: stamp, by: slot, reason: z.enum(['manual', 'focus', 'viewport', 'clock', 'publication']),
+    stage: z.enum(['settling', 'restoring', 'ready']), ready: z.tuple([z.boolean(), z.boolean()]) })
+    .refine(v => v.barrier === v.epoch + Number(v.stage === 'settling') &&
+      (v.stage === 'ready' || !v.ready.some(Boolean))),
   z.strictObject({ ...envelope, type: z.literal('hello'), compatibility,
     viewport: z.strictObject({ aspect: z.number().min(0.75).max(2) }) }),
   z.strictObject({ ...envelope, type: z.literal('command'), slot, inputSequence: counter.min(1), command }),
@@ -87,6 +92,7 @@ export const HOST_ONLY = new Set<WireMessage['type']>([
   'lobby-state',
   'course-manifest',
   'start-offer', 'start-commit', 'start-cancel',
+  'pause-state',
 ]);
 export function messageChannel(message: WireMessage): 'control' | 'state' {
   return message.type === 'snapshot' || message.type === 'ping' || message.type === 'pong' ? 'state' : 'control';

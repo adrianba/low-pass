@@ -9,9 +9,10 @@ import { surfaceFor } from '../../src/terrain/surface';
 import { combat } from '../../shared/protocol/game';
 import { combatTransferData, expandCombat } from '../../src/network/combat-data';
 import { formationData } from '../../src/network/formation-data';
+import { FORMATION_PROFILE } from '../../src/config/multiplayer';
 
 describe('combat through shared course handoffs', () => {
-  it.each(['green-valley', 'desert', 'river-canyon'] as const)('meets the actual next %s track for both surviving aircraft', terrain => {
+  it.each(['green-valley', 'desert', 'river-canyon'] as const)('meets the actual next %s track at the narrowest supported viewport for both aircraft', terrain => {
     const scheduler = new FormationScheduler(terrain, 7);
     for (let sequence = 0; sequence < 15; sequence++) {
       const plan = scheduler.plan(), next = scheduler.plan(sequence + 1), bornAt = plan.handoffAt - 0.75;
@@ -33,7 +34,8 @@ describe('combat through shared course handoffs', () => {
       for (const slot of [0, 1] as const) {
         const result = { id: sequence * 2 + slot + 1, slot, sequence, time: bornAt,
           points: 0, score: sequence * 100, misses: 1, assisted: false, impact: null };
-        const view = { ...plan.attempts[slot].camera.at(bornAt - plan.attempts[slot].releaseAt), aspect: 16 / 9, range: 2200 };
+        const view = { ...plan.attempts[slot].camera.at(bornAt - plan.attempts[slot].releaseAt),
+          aspect: FORMATION_PROFILE.viewport.minAspect, range: 2200 };
         expect(() => authorCombatPlan(result, plan, 7, view)).toThrow('next scheduled');
         const event = authorCombatPlan(result, plan, 7, view, undefined, next)!;
         const motion = AircraftMotion.fromData(referenced(event).missile.motion);

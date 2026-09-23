@@ -52,10 +52,12 @@ export class ReleaseAuthority {
     for (const key of this.plans.keys()) if (!retained.includes(key)) this.plans.delete(key);
     this.plans.set(sequence, owned);
   }
-  receive(peer: Role, value: CommandMessage): ReleaseDecision {
+  receive(peer: Role, value: CommandMessage, receivedAt?: number): ReleaseDecision {
     const message = decodeMessage(encodeMessage(value), { sessionId: this.sessionId, epoch: value.epoch, peer, channel: 'control' });
     if (message.type !== 'command' || message.command.action !== 'release') throw new ProtocolError('invalid_message');
     const now = this.readNow();
+    const arrival = receivedAt ?? now;
+    if (!Number.isFinite(arrival) || arrival > now) throw new Error('Invalid local command receipt time.');
     if (message.epoch !== this.currentEpoch) return { accepted: false, reason: 'epoch' };
     const slot = message.slot, input = message.inputSequence, intent = JSON.stringify(message.command);
     const remembered = this.decisions[slot].get(input);
@@ -63,7 +65,7 @@ export class ReleaseAuthority {
     if (input <= this.highest[slot]) return { accepted: false, reason: 'duplicate' };
     let decision: ReleaseDecision;
     const plan = this.plans.get(message.command.sequence);
-    if (this.phase === 'paused' || this.phase === 'settling' && now > this.pauseDeadline) {
+    if (this.phase === 'paused' || this.phase === 'settling' && arrival > this.pauseDeadline) {
       decision = { accepted: false, reason: 'paused' };
     } else if (!plan || !this.session.planSequences.includes(message.command.sequence) ||
       plan.id !== message.command.plan.id || plan.digest !== message.command.plan.digest) {
@@ -94,12 +96,13 @@ export class ReleaseAuthority {
     }
     return structuredClone(decision);
   }
-  beginPause(): void {
+  beginPause(): number {
     if (this.phase !== 'running' || this.session.status !== 'running' && this.session.status !== 'over') {
       throw new Error('Pause requires a running authority.');
     }
     this.pauseDeadline = this.readNow() + this.session.releaseGraceSeconds * 1000;
     this.session.pause(); this.phase = 'settling';
+    return this.pauseDeadline;
   }
   sealPause(): void {
     if (this.phase !== 'settling' || this.readNow() <= this.pauseDeadline) throw new Error('Pause input settlement is incomplete.');

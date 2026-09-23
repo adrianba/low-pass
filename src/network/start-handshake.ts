@@ -34,6 +34,12 @@ export class StartHandshake {
   get phase() { return this.phaseValue; }
   get reason() { return this.reasonValue; }
   get pendingCount() { return this.outgoing.length; }
+  get readiness() { return { local: this.local.ready, peer: this.remote.ready }; }
+  peerUnavailable(): void {
+    if (this.role !== 'host' || this.phaseValue === 'running' || this.phaseValue === 'closed') throw new Error('No active host readiness barrier.');
+    this.remote.ready = false;
+    if (this.active) this.cancel('peer');
+  }
   get remainingMs(): number | null {
     if (!this.active || this.phaseValue !== 'countdown') return null;
     const now = this.readNow(), remote = this.role === 'guest' ? this.estimate() : null;

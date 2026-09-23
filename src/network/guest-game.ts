@@ -1,5 +1,5 @@
 import { decodeMessage, encodeMessage } from '../../shared/protocol/codec.js';
-import { secondsAt } from '../../shared/protocol/game.js';
+import { counter, secondsAt } from '../../shared/protocol/game.js';
 import type { SharedWorldFrame } from '../rendering/shared-frame.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
@@ -20,6 +20,7 @@ export class GuestGame {
   private readonly outgoing: MessageBody[] = [];
   private readonly verifiedWaiting: Array<Extract<MessageBody, { type: 'transfer-ready' }>> = [];
   private lastInput = 0;
+  private lastReleaseInput: number | null = null;
   private releasedSequence = -1;
   private lastDecision: Extract<WireMessage, { type: 'ack' }>['decision'] | null = null;
   private closed = false;
@@ -38,7 +39,8 @@ export class GuestGame {
     if (this.closed) throw new Error('Guest game is closed.');
     this.replica.advanceEpoch(nextEpoch);
     this.receiver.reset(); this.outgoing.length = 0; this.verifiedWaiting.length = 0;
-    this.displayed = null; this.releasedSequence = -1; this.lastDecision = null; this.resetPresentation = true;
+    this.displayed = null; this.releasedSequence = -1; this.lastReleaseInput = null;
+    this.lastDecision = null; this.resetPresentation = true;
   }
   async receive(value: WireMessage): Promise<void> {
     if (this.closed) throw new Error('Guest game is closed.');
@@ -64,7 +66,7 @@ export class GuestGame {
       this.replica.receive(message);
     } else if (message.type === 'ack') {
       if (message.slot === 1 && message.inputSequence > this.lastInput) throw new Error('Unknown local release acknowledgement.');
-      if (message.slot === 1 && message.inputSequence === this.lastInput) {
+      if (message.slot === 1 && message.inputSequence === this.lastReleaseInput) {
         if (this.lastDecision && JSON.stringify(this.lastDecision) !== JSON.stringify(message.decision)) {
           throw new Error('Conflicting local release acknowledgement.');
         }
@@ -76,6 +78,16 @@ export class GuestGame {
   private queue(body: MessageBody) {
     if (this.outgoing.length >= 32) throw new Error('Guest game control budget exhausted.');
     this.outgoing.push(body);
+  }
+  requestPause(reason: Extract<MessageBody, { type: 'pause-state' }>['reason'] = 'manual'): void {
+    this.queueCommand({ action: 'pause', reason });
+  }
+  private queueCommand(command: Extract<MessageBody, { type: 'command' }>['command']): number {
+    if (this.closed) throw new Error('Guest game is closed.');
+    const input = counter.min(1).parse(this.lastInput + 1);
+    this.queue({ type: 'command', slot: 1, inputSequence: input, command });
+    this.lastInput = input;
+    return input;
   }
   pump(): SendResult {
     if (this.closed) return { ok: false, reason: 'not_open' };
@@ -119,8 +131,7 @@ export class GuestGame {
         ready: frame.ready && frame.viewedSlot === 1 && flight.sequence > this.releasedSequence } : null;
     })() : this.displayed;
     if (!displayed?.ready || this.closed) return false;
-    this.queue({ type: 'command', slot: 1, inputSequence: ++this.lastInput,
-      command: releaseIntent(displayed.sequence, displayed.reference, displayed.time) });
+    this.lastReleaseInput = this.queueCommand(releaseIntent(displayed.sequence, displayed.reference, displayed.time));
     this.releasedSequence = displayed.sequence;
     this.lastDecision = null;
     displayed.ready = false;

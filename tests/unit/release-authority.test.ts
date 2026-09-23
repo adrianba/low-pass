@@ -69,6 +69,22 @@ function fixture(sequence: number, miss = false): FormationPlan {
 }
 
 describe('timestamped release settlement', () => {
+  it('settles using trusted receipt time, not asynchronous processing time', () => {
+    const plan = fixture(0), value = input(plan, 1, 2), onTime = setup(plan);
+    onTime.session.advanceTo(2);
+    expect(onTime.authority.beginPause()).toBe(750);
+    onTime.wall.time = 900;
+    expect(onTime.authority.receive('guest', value, 750).accepted).toBe(true);
+    const late = setup(plan);
+    late.session.advanceTo(2); late.authority.beginPause(); late.wall.time = 900;
+    expect(late.authority.receive('guest', value, 751)).toEqual({ accepted: false, reason: 'paused' });
+    for (const receivedAt of [901, Infinity, NaN]) {
+      expect(() => late.authority.receive('guest', value, receivedAt)).toThrow('receipt time');
+    }
+    const sealed = setup(plan);
+    sealed.session.advanceTo(2); sealed.authority.beginPause(); sealed.wall.time = 900; sealed.authority.sealPause();
+    expect(sealed.authority.receive('guest', value, 700)).toEqual({ accepted: false, reason: 'paused' });
+  });
   it.each(courses)('preserves exact %s contacts and scores at both slots, speed-cap tiers and every accepted delay', terrain => {
     for (const plan of plans.get(terrain)!) for (const slot of [0, 1] as const) {
       for (const fraction of [0, 0.00037, 0.0025]) {

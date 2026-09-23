@@ -17,6 +17,7 @@ import type { MatchDisplay } from '../network/match-display.js';
 import { matchPlayerStatus, matchPrediction, matchReleaseStatus } from '../ui/match-hud.js';
 import { TERRAIN_THEMES } from '../config/terrain.js';
 import { speedOf } from '../simulation/flight-track.js';
+import { FORMATION_PROFILE } from '../config/multiplayer.js';
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -44,7 +45,7 @@ export class MultiplayerApp {
   private readonly app: HTMLElement;
   private readonly sessionName: HTMLElement;
   constructor(private readonly world: World, private readonly settings: Settings, private readonly leave: () => void,
-    invitation: InvitationLink | null = null) {
+    invitation: InvitationLink | null = null, private readonly clearInput: () => void = () => {}) {
     const app = document.querySelector<HTMLElement>('#app');
     const sessionName = app?.querySelector<HTMLElement>('#session-name');
     if (!app || !sessionName) throw new Error('Missing application UI.');
@@ -55,7 +56,7 @@ export class MultiplayerApp {
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration. Assistance is selected in the lobby. Shared resume, reconnect, in-flight assistance changes, audio and saved match records are not available yet.</p>
+        <p>Network gameplay integration. Assistance is selected in the lobby. Reconnect, in-flight assistance changes, audio and saved match records are not available yet.</p>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
         <div id="match-connect">
@@ -75,7 +76,14 @@ export class MultiplayerApp {
         <div class="flight-tape"><span id="match-speed"></span><span id="match-pass"></span></div>
         <div class="release-panel"><span id="match-view"></span><strong id="match-release"></strong>
           <span id="match-input" role="status"></span><span id="match-assistance"></span><span id="match-phase" role="status"></span></div>
-        <button id="match-pause" class="pause-button">HOLD MATCH / ESC</button>
+        <button id="match-pause" class="pause-button">PAUSE MATCH / ESC</button>
+      </div>
+      <div id="match-pause-card" class="panel" aria-label="Shared pause" hidden>
+        <h2>SHARED PAUSE</h2>
+        <p id="match-pause-reason" role="status"></p>
+        <p id="match-pause-readiness" role="status"></p>
+        <p id="match-pause-input" role="status" hidden></p>
+        <button id="match-ready" class="primary" disabled>I AM READY</button>
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
       <div id="match-message" role="alert" hidden></div>
@@ -87,6 +95,10 @@ export class MultiplayerApp {
     this.get('#match-connect-button').onclick = () => { void this.connect(); };
     this.get('#match-exit').onclick = () => { void this.close(); };
     this.get('#match-pause').onclick = () => this.pause();
+    this.get('#match-ready').onclick = () => {
+      try { this.clearInput(); this.match!.setReady(!this.match!.pauseState!.selectedReady); }
+      catch (error) { this.fail(error); }
+    };
     this.timer = setInterval(() => { void this.match?.update(); }, 10);
     this.animation = requestAnimationFrame(this.animate);
   }
@@ -128,7 +140,10 @@ export class MultiplayerApp {
           this.app.dataset.terrain = prepared.course.manifest.terrain;
           this.world.configure(prepared.lobby.settings.quality);
           this.world.reset();
-          this.match = new MatchController(prepared, (_slot, view, range) => this.world.captureMissileView(view, range));
+          // Author for the narrowest supported viewport, not the host's window on behalf of the guest.
+          this.match = new MatchController(prepared, (_slot, view, range) =>
+            this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect));
+          this.availability();
           this.effects = new SharedCombat(this.world.combat, this.match.timeline!);
           this.lobbyPanel?.dispose(); this.lobbyPanel = null;
           this.get('#match-loading').hidden = false;
@@ -182,9 +197,26 @@ export class MultiplayerApp {
     if (this.match) {
       if (!this.active) return;
       const match = this.match, next = match.display;
+      if (this.root.dataset.phase !== match.phase) this.clearInput();
       this.root.dataset.phase = match.phase;
+      const pause = match.pauseState;
+      this.get('#match-pause-card').hidden = !pause || match.phase === 'held';
+      this.get('.release-panel').hidden = !!pause && match.phase !== 'held';
+      if (pause) {
+        this.text('#match-pause-reason', `Player ${pause.by + 1} / ${pause.reason.toUpperCase()} / ${pause.stage.toUpperCase()}`);
+        if (!this.viewportValid()) this.text('#match-pause-reason', 'Resize to an aspect ratio between 0.75 and 2 before confirming readiness.');
+        this.text('#match-pause-readiness', pause.remainingMs !== null ? `Both ready. Resuming in ${Math.ceil(pause.remainingMs / 1000)}...`
+          : `Player 1: ${pause.ready[0] ? 'ready' : 'not ready'} / Player 2: ${pause.ready[1] ? 'ready' : 'not ready'}`);
+        this.get<HTMLButtonElement>('#match-ready').disabled = !pause.canReady;
+        this.text('#match-ready', pause.selectedReady ? 'CANCEL MY READINESS' : 'I AM READY');
+        this.get('#match-pause-input').hidden = !match.inputIssue;
+        this.text('#match-pause-input', match.inputIssue ?? '');
+      }
       if (next && this.effects && (this.redraw || match.inputRevision !== this.lastInputRevision ||
-        next.frame.time > this.lastPaint || match.phase !== this.lastPaintPhase)) {
+        next.epoch !== this.renderedDisplay?.epoch || next.frame.time > this.lastPaint || match.phase !== this.lastPaintPhase)) {
+        if (this.renderedDisplay && next.epoch !== this.renderedDisplay.epoch) {
+          this.effects.reset(); this.world.reset();
+        }
         const frame = snapshotSharedFrame({ ...next.frame, effectPositions: this.effects.effectPositions(),
           prediction: match.phase === 'playing' ? matchPrediction(next) : null });
         this.world.updateSharedFrame(frame);
@@ -211,11 +243,11 @@ export class MultiplayerApp {
       }
       this.text('#match-view', frame && display
         ? `${frame.viewedSlot === display.localSlot ? 'YOUR AIRCRAFT' : 'SPECTATING'} / PLAYER ${frame.viewedSlot + 1}` : '');
-      this.text('#match-phase', match.phase === 'countdown' ? `Starting in ${Math.ceil((match.startup.remainingMs ?? 0) / 1000)}`
+      this.text('#match-phase', match.phase === 'countdown' ? `Starting in ${Math.ceil((pause?.remainingMs ?? match.startup.remainingMs ?? 0) / 1000)}`
         : match.phase === 'over' ? 'MATCH COMPLETE / NO RECORDS SAVED IN THIS PREVIEW' : match.phase.toUpperCase());
       this.text('#match-release', match.phase === 'over' && display
         ? display.winner === 'draw' ? 'MATCH DRAW' : `PLAYER ${Number(display.winner) + 1} WINS`
-        : match.phase === 'held' ? 'MATCH HELD' : display ? matchReleaseStatus(display) : 'STAND BY');
+        : ['held', 'pausing', 'paused', 'countdown'].includes(match.phase) ? 'MATCH PAUSED' : display ? matchReleaseStatus(display) : 'STAND BY');
       this.text('#match-assistance', display ? display.players[display.localSlot].assistance ? 'YOUR IMPACT ASSIST: ON' : 'YOUR IMPACT ASSIST: OFF' : '');
       this.text('#match-input', match.inputIssue ?? '');
       this.text('#match-speed', frame ? `SPD ${Math.round(speedOf(frame.aircraft[frame.viewedSlot].pose))}` : '');
@@ -241,11 +273,30 @@ export class MultiplayerApp {
     if (this.lobby && performance.now() - this.lastReport >= 1000) {
       this.lastReport = performance.now();
       const report = await this.lobby.report();
-      if (this.active && report.error) this.error(`Connection failed: ${report.error}. Leave and create a new room.`);
+      if (this.active && report.error) {
+        if (this.get('#match-message').hidden) console.error('Private connection diagnostics:', JSON.stringify({
+          connection: report.connection, phase: report.failurePhase, progress: report.progress,
+        }));
+        this.error(`Connection failed: ${report.error}. Leave and create a new room.`);
+      }
     }
   }
-  release(): void { if (this.renderedDisplay) this.match?.release(this.renderedDisplay.frame); }
-  resized(): void { this.redraw = true; }
+  release(): void { if (this.renderedDisplay) this.match?.release(this.renderedDisplay.frame, this.renderedDisplay.epoch); }
+  availability(): void {
+    const valid = this.viewportValid(), available = valid && !document.hidden && document.hasFocus();
+    if (!available) this.clearInput();
+    this.match?.setAvailable(available, valid ? 'focus' : 'viewport');
+    if (!available && this.lobby?.lobby.selectedReady && !this.match) this.lobby.lobby.setReady(false);
+  }
+  private viewportValid(): boolean {
+    const aspect = this.world.engine.getRenderWidth() / this.world.engine.getRenderHeight();
+    return Number.isFinite(aspect) && aspect >= FORMATION_PROFILE.viewport.minAspect && aspect <= FORMATION_PROFILE.viewport.maxAspect;
+  }
+  resized(): void {
+    this.redraw = true;
+    this.match?.pause('viewport');
+    this.availability();
+  }
   fail(error: unknown): void {
     if (!this.active || this.failed) return;
     this.failed = true;
@@ -258,9 +309,9 @@ export class MultiplayerApp {
     console.error('Multiplayer application failed:', error);
   }
   pause(): void {
-    if (this.match && !['over', 'closed', 'held'].includes(this.match.phase)) {
-      this.match.hold('The shared flight was held. Resume is not implemented in this preview.');
-    } else if (this.lobby?.lobby.selectedReady) this.lobby.lobby.setReady(false);
+    this.clearInput();
+    if (this.match) this.match.pause();
+    else if (this.lobby?.lobby.selectedReady) this.lobby.lobby.setReady(false);
   }
   private error(message: string) { this.get('#match-message').hidden = false; this.text('#match-message', message); }
   async close(): Promise<void> {

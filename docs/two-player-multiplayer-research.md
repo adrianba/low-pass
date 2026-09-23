@@ -1198,7 +1198,7 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-Shared resume/recovery, in-flight assistance changes, audio, records/results
+Automatic recovery, in-flight assistance changes, audio, records/results
 and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
@@ -1210,8 +1210,19 @@ restart when the receiver resets. A guest retains verified plans and logical
 outcomes, requires the new verified checkpoint, and only then resets presentation
 for correction to the authoritative boundary. Regressed scores remain invalid.
 In-flight bombs and frozen final effects survive; resuming an ended session
-does not revive its simulation. These core APIs are not yet connected to pause
-controls, readiness, countdown, focus handling or automatic recovery.
+does not revive its simulation. The opt-in application now connects these APIs to
+shared pause controls, both-ready countdown, focus/visibility handling and held-key
+clearing. Settlement notices precede the epoch barrier: reliable old-epoch commands
+remain deliverable during the 750 ms window, using their trusted local receipt time
+rather than delayed processing time. Publication must finish before sealing the
+checkpoint, and networking remains active throughout the pause.
+
+Resizing also cancels readiness and revalidates the approved viewport envelope.
+Missile authoring uses the real per-aircraft camera pose with the envelope's minimum
+aspect, rather than accidentally using the host's aspect for both players. This
+conservative visibility requirement survives differently sized windows and later
+supported resizes without changing flight geometry or reauthoring frozen effects.
+Connection replacement and the bounded reconnect/abort UI are still subsequent work.
 
 ### 7.1 Do not score by arrival time
 

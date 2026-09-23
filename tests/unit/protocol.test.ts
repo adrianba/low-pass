@@ -22,6 +22,18 @@ function rejected(callback: () => unknown, code: ProtocolError['code']) {
 }
 
 describe('bounded shared multiplayer protocol', () => {
+  it('binds pause notices to the host, settlement epoch and readiness stage', () => {
+    const notice: WireMessage = { ...base, type: 'pause-state', barrier: 1, update: 0, at: stampAt(2),
+      by: 1, reason: 'focus', stage: 'settling', ready: [false, false] };
+    expect(decodeMessage(encodeMessage(notice), context)).toEqual(notice);
+    for (const value of [{ ...notice, barrier: 2 }, { ...notice, ready: [true, false] },
+      { ...notice, stage: 'restoring' }, { ...notice, epoch: 1 }]) {
+      rejected(() => encodeMessage(value), 'invalid_message');
+    }
+    rejected(() => encodeMessage({ ...notice, sender: 'guest' }), 'role');
+    const ready = { ...notice, epoch: 1, stage: 'ready' as const, ready: [true, false] as [boolean, boolean] };
+    expect(decodeMessage(encodeMessage(ready), { ...context, epoch: 1 })).toEqual(ready);
+  });
   it('round-trips all message variants with independent owned data and the intended channel', () => {
     const messages: WireMessage[] = [
       hello(), release('host'), release(),

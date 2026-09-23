@@ -68,7 +68,7 @@ function changeSettings(next: Settings): boolean {
 }
 
 function pause(): void {
-  if (multiplayer) { key.up(); multiplayer.pause(); return; }
+  if (multiplayer) { key.up(); multiplayer.availability(); return; }
   if (screen !== 'playing' && screen !== 'ending') return;
   pausedFrom = screen;
   if (screen === 'playing') run.status = 'paused';
@@ -95,7 +95,7 @@ ui = new UI(settings, {
       multiplayer = new MultiplayerApp(world!, settings, () => {
         multiplayer = null; key.up(); prediction = null; preview = new Run(7, settings.terrain); setScreen('menu');
         resumeSoloRendering?.();
-      }, invitation);
+      }, invitation, () => key.up());
       world!.engine.stopRenderLoop();
       invitation = null;
     }).catch(fail).finally(() => { openingMultiplayer = false; });
@@ -141,7 +141,7 @@ document.addEventListener('keydown', event => {
       event.preventDefault();
       if (key.down(event.repeat)) multiplayer.release();
     }
-    if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); multiplayer.pause(); }
+    if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); key.up(); multiplayer.pause(); }
     return;
   }
   if (event.code === 'Space') {
@@ -159,7 +159,8 @@ document.addEventListener('keydown', event => {
 });
 document.addEventListener('keyup', event => { if (event.code === 'Space') key.up(); });
 window.addEventListener('blur', pause);
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+window.addEventListener('focus', () => multiplayer?.availability());
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else multiplayer?.availability(); });
 window.addEventListener('resize', () => { world?.engine.resize(); multiplayer?.resized(); });
 window.addEventListener('pagehide', () => { void audio.pause(); void multiplayer?.close(); });
 

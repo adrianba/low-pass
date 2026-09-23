@@ -24,10 +24,14 @@ async function host() {
   const authored = await prepareHostCourse('green-valley', 7, 0);
   const ref = (index: 0 | 1) => ({ id: authored.transfers[index].offer.id, digest: authored.transfers[index].offer.digest });
   let wall = 1000;
-  const sent: MessageBody[] = [], incoming: TransportEvent[] = [];
+  const sent: MessageBody[] = [], wireSent: WireMessage[] = [], incoming: TransportEvent[] = [];
   const link = {
     status: 'open' as const, failure: null, epoch: 1, sessionId: base.sessionId,
-    send(body: MessageBody) { sent.push(body); return { ok: true as const }; },
+    send(body: MessageBody) {
+      sent.push(body); wireSent.push({ ...base, epoch: link.epoch, sequence: wireSent.length + 1, ...body });
+      if (body.type === 'barrier') link.epoch = body.nextEpoch;
+      return { ok: true as const };
+    },
     drain: () => incoming.splice(0), close: vi.fn(),
     diagnostics: async () => ({ status: 'open' as const, failure: null, peer: null }),
   };
@@ -48,7 +52,7 @@ async function host() {
     transfer: { id: offer.transfer.id, digest: offer.transfer.digest } } });
   await match.update();
   await match.update();
-  return { match, sent, now: () => wall, elapsed(ms: number) { wall += ms; } };
+  return { match, sent, wireSent, incoming, now: () => wall, elapsed(ms: number) { wall += ms; } };
 }
 
 async function paired() {
@@ -64,20 +68,21 @@ async function paired() {
     }
   }
   const incoming: TransportEvent[] = [], commands: Array<Extract<WireMessage, { type: 'command' }>> = [];
-  let wire = 0, read = 0;
-  const deliver = (body: MessageBody) => {
-    const message = { ...base, epoch: 1, sequence: ++wire, ...body };
+  let wire = 0, read = 0, guestEpoch = 1;
+  const deliver = (message: WireMessage) => {
     incoming.push({ type: 'message', channel: messageChannel(message), receivedAt: state.now(), message });
+    if (message.type === 'barrier') guestEpoch = message.nextEpoch;
   };
   const lobby = new Lobby('guest', { ...DEFAULT_SETTINGS, assist: false });
   lobby.receiveState(prepared.lobby.state!);
   const guest = new MatchController({ role: 'guest', epoch: 0, inbox: [], lobby, course: prepared.course,
     formations: [formations[0]!, formations[1]!], link: { ...prepared.link,
+      get epoch() { return guestEpoch; },
       send(body) {
-        const message = { ...base, epoch: 1, sender: 'guest' as const, sequence: ++wire, ...body };
-        if (message.type === 'ping') deliver({ type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: state.now() });
-        else if (message.type === 'transfer-ready') state.match.host!.receive(message);
-        else if (message.type === 'command') commands.push(message);
+        const message = { ...base, epoch: guestEpoch, sender: 'guest' as const, sequence: ++wire, ...body };
+        if (message.type === 'ping') deliver({ ...base, epoch: message.epoch, type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: state.now() });
+        else if (message.type === 'command' && message.command.action === 'release') commands.push(message);
+        else if (message.type !== 'lobby-input') state.incoming.push({ type: 'message', channel: messageChannel(message), receivedAt: state.now(), message });
         return { ok: true };
       },
       drain: () => incoming.splice(0),
@@ -90,8 +95,8 @@ async function paired() {
   guest.assetsLoaded(); await guest.update();
   const advance = async (ms = 0) => {
     state.elapsed(ms); await state.match.update();
-    for (const body of state.sent.slice(read)) if (body.type !== 'lobby-state') deliver(body);
-    read = state.sent.length;
+    for (const message of state.wireSent.slice(read)) if (message.type !== 'lobby-state') deliver(message);
+    read = state.wireSent.length;
     await guest.update();
     if (guest.phase === 'held' || state.match.phase === 'held') throw new Error(guest.issue ?? state.match.issue ?? 'Unexpected hold.');
   };
@@ -100,6 +105,102 @@ async function paired() {
 }
 
 describe('match clock and lifecycle ownership', () => {
+  it('reconciles an ahead-rendered guest only after the new paused checkpoint is verified', async () => {
+    const state = await paired();
+    try {
+      for (let work = 0; work < 20; work++) await state.advance(50);
+      const boundary = state.match.frame!.time;
+      state.elapsed(200);
+      await state.guest.update();
+      expect(state.guest.frame!.time).toBeGreaterThan(boundary);
+      const old = state.guest.display!;
+      state.match.pause();
+      await state.advance();
+      expect(state.guest.display).toBe(old);
+      for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+      expect(state.guest.display!.epoch).toBe(2);
+      expect(state.guest.frame!.time).toBe(boundary);
+      expect(old.frame.time).toBeGreaterThan(boundary);
+    } finally { state.close(); }
+  });
+  it('settles a queued host drop when pause interrupts its asynchronous pump', async () => {
+    const state = await paired();
+    try {
+      for (let work = 0; work < 200 && !state.match.frame?.ready; work++) await state.advance(50);
+      const drawn = state.match.display!;
+      state.elapsed(20);
+      const updating = state.match.update();
+      expect(state.match.release(drawn.frame, drawn.epoch)).toBe(true);
+      state.match.pause();
+      await updating;
+      for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+      expect(state.match.inputIssue).toBeNull();
+      expect(state.match.host!.player(0).bomb).not.toBeNull();
+      expect(state.guest.frame!.aircraft[0].bomb).toEqual(state.match.frame!.aircraft[0].bomb);
+      expect(state.guest.display!.players[0].score).toBe(0);
+    } finally { state.close(); }
+  });
+  it('correlates a rejected release after a later pause command without inventing a bomb', async () => {
+    const state = await paired();
+    try {
+      for (let work = 0; work < 200 && !state.guest.frame?.ready; work++) await state.advance(50);
+      expect(state.guest.release()).toBe(true);
+      for (let work = 0; work < 18; work++) await state.advance(50);
+      state.guest.pause();
+      await state.advance();
+      state.match.host!.receive(state.commands.shift()!);
+      await state.advance();
+      expect(state.guest.inputIssue).toContain('too old');
+      for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+      expect(state.guest.frame!.aircraft[1].bomb).toBeNull();
+      expect(state.guest.display!.players[1].score).toBe(0);
+    } finally { state.close(); }
+  });
+  it.each(['host', 'guest'] as const)('settles %s pause, restores a verified epoch and requires both ready to resume', async role => {
+    const state = await paired();
+    try {
+      for (let work = 0; work < 100; work++) await state.advance(50);
+      const owner = role === 'host' ? state.match : state.guest;
+      owner.pause();
+      expect(owner.release()).toBe(false);
+      for (let work = 0; work < 100 && (state.match.phase !== 'paused' || state.guest.phase !== 'paused'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['paused', 'paused']);
+      expect([state.match.display!.epoch, state.guest.display!.epoch]).toEqual([2, 2]);
+      expect(state.guest.frame!.time).toBe(state.match.frame!.time);
+      const frozen = state.match.frame!.time;
+      state.match.setReady(true);
+      for (let work = 0; work < 80; work++) await state.advance(50);
+      expect(state.match.phase).toBe('paused');
+      expect(state.match.frame!.time).toBe(frozen);
+      state.guest.setReady(true);
+      for (let work = 0; work < 100 && (state.guest.phase !== 'playing' || state.match.phase !== 'playing'); work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['playing', 'playing']);
+      expect([state.match.display!.epoch, state.guest.display!.epoch]).toEqual([3, 3]);
+      expect(state.match.frame!.time - frozen).toBeLessThan(0.5);
+      state.guest.setAvailable(false);
+      for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+      expect(state.guest.pauseState?.canReady).toBe(false);
+      state.guest.setAvailable(true);
+      expect(state.guest.pauseState?.selectedReady).toBe(false);
+    } finally { state.close(); }
+  });
+  it('cancels an acknowledged resume countdown without advancing flight', async () => {
+    const state = await paired();
+    try {
+      await state.advance(100);
+      state.match.pause();
+      for (let work = 0; work < 100 && state.guest.phase !== 'paused'; work++) await state.advance(50);
+      state.match.setReady(true); state.guest.setReady(true);
+      for (let work = 0; work < 20 && state.guest.phase !== 'countdown'; work++) await state.advance(50);
+      expect(state.guest.phase).toBe('countdown');
+      const frozen = state.match.frame!.time;
+      state.guest.pause();
+      for (let work = 0; work < 80; work++) await state.advance(50);
+      expect([state.match.phase, state.guest.phase]).toEqual(['paused', 'paused']);
+      expect(state.match.pauseState?.ready).toEqual([true, false]);
+      expect(state.match.frame!.time).toBe(frozen);
+    } finally { state.close(); }
+  });
   it.each([150, 900])('reconciles a guest drop delayed %ims without adding outcomes or blocking a valid retry', async delay => {
     const state = await paired();
     try {
@@ -179,13 +280,11 @@ describe('match clock and lifecycle ownership', () => {
       for (const message of state.sent) if (message.type === 'snapshot') {
         expect(message.sampledAt).toBeCloseTo(1000 + secondsAt(message.state.at) * 1000, 9);
       }
-      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
       state.elapsed(501);
       await state.match.update();
-      expect(state.match.phase).toBe('held');
+      expect(state.match.phase).toBe('pausing');
       expect(state.match.frame!.time).toBeCloseTo(0.37, 10);
-      expect(state.match.issue).toContain('501ms');
-      expect(error).toHaveBeenCalledOnce();
+      expect(state.match.pauseState?.reason).toBe('clock');
     } finally { state.match.close(); }
   });
 

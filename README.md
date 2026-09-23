@@ -713,10 +713,24 @@ local graphics redraws a static scene without advancing gameplay. Gameplay pumpi
 independent of frame submission. A callback gap within the existing 500 ms
 freshness bound is advanced in at most five 100 ms work steps; snapshots are
 timestamped at the simulation state they represent, not at the end of catch-up.
-Longer gaps and publication/coverage failures hold explicitly. These are safety
+Longer gaps and publication/coverage failures request a shared pause. These are safety
 bounds, not a promise that a software renderer or any particular GPU can meet them.
 
-**Incomplete:** holds are terminal in this preview. Shared resume, automatic
+Either player can pause with Escape or the pause button. Focus loss and viewport
+changes also stop local input and request a shared pause. The host freezes its
+simulation, settles already-received releases for 750 ms, publishes the remaining
+outcomes, and then transfers a verified paused checkpoint in a new epoch. Both
+players must explicitly confirm readiness before an acknowledged three-second
+countdown; canceling readiness or losing focus cancels it. Paused wall time does
+not advance bombs or finales, and held Space does not carry into resumed play.
+An ahead-rendered guest can rewind only at the explicit checkpoint boundary.
+
+Both viewports must remain within the approved 0.75-2 aspect envelope. Combat
+authoring uses each aircraft's real camera pose at the narrowest supported aspect,
+so the host's wider window cannot hide a guest missile launch. Resizing requires
+fresh readiness; unsupported sizes disable it until corrected.
+
+**Incomplete:** unrecoverable errors still require leaving the preview. Automatic
 recovery, in-flight assistance changes,
 audio, results/records and rematch UI are subsequent steps. No multiplayer score
 is saved yet. This is not the full two-computer Windows Edge review checkpoint.

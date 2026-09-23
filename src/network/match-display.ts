@@ -11,6 +11,7 @@ export interface MatchPlayerDisplay {
 }
 
 export interface MatchDisplay {
+  readonly epoch: number;
   readonly frame: SharedWorldFrame;
   readonly localSlot: PlayerSlot;
   readonly players: readonly [MatchPlayerDisplay, MatchPlayerDisplay];
@@ -18,9 +19,9 @@ export interface MatchDisplay {
 }
 
 export function snapshotMatchDisplay(frame: SharedWorldFrame, localSlot: PlayerSlot,
-  players: readonly [MatchPlayerDisplay, MatchPlayerDisplay], winner: MatchDisplay['winner']): MatchDisplay {
+  players: readonly [MatchPlayerDisplay, MatchPlayerDisplay], winner: MatchDisplay['winner'], epoch = 0): MatchDisplay {
   const player = (slot: PlayerSlot) => Object.freeze({ score: players[slot].score, misses: players[slot].misses,
     assistance: players[slot].assistance, assisted: players[slot].assisted, eliminated: players[slot].eliminated,
     result: players[slot].result ? Object.freeze({ ...players[slot].result }) : null });
-  return Object.freeze({ frame, localSlot, players: Object.freeze([player(0), player(1)] as const), winner });
+  return Object.freeze({ epoch, frame, localSlot, players: Object.freeze([player(0), player(1)] as const), winner });
 }

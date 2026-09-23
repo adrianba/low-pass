@@ -1,4 +1,5 @@
-import { secondsAt, stampAt } from '../../shared/protocol/game.js';
+import { compareStamps, secondsAt, stampAt } from '../../shared/protocol/game.js';
+import type { Stamp } from '../../shared/protocol/game.js';
 import type { MessageBody, WireMessage } from '../../shared/protocol/messages.js';
 import { FINALE_DURATION } from '../game/combat-timing.js';
 import type { CombatViewProvider } from '../game/multiplayer/host-combat.js';
@@ -17,13 +18,19 @@ import { snapshotMatchDisplay } from './match-display.js';
 import type { MatchDisplay } from './match-display.js';
 import { LocalDrop } from '../rendering/local-drop.js';
 
-export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'held' | 'closed';
+export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over' | 'pausing' | 'paused' | 'held' | 'closed';
+type PauseNotice = Extract<MessageBody, { type: 'pause-state' }>;
+export type PauseReason = PauseNotice['reason'];
+type StartupMessage = Extract<WireMessage, { type: 'loading-ready' | 'start-offer' | 'start-ready' | 'start-commit' | 'start-cancel' | 'barrier' }>;
+function startupMessage(value: WireMessage): value is StartupMessage {
+  return ['loading-ready', 'start-offer', 'start-ready', 'start-commit', 'start-cancel', 'barrier'].includes(value.type);
+}
 
 /** Exclusive owner after lobby handoff. The application supplies asset readiness and real camera views. */
 export class MatchController {
   readonly startup: StartHandshake;
   readonly peerClock = new PeerClock();
-  private readonly replicaClock = new ReplicaClock(this.peerClock);
+  private replicaClock = new ReplicaClock(this.peerClock);
   private readonly clock: SessionClock;
   private hostValue: HostGame | null = null;
   private guestValue: GuestGame | null = null;
@@ -43,7 +50,19 @@ export class MatchController {
   private inputIssueValue: string | null = null;
   private inputRevisionValue = 0;
   private anchorWall = -Infinity;
-  private pendingRelease: { time: number; sequence: number } | null = null;
+  private pendingRelease: { time: number; sequence: number; receivedAt: number } | null = null;
+  private pauseNotice: PauseNotice | null = null;
+  private pauseRequested = false;
+  private pauseDirty = false;
+  private settleAt = Infinity;
+  private pauseSealed = false;
+  private pauseRestored = false;
+  private pauseTimeout = Infinity;
+  private selectedReady = false;
+  private available = true;
+  private preflightPause: PauseReason | null = null;
+  private resumeHandshake: StartHandshake | null = null;
+  private peerPauseInput = 0;
   private startedAt = 0;
   private inbox: TransportEvent[];
   constructor(readonly prepared: PreparedConnection, view: CombatViewProvider,
@@ -51,15 +70,7 @@ export class MatchController {
     this.inbox = [...prepared.inbox]; prepared.inbox.length = 0;
     this.clock = new SessionClock(now, 0, prepared.epoch);
     this.lastFrameWall = now();
-    this.startup = new StartHandshake(prepared.role, prepared.link.sessionId, prepared.epoch, stampAt(0), now, () => {
-      try {
-        const estimate = this.peerClock.estimate(now());
-        return { lower: estimate.remoteLower, upper: estimate.remoteUpper };
-      } catch (error) {
-        if (!(error instanceof ClockError)) throw error;
-        return null;
-      }
-    });
+    this.startup = this.handshake(prepared.epoch, stampAt(0));
     if (prepared.role === 'host') {
       const author = new FormationWorker();
       try {
@@ -67,6 +78,17 @@ export class MatchController {
           prepared.lobby.state!.assistance, prepared.course.manifest, author, time => this.startedAt + time * 1000);
       } catch (error) { author.close(); throw error; }
     } else this.guestValue = new GuestGame(prepared, prepared.link.sessionId, prepared.epoch + 1, now, this.send);
+  }
+  private handshake(epoch: number, at: Stamp): StartHandshake {
+    return new StartHandshake(this.prepared.role, this.prepared.link.sessionId, epoch, at, this.now, () => {
+      try {
+        const estimate = this.peerClock.estimate(this.now());
+        return { lower: estimate.remoteLower, upper: estimate.remoteUpper };
+      } catch (error) {
+        if (!(error instanceof ClockError)) throw error;
+        return null;
+      }
+    });
   }
   get phase(): MatchPhase { return this.phaseValue; }
   private get stopped(): boolean { return !this.active || this.phaseValue === 'held'; }
@@ -78,6 +100,29 @@ export class MatchController {
   get host(): HostGame | null { return this.hostValue; }
   get guest(): GuestGame | null { return this.guestValue; }
   get timeline() { return this.hostValue?.timeline ?? this.guestValue?.combat ?? null; }
+  get pauseState() {
+    const notice: PauseNotice | null = this.pauseNotice ?? (!this.started && this.preflightPause ? {
+      type: 'pause-state', barrier: this.prepared.epoch + 1, update: 0, at: stampAt(0),
+      by: this.prepared.role === 'host' ? 0 : 1, reason: this.preflightPause,
+      stage: this.loaded ? 'ready' : 'restoring', ready: [...this.prepared.lobby.state!.ready],
+    } : null);
+    return notice ? { ...structuredClone(notice),
+      selectedReady: this.started ? this.selectedReady : this.prepared.lobby.selectedReady,
+      canReady: this.available && this.loaded && (!this.started || this.pauseRestored) && notice.stage === 'ready' && !this.stopped,
+      remainingMs: (this.started ? this.resumeHandshake : this.startup)?.remainingMs ?? null } : null;
+  }
+  setAvailable(available: boolean, reason: PauseReason = 'focus'): void {
+    this.available = available;
+    if (!available) this.pause(reason);
+  }
+  setReady(ready: boolean): void {
+    if (this.stopped || ready && !this.pauseState?.canReady) throw new Error('The shared flight is not ready to resume.');
+    if (!this.started) { this.prepared.lobby.setReady(ready); return; }
+    if (!this.resumeHandshake || !this.pauseNotice) throw new Error('No paused readiness barrier.');
+    this.selectedReady = ready;
+    this.resumeHandshake.setReady(ready, this.pauseNotice.barrier);
+    this.updatePauseReadiness();
+  }
   assetsLoaded(): void { this.loaded = true; }
   private send = (body: MessageBody): SendResult => {
     if (!this.active) return { ok: false, reason: 'not_open' };
@@ -88,9 +133,11 @@ export class MatchController {
     this.busy = true;
     try {
       this.inbox.push(...this.prepared.link.drain());
-      for (const event of this.inbox.splice(0)) {
-        if (event.type === 'message') await this.receive(event.message);
+      for (let remaining = this.inbox.length; remaining > 0; remaining--) {
+        const event = this.inbox.shift()!;
+        if (event.type === 'message') await this.receive(event.message, event.receivedAt);
         else if (event.type === 'rejected' || event.type === 'failed') throw new Error(`Match transport failed: ${event.code}.`);
+        if (this.stopped) return;
       }
       if (this.stopped) return;
       if (this.prepared.link.status !== 'open') throw new Error('The peer connection is unavailable.');
@@ -104,22 +151,27 @@ export class MatchController {
         const lobby = this.prepared.lobby, state = lobby.state;
         if (!state || state.terrain !== this.prepared.course.manifest.terrain) throw new Error('The prepared course changed. Return to the lobby.');
         if (!lobby.flush(this.send)) return;
-        this.startup.setReady(this.loaded && lobby.bothReady, state.update);
+        if (!lobby.bothReady) this.preflightPause ??= 'manual';
+        this.startup.setReady(this.available && this.loaded && lobby.bothReady, state.update);
         this.startup.pump(this.send);
         const started = this.startup.takeStart();
         if (started) this.start(started);
         else this.phaseValue = this.startup.phase === 'countdown' ? 'countdown' : 'loading';
       }
       if (!this.started) return;
+      if (this.pauseRequested) { await this.updatePause(); return; }
       if (this.hostValue) await this.updateHost();
       else if (this.guestValue) this.updateGuest();
     } catch (error) {
       if (this.stopped) return;
+      if (error instanceof ClockError && this.started && !this.pauseRequested) {
+        this.pause('clock'); return;
+      }
       this.hold(error instanceof Error ? error.message : 'The private match could not continue.');
       console.error('Private match held:', this.issueValue);
     } finally { this.busy = false; }
   }
-  private async receive(message: WireMessage): Promise<void> {
+  private async receive(message: WireMessage, receivedAt: number): Promise<void> {
     if (message.type === 'ping') {
       // Probes are unordered and disposable; never put a stale response in the reliable queue.
       this.send({ type: 'pong', id: message.id, sentAt: message.sentAt, receivedAt: this.now() }); return;
@@ -128,31 +180,58 @@ export class MatchController {
     if (!this.started) {
       if (message.type === 'lobby-state') this.prepared.lobby.receiveState(message.state);
       else if (message.type === 'lobby-input') this.prepared.lobby.receiveInput(message.input);
-      else if (message.type === 'loading-ready' || message.type === 'start-offer' || message.type === 'start-ready' ||
-        message.type === 'start-commit' || message.type === 'start-cancel' || message.type === 'barrier') {
+      else if (startupMessage(message)) {
         this.startup.receive(message);
         const started = this.startup.takeStart();
         if (started) this.start(started);
       } else if (message.type !== 'hello') throw new Error('Unexpected match loading message.');
       return;
     }
+    const epoch = this.hostValue?.epoch ?? this.guestValue!.epoch;
+    if (message.epoch < epoch) return;
+    if (message.type === 'pause-state' && this.guestValue) {
+      this.receivePause(message); return;
+    }
+    if (message.type === 'barrier' && message.reason === 'pause' && this.guestValue) {
+      const notice = this.pauseNotice;
+      if (!notice || notice.stage !== 'settling' || message.nextEpoch !== notice.barrier ||
+        compareStamps(message.at, notice.at) !== 0) throw new Error('Unannounced shared pause boundary.');
+      this.guestValue.advanceEpoch(message.nextEpoch);
+      this.resetReplicaClock();
+      this.localDrop = null;
+      this.pauseRestored = false;
+      this.pauseNotice = { ...notice, stage: 'restoring' };
+      this.resumeHandshake = this.handshake(message.nextEpoch, notice.at);
+      this.pauseTimeout = this.now() + 15_000;
+      return;
+    }
+    if (this.resumeHandshake && startupMessage(message)) {
+      this.resumeHandshake.receive(message);
+      this.updatePauseReadiness();
+      const start = this.resumeHandshake.takeStart();
+      if (start) this.resume(start);
+      return;
+    }
     if (this.hostValue) {
-      if (message.type === 'resync') throw new Error('The guest needs the shared match to stop and resynchronize.');
+      if (message.type === 'resync') { this.pause('clock', 1); return; }
       if (message.type !== 'command' && message.type !== 'transfer-ready') throw new Error('Unexpected host gameplay message.');
-      this.hostValue.receive(message);
+      if (message.type === 'command' && message.command.action === 'pause') {
+        if (message.inputSequence <= this.peerPauseInput) return;
+        this.peerPauseInput = message.inputSequence;
+        this.pause(message.command.reason ?? 'manual', 1); return;
+      }
+      this.hostValue.receive(message, receivedAt);
     } else {
-      if (message.type === 'barrier' && message.reason === 'pause') throw new Error('The host paused the shared match.');
       await this.guestValue!.receive(message);
       if (message.type === 'ack' && message.slot === 1 && message.inputSequence === this.localDrop?.input &&
         !message.decision.accepted) this.rejectDrop(message.decision.reason);
       const anchor = this.guestValue!.replica.clockAnchor;
-      if (anchor && anchor.monotonicMs > this.anchorWall) {
+      if (!this.pauseRequested && anchor && anchor.monotonicMs > this.anchorWall) {
         this.replicaClock.observe(anchor, this.now()); this.anchorWall = anchor.monotonicMs;
       }
     }
   }
   private start(started: StartedSession) {
-    if (started.requiresPause) throw new Error('Readiness or clock synchronization changed during the countdown.');
     const prepared = this.prepared;
     this.startedAt = started.hostStartsAt;
     if (prepared.role === 'host') {
@@ -162,6 +241,124 @@ export class MatchController {
     this.started = true;
     this.initialDeadline = this.now() + 5000;
     this.lastFrameWall = this.now(); this.phaseValue = 'loading';
+    if (started.requiresPause || !this.available) this.pause('clock');
+  }
+  pause(reason: PauseReason = 'manual', by: 0 | 1 = this.hostValue ? 0 : 1): void {
+    if (this.stopped || this.phaseValue === 'over') return;
+    if (!this.started) {
+      this.preflightPause = reason;
+      this.prepared.lobby.setReady(false);
+      this.startup.setReady(false, this.prepared.lobby.state!.update);
+      return;
+    }
+    if (this.pauseRequested) {
+      if (this.resumeHandshake) {
+        if (this.hostValue && by === 1) this.resumeHandshake.peerUnavailable();
+        else { this.selectedReady = false; this.resumeHandshake.setReady(false, this.pauseNotice!.barrier); }
+        this.updatePauseReadiness();
+      }
+      return;
+    }
+    this.pauseRequested = true; this.phaseValue = 'pausing'; this.selectedReady = false;
+    this.pauseRestored = false; this.pauseSealed = false; this.pauseTimeout = this.now() + 15_000;
+    if (this.hostValue) {
+      const host = this.hostValue, session = host.scheduler.session;
+      this.settleAt = host.journal.authority.beginPause();
+      this.clock.freezeAt(session.time, host.epoch);
+      this.pauseNotice = { type: 'pause-state', barrier: host.epoch + 1, update: 0,
+        at: stampAt(session.status === 'over' ? Math.max(session.time, this.frameValue?.time ?? session.time) : session.time),
+        by, reason, stage: 'settling', ready: [false, false] };
+      this.pauseDirty = true;
+    } else this.guestValue!.requestPause(reason);
+  }
+  private receivePause(message: Extract<WireMessage, { type: 'pause-state' }>) {
+    const previous = this.pauseNotice;
+    if (previous && (message.barrier !== previous.barrier || compareStamps(message.at, previous.at) !== 0 ||
+      message.update < previous.update)) throw new Error('Shared pause state regressed.');
+    if (!previous && message.stage !== 'settling') throw new Error('Missing pause settlement notice.');
+    if (!previous) { this.selectedReady = false; this.pauseTimeout = this.now() + 15_000; }
+    this.pauseRequested = true; this.phaseValue = message.stage === 'ready' && this.pauseRestored ? 'paused' : 'pausing';
+    this.pauseNotice = { type: 'pause-state', barrier: message.barrier, update: message.update, at: message.at,
+      by: message.by, reason: message.reason, stage: message.stage, ready: [...message.ready] };
+  }
+  private updatePauseReadiness() {
+    if (!this.hostValue || !this.pauseNotice || !this.resumeHandshake || !this.pauseRestored) return;
+    const { local, peer } = this.resumeHandshake.readiness, previous = this.pauseNotice;
+    if (previous.stage === 'ready' && previous.ready[0] === local && previous.ready[1] === peer) return;
+    this.pauseNotice = { ...previous, stage: 'ready', update: previous.update + 1, ready: [local, peer] };
+    this.pauseDirty = true;
+  }
+  private flushPause(): boolean {
+    if (!this.pauseDirty) return true;
+    if (!this.send(this.pauseNotice!).ok) return false;
+    this.pauseDirty = false; return true;
+  }
+  private async updatePause() {
+    if (this.now() > this.pauseTimeout) throw new Error('The shared pause checkpoint could not be synchronized.');
+    if (this.hostValue) {
+      if (!this.flushPause()) return;
+      const host = this.hostValue;
+      this.settleLocalRelease();
+      await host.pump();
+      if (this.stopped) return;
+      if (this.pauseNotice!.stage === 'settling') {
+        // Drain receipts collected during hashing before closing their old-epoch settlement window.
+        this.inbox.push(...this.prepared.link.drain());
+        if (this.inbox.length || this.now() <= this.settleAt || !host.ready || !host.journal.canSnapshot) return;
+        if (!this.pauseSealed) { host.journal.authority.sealPause(); this.pauseSealed = true; }
+        const notice = this.pauseNotice!;
+        if (!this.send({ type: 'barrier', nextEpoch: notice.barrier, reason: 'pause', at: notice.at }).ok) return;
+        host.advanceEpoch(notice.barrier, false);
+        this.clock.freezeAt(host.scheduler.session.time, notice.barrier);
+        this.pauseNotice = { ...notice, update: notice.update + 1, stage: 'restoring' };
+        this.pauseDirty = true; this.localDrop = null;
+        this.resumeHandshake = this.handshake(notice.barrier, notice.at);
+        return;
+      }
+      if (!host.ready) return;
+      if (!this.pauseRestored) {
+        this.captureHost(secondsAt(this.pauseNotice!.at)); this.pauseRestored = true;
+        this.pauseTimeout = Infinity; this.phaseValue = 'paused';
+        this.updatePauseReadiness();
+      }
+      if (!this.flushPause()) return;
+    } else {
+      if (!this.guestValue!.pump().ok) return;
+      if (!this.resumeHandshake || !this.guestValue!.replica.presentationState) return;
+      if (!this.pauseRestored) {
+        this.captureGuest(secondsAt(this.pauseNotice!.at)); this.pauseRestored = true;
+        this.pauseTimeout = Infinity;
+      }
+      if (this.pauseNotice!.stage !== 'ready') return;
+      this.phaseValue = 'paused';
+    }
+    this.phaseValue = 'paused';
+    this.resumeHandshake!.pump(this.send);
+    const started = this.resumeHandshake!.takeStart();
+    if (started) this.resume(started);
+    else if (this.resumeHandshake!.phase === 'countdown') this.phaseValue = 'countdown';
+  }
+  private resetReplicaClock() {
+    this.replicaClock = new ReplicaClock(this.peerClock); this.anchorWall = -Infinity;
+  }
+  private resume(started: StartedSession) {
+    const time = this.hostValue?.scheduler.session.time ?? secondsAt(this.guestValue!.replica.state!.at);
+    this.startedAt = started.hostStartsAt - time * 1000;
+    if (this.hostValue) {
+      this.hostValue.advanceEpoch(started.epoch, true);
+      this.clock.start(started.epoch, started.hostStartsAt);
+    } else { this.guestValue!.advanceEpoch(started.epoch); this.resetReplicaClock(); }
+    this.resumeHandshake!.close(); this.resumeHandshake = null;
+    this.pauseNotice = null; this.pauseRequested = false; this.pauseDirty = false;
+    this.localDrop = null; this.selectedReady = false;
+    this.lastFrameWall = this.now(); this.initialDeadline = this.now() + 5000; this.phaseValue = 'loading';
+    if (started.requiresPause || !this.available) this.pause('clock');
+  }
+  private settleLocalRelease() {
+    if (!this.pendingRelease || !this.hostValue!.ready) return;
+    const input = this.pendingRelease; this.pendingRelease = null;
+    const decision = this.hostValue!.release(input.time, input.sequence, input.receivedAt);
+    if (!decision.accepted) this.rejectDrop(decision.reason);
   }
   private async updateHost() {
     const host = this.hostValue!;
@@ -174,28 +371,33 @@ export class MatchController {
     if (session.status !== 'over') {
       const target = secondsAt(this.clock.sample().at);
       if (target - session.time > REPLICA_CLOCK_LIMITS.futureSeconds) {
-        throw new Error(`The host fell ${Math.round((target - session.time) * 1000)}ms behind the shared flight clock.`);
+        this.pause('clock'); return;
       }
       const work = Math.max(1, Math.ceil((target - session.time) / GAME_STREAM_LIMITS.advanceSeconds));
       for (let index = 0; index < work; index++) {
         if (host.scheduler.session.status === 'over') break;
         const held = await host.pump(Math.max(session.time, Math.min(target, session.time + GAME_STREAM_LIMITS.advanceSeconds)));
-        if (this.stopped) return;
-        if (held) throw new Error(`Waiting for gameplay publication: ${held}.`);
+        if (this.stopped || this.pauseRequested) return;
+        if (held) { this.pause('publication'); return; }
       }
     } else await host.pump();
-    if (this.stopped) return;
+    if (this.stopped || this.pauseRequested) return;
     if (this.pendingRelease) {
       const input = this.pendingRelease; this.pendingRelease = null;
-      const decision = host.release(input.time, input.sequence);
+      const decision = host.release(input.time, input.sequence, input.receivedAt);
       if (!decision.accepted) this.rejectDrop(decision.reason);
       await host.pump();
-      if (this.stopped) return;
+      if (this.stopped || this.pauseRequested) return;
     }
     const now = this.now(), elapsed = Math.max(0, (now - this.lastFrameWall) / 1000);
     const time = session.status === 'over'
       ? Math.min(session.time + FINALE_DURATION, Math.max(session.time, this.frameValue?.time ?? session.time) + elapsed) : session.time;
-    const frame = host.frame(time);
+    this.captureHost(time);
+    this.phaseValue = session.status === 'over' ? time >= session.time + FINALE_DURATION ? 'over' : 'ending' : 'playing';
+    this.lastFrameWall = now;
+  }
+  private captureHost(time: number) {
+    const host = this.hostValue!, session = host.scheduler.session, frame = host.frame(time);
     const state = session.snapshot();
     const player = (slot: 0 | 1) => {
       const value = state.players[slot]!;
@@ -206,9 +408,7 @@ export class MatchController {
       return { score: value.score, misses: value.misses, assistance: value.assistance, assisted: value.assisted,
         eliminated: value.completion !== null, result: result ? { points: result.points, time: result.time } : null };
     };
-    this.present(snapshotMatchDisplay(frame, 0, [player(0), player(1)], state.winner));
-    this.phaseValue = session.status === 'over' ? time >= session.time + FINALE_DURATION ? 'over' : 'ending' : 'playing';
-    this.lastFrameWall = now;
+    this.present(snapshotMatchDisplay(frame, 0, [player(0), player(1)], state.winner, host.epoch));
   }
   private updateGuest() {
     const guest = this.guestValue!;
@@ -223,18 +423,22 @@ export class MatchController {
     const time = state.status === 'over'
       ? Math.min(end + FINALE_DURATION, Math.max(end, this.frameValue?.time ?? end) + Math.max(0, (now - this.lastFrameWall) / 1000))
       : this.replicaClock.frame(now, { startAt: flights[0]!.startAt, endAt: flights.at(-1)!.handoffAt });
-    const frame = guest.frame(time, this.prepared.course.manifest.seed);
+    this.captureGuest(time);
+    this.phaseValue = state.status === 'over' ? time >= end + FINALE_DURATION ? 'over' : 'ending' : 'playing';
+    this.lastFrameWall = now;
+  }
+  private captureGuest(time: number) {
+    const guest = this.guestValue!, frame = guest.frame(time, this.prepared.course.manifest.seed);
     const displayed = guest.replica.presentationAt(time);
     const player = (slot: 0 | 1) => {
       const result = displayed.results.filter(result => result.slot === slot).sort((a, b) => b.time - a.time)[0];
       return { ...displayed.players[slot], result: result ? { points: result.points, time: result.time } : null };
     };
-    this.present(snapshotMatchDisplay(frame, 1, [player(0), player(1)], displayed.winner));
-    this.phaseValue = state.status === 'over' ? time >= end + FINALE_DURATION ? 'over' : 'ending' : 'playing';
-    this.lastFrameWall = now;
+    this.present(snapshotMatchDisplay(frame, 1, [player(0), player(1)], displayed.winner, guest.epoch));
   }
-  release(displayed = this.frameValue): boolean {
-    if (this.phaseValue !== 'playing' || !displayed?.ready || this.localDrop) return false;
+  release(displayed = this.frameValue, epoch = this.displayValue?.epoch): boolean {
+    if (this.phaseValue !== 'playing' || !this.available || epoch !== (this.hostValue?.epoch ?? this.guestValue!.epoch) ||
+      !displayed?.ready || this.localDrop) return false;
     if (this.hostValue) {
       if (this.pendingRelease || this.hostValue.player(0).completion) return false;
       const sequence = [...this.hostValue.scheduler.retainedSequences].reverse().find(sequence => {
@@ -243,7 +447,7 @@ export class MatchController {
       });
       if (sequence === undefined) return false;
       if (this.busy) {
-        this.pendingRelease = { time: displayed.time, sequence };
+        this.pendingRelease = { time: displayed.time, sequence, receivedAt: this.now() };
       } else {
         const decision = this.hostValue.release(displayed.time, sequence);
         if (!decision.accepted) { this.rejectDrop(decision.reason); return false; }
@@ -295,6 +499,7 @@ export class MatchController {
     this.active = false; this.phaseValue = 'closed';
     this.pendingRelease = null;
     this.localDrop = null; this.captured = null; this.displayValue = null; this.frameValue = null;
-    this.startup.close(); this.hostValue?.close(); this.guestValue?.close(); this.prepared.link.close(); this.inbox.length = 0;
+    this.startup.close(); this.resumeHandshake?.close();
+    this.hostValue?.close(); this.guestValue?.close(); this.prepared.link.close(); this.inbox.length = 0;
   }
 }

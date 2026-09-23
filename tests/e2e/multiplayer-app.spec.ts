@@ -96,6 +96,16 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
     }
     if (terrain === 'river-canyon') {
       await expect.poll(async () => {
+        const phase = await host.locator('#multiplayer-app').getAttribute('data-phase');
+        if (phase === 'paused' || phase === 'pausing' || phase === 'held') {
+          throw new Error(`Unexpected pre-finale pause: ${await host.locator('#match-pause-reason').textContent()} / ${await host.locator('#match-message').textContent()}`);
+        }
+        return phase;
+      }, { timeout: 100_000 }).toBe('ending');
+      await host.locator('#match-pause').click();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
+      for (const page of pages) await page.locator('#match-ready').click();
+      await expect.poll(async () => {
         const messages = await Promise.all(pages.map(page => page.locator('#match-message').textContent()));
         if (messages.some(Boolean)) throw new Error(JSON.stringify({ messages, times: await Promise.all(
           pages.map(page => page.locator('#multiplayer-app').getAttribute('data-time'))) }));
@@ -106,7 +116,25 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
       }
     } else {
       await host.locator('#match-pause').click();
-      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'held');
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
+      const frozen = await host.locator('#multiplayer-app').getAttribute('data-time');
+      await host.locator('#match-ready').click();
+      await expect(guest.locator('#match-pause-readiness')).toContainText('Player 1: ready');
+      await expect(host.locator('#multiplayer-app')).toHaveAttribute('data-time', frozen!);
+      await guest.locator('#match-ready').click();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'countdown');
+      await guest.keyboard.press('Escape');
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
+      await expect(host.locator('#match-pause-readiness')).toContainText('Player 2: not ready');
+      await expect(host.locator('#multiplayer-app')).toHaveAttribute('data-time', frozen!);
+      await guest.keyboard.down('Space');
+      await guest.locator('#match-ready').click();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 10_000 });
+      await guest.keyboard.down('Space');
+      await expect(guest.locator('#match-input')).toHaveText('');
+      await guest.keyboard.up('Space');
+      await guest.keyboard.press('Escape');
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
     }
     await guest.screenshot({ path: info.outputPath('guest-native-canvas.png') });
     for (const page of pages) {
@@ -117,6 +145,11 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
     }
     if (terrain === 'green-valley') {
       await guest.setViewportSize({ width: 600, height: 600 });
+      const card = await guest.locator('#match-pause-card').boundingBox();
+      for (const selector of ['.score-card', '.miss-card']) {
+        const score = await guest.locator(`#multiplayer-app ${selector}`).boundingBox();
+        expect(card!.y).toBeGreaterThanOrEqual(score!.y + score!.height);
+      }
       for (const selector of ['.score-card', '.miss-card', '#match-pause', '#match-exit']) {
         await expect(guest.locator(`#multiplayer-app ${selector}`)).toBeInViewport({ ratio: 1 });
       }
