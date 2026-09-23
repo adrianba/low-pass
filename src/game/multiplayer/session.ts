@@ -91,6 +91,13 @@ export class HostSession {
   get time(): number { return this.clock; }
   get status(): SessionStatus { return this.state; }
   get lastEventId(): number { return this.eventId; }
+  get playerTotals() {
+    const total = (slot: PlayerSlot) => {
+      const player = this.players[slot];
+      return { score: player.score, misses: player.misses, assisted: player.assisted, eliminated: player.completion !== null };
+    };
+    return [total(0), total(1)] as const;
+  }
   get planSequences(): number[] { return [...this.encounters.keys()]; }
   releaseWindow(slot: PlayerSlot, sequence: number): { acquireAt: number; cutoffAt: number } {
     validSlot(slot);

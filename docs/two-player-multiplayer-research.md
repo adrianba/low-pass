@@ -1198,7 +1198,7 @@ cases therefore use Low graphics and a test-only 0.25 device scale; that is
 correctness coverage, not full-resolution performance acceptance or Windows Edge
 evidence. Actual two-computer Edge gameplay remains the later human gate.
 
-In-flight assistance changes, audio, records/results
+In-flight assistance changes, audio, records/results screens
 and rematch are not complete. The local
 preview labels these limitations; no production deployment or publication is
 implied by the opt-in build command.
@@ -1650,6 +1650,18 @@ Use existing UI/accessibility patterns, keyboard focus handling, and safe text
 insertion for display names. Local mute/volume/quality remain independent.
 
 ### 11.2 Storage model
+
+**Implemented locally:** `MultiplayerRecordStore` and application wiring now save
+confirmed individual eliminations before their visual finales, using lightweight
+canonical totals rather than drawn/speculative frames. The host and verified guest
+replica supply the same bounded shape. Stable match/slot identities survive pause
+and connection epochs; completion is idempotent. Ten top individual records and
+ten recent summaries are retained. Reload marks saved active summaries interrupted,
+and unavailable/invalid storage warns without replacing the saved bytes or blocking
+room/gameplay controls. Separate results/records screens remain the next step.
+Real-canvas checks cover complete and interrupted matches, saving during the first
+finale, keeping only the eliminated player's leaderboard entry after the survivor
+leaves, and unchanged solo data. Storage-unavailable room controls also remain usable.
 
 Introduce a separately versioned key, for example
 `low-pass.multiplayer-records.v1`, and a dedicated validated store. Do not insert

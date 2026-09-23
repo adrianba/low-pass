@@ -55,6 +55,14 @@ export class GuestReplica {
   }
   get state(): Snapshot | null { return this.stateValue ? structuredClone(this.stateValue) : null; }
   get presentationState(): Snapshot | null { return this.presentationValue ? structuredClone(this.presentationValue) : null; }
+  get playerTotals() {
+    if (!this.presentationValue) return null;
+    const total = (slot: 0 | 1) => {
+      const player = this.presentationValue!.players[slot];
+      return { score: player.score, misses: player.misses, assisted: player.assisted, eliminated: player.eliminated };
+    };
+    return [total(0), total(1)] as const;
+  }
   presentationAt(time: number): Snapshot {
     const at = stampAt(time);
     const state = [...this.history].reverse().find(state => compareStamps(state.at, at) <= 0);

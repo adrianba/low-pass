@@ -23,6 +23,7 @@ export type MatchPhase = 'loading' | 'countdown' | 'playing' | 'ending' | 'over'
 export const MATCH_RECOVERY_MS = 15_000;
 const RECOVERABLE = new Set(['connection', 'channel', 'timeout', 'candidate', 'negotiation', 'signaling',
   'signaling_closed', 'connection_closed', 'peer_disconnected', 'generation', 'peer_unavailable', 'already_connected']);
+const CONNECTION_EXPIRED = new Set(['recovery_expired', 'signaling_recovery_expired']);
 interface Recovery {
   deadline: number; stage: 'connecting' | 'barrier' | 'cache' | 'checkpoint'; attempt: number;
   retryAt: number; attemptUntil: number; pending: boolean; prepared: boolean; restored: boolean; at: Stamp;
@@ -46,6 +47,7 @@ export class MatchController {
   private guestValue: GuestGame | null = null;
   private phaseValue: MatchPhase = 'loading';
   private issueValue: string | null = null;
+  private terminalReasonValue: 'left' | 'connection_lost' | 'error' | null = null;
   private loaded = false;
   private started = false;
   private active = true;
@@ -106,6 +108,7 @@ export class MatchController {
   get phase(): MatchPhase { return this.phaseValue; }
   private get stopped(): boolean { return !this.active || this.phaseValue === 'held'; }
   get issue(): string | null { return this.issueValue; }
+  get terminalReason() { return this.terminalReasonValue; }
   get serviceWarning(): string | null {
     return this.prepared.link.signalingState === 'recovering'
       ? 'Signaling reconnecting (up to 15s). The peer flight remains connected.' : null;
@@ -167,6 +170,9 @@ export class MatchController {
       if (this.stopped) return;
       if (this.prepared.link.status !== 'open') {
         if (this.reconnect && RECOVERABLE.has(this.prepared.link.failure ?? 'connection_closed')) { this.beginRecovery(); return; }
+        if (CONNECTION_EXPIRED.has(this.prepared.link.failure ?? '')) {
+          this.hold('The private connection recovery period expired.', true, 'connection_lost'); return;
+        }
         throw new Error(`The peer connection is unavailable: ${this.prepared.link.failure ?? 'closed'}.`);
       }
       const now = this.now();
@@ -204,7 +210,8 @@ export class MatchController {
     if (!Number.isFinite(receivedAt) || receivedAt > this.now()) throw new Error('Invalid peer receipt time.');
     this.lastPeerAt = Math.max(this.lastPeerAt, receivedAt);
     if (message.type === 'match-abort') {
-      this.hold(message.reason === 'left' ? 'The other player left the private flight.' : 'The other player could not continue the private flight.', false);
+      this.hold(message.reason === 'left' ? 'The other player left the private flight.' : 'The other player could not continue the private flight.',
+        false, message.reason === 'recovery_expired' ? 'connection_lost' : message.reason);
       return;
     }
     if (message.type === 'ping') {
@@ -236,7 +243,7 @@ export class MatchController {
       ? Math.max(session.time, this.frameValue?.time ?? session.time) : session.time) : stampAt(this.frameValue?.time ?? 0);
     const deadline = this.now() + MATCH_RECOVERY_MS;
     const timer = setTimeout(() => {
-      if (this.recovery && this.now() >= this.recovery.deadline) this.hold('Connection recovery exceeded 15 seconds.');
+      if (this.recovery && this.now() >= this.recovery.deadline) this.hold('Connection recovery exceeded 15 seconds.', true, 'connection_lost');
     }, MATCH_RECOVERY_MS);
     this.recovery = {
       deadline, stage: 'connecting', attempt: 0,
@@ -271,7 +278,7 @@ export class MatchController {
   }
   private async updateRecovery(): Promise<void> {
     const state = this.recovery!;
-    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.'); return; }
+    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.', true, 'connection_lost'); return; }
     const host = this.hostValue;
     if (host?.journal.authority.pauseState === 'settling') {
       this.settleLocalRelease();
@@ -295,7 +302,8 @@ export class MatchController {
     }
     if (this.prepared.link.status === 'closed') {
       if (RECOVERABLE.has(this.prepared.link.failure ?? 'connection_closed')) this.retryRecovery(state);
-      else this.hold(`Replacement connection failed: ${this.prepared.link.failure ?? 'closed'}.`);
+      else this.hold(`Replacement connection failed: ${this.prepared.link.failure ?? 'closed'}.`, true,
+        CONNECTION_EXPIRED.has(this.prepared.link.failure ?? '') ? 'connection_lost' : 'error');
       return;
     }
     if (state.stage !== 'checkpoint' && this.now() >= state.attemptUntil) { this.retryRecovery(state); return; }
@@ -318,7 +326,7 @@ export class MatchController {
     this.probe();
     await this.updatePause();
     if (this.stopped || this.recovery !== state) return;
-    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.'); return; }
+    if (this.now() >= state.deadline) { this.hold('Connection recovery exceeded 15 seconds.', true, 'connection_lost'); return; }
     if (this.pauseRestored && this.pauseNotice?.stage === 'ready') {
       if (state.drop && this.displayValue) {
         const { slot, releasedAt } = state.drop, player = this.displayValue.players[slot], aircraft = this.displayValue.frame.aircraft[slot];
@@ -672,9 +680,9 @@ export class MatchController {
     this.frameValue = this.localDrop ? this.localDrop.flight.frame(source.frame) : source.frame;
     this.displayValue = this.frameValue === source.frame ? source : Object.freeze({ ...source, frame: this.frameValue });
   }
-  hold(reason: string, notify = true): void {
+  hold(reason: string, notify = true, terminal: NonNullable<MatchController['terminalReason']> = 'error'): void {
     if (!this.active || this.phaseValue === 'held') return;
-    this.issueValue = reason; this.phaseValue = 'held';
+    this.issueValue = reason; this.phaseValue = 'held'; this.terminalReasonValue = terminal;
     if (this.recovery) {
       clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;
     }
@@ -682,11 +690,12 @@ export class MatchController {
     this.pendingRelease = null;
     this.localDrop = null;
     if (this.captured) this.present(this.captured);
-    if (notify && this.started) this.send({ type: 'match-abort', reason: 'error' });
+    if (notify && this.started) this.send({ type: 'match-abort', reason: terminal === 'connection_lost' ? 'recovery_expired' : terminal });
     this.prepared.link.close();
   }
   close(): void {
     if (!this.active) return;
+    if (this.started && this.phaseValue !== 'held') this.send({ type: 'match-abort', reason: 'left' });
     this.active = false; this.phaseValue = 'closed';
     if (this.recovery) {
       clearTimeout(this.recovery.timer); this.recovery.abort?.abort(); this.recovery = null;

@@ -19,6 +19,7 @@ import { TERRAIN_THEMES } from '../config/terrain.js';
 import { speedOf } from '../simulation/flight-track.js';
 import { FORMATION_PROFILE } from '../config/multiplayer.js';
 import { connectPeer } from '../network/connect-peer.js';
+import { MultiplayerRecordStore } from '../storage/multiplayer-records.js';
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -38,6 +39,7 @@ export class MultiplayerApp {
   private lastReport = -Infinity;
   private redraw = false;
   private renderedDisplay: MatchDisplay | null = null;
+  private readonly records: MultiplayerRecordStore;
   private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
   private animation = 0;
@@ -46,18 +48,19 @@ export class MultiplayerApp {
   private readonly app: HTMLElement;
   private readonly sessionName: HTMLElement;
   constructor(private readonly world: World, private readonly settings: Settings, private readonly leave: () => void,
-    invitation: InvitationLink | null = null, private readonly clearInput: () => void = () => {}) {
+    warn: (message: string) => void, invitation: InvitationLink | null = null, private readonly clearInput: () => void = () => {}) {
     const app = document.querySelector<HTMLElement>('#app');
     const sessionName = app?.querySelector<HTMLElement>('#session-name');
     if (!app || !sessionName) throw new Error('Missing application UI.');
     this.app = app; this.sessionName = sessionName;
+    this.records = new MultiplayerRecordStore(() => localStorage, warn);
     app.dataset.multiplayer = 'true'; sessionName.textContent = 'PRIVATE TWO-PLAYER FLIGHT';
     for (const element of app.querySelectorAll<HTMLElement>('#panel, #hud')) element.hidden = true;
     this.root.id = 'multiplayer-app';
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
         <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
-        <p>Network gameplay integration with shared pause and 15-second connection recovery. Assistance is selected in the lobby. In-flight assistance changes, audio and saved match records are not available yet.</p>
+        <p>Network gameplay integration with shared pause and 15-second connection recovery. Completed player scores are saved separately from solo. Assistance is selected in the lobby. In-flight assistance changes, audio and the results/records screens are not available yet.</p>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
         <div id="match-room"></div>
         <div id="match-connect">
@@ -102,7 +105,12 @@ export class MultiplayerApp {
       try { this.clearInput(); this.match!.setReady(!this.match!.pauseState!.selectedReady); }
       catch (error) { this.fail(error); }
     };
-    this.timer = setInterval(() => { void this.match?.update(); }, 10);
+    this.timer = setInterval(() => {
+      const match = this.match;
+      if (match) void match.update().then(() => {
+        if (this.active && this.match === match) this.recordMatch();
+      }).catch(error => { if (this.active) this.fail(error); });
+    }, 10);
     this.animation = requestAnimationFrame(this.animate);
   }
   private animate = () => {
@@ -148,6 +156,9 @@ export class MultiplayerApp {
             this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect), undefined,
           signal => connectPeer(this.panel.session.admittedMember(), prepared.course.manifest.compatibility,
             FORMATION_PROFILE.viewport.minAspect, mode as IceMode, 0, signal));
+          this.records.begin({ matchId: `${prepared.link.sessionId}:${prepared.epoch + 1}`,
+            localSlot: prepared.role === 'host' ? 0 : 1, terrain: prepared.course.manifest.terrain,
+            compatibility: prepared.course.manifest.compatibility, startedAt: new Date().toISOString() });
           this.availability();
           this.effects = new SharedCombat(this.world.combat, this.match.timeline!);
           this.lobbyPanel?.dispose(); this.lobbyPanel = null;
@@ -257,7 +268,7 @@ export class MultiplayerApp {
       this.text('#match-view', display ? matchViewStatus(display) : '');
       this.text('#match-participation', display ? matchParticipationStatus(display) : '');
       this.text('#match-phase', match.phase === 'countdown' ? `Starting in ${Math.ceil((pause?.remainingMs ?? match.startup.remainingMs ?? 0) / 1000)}`
-        : match.phase === 'over' ? 'MATCH COMPLETE / NO RECORDS SAVED IN THIS PREVIEW' : match.phase.toUpperCase());
+        : match.phase === 'over' ? 'MATCH COMPLETE / SEPARATE MULTIPLAYER RECORDS' : match.phase.toUpperCase());
       this.text('#match-release', match.phase === 'over' && display
         ? display.winner === 'draw' ? 'MATCH DRAW' : `PLAYER ${Number(display.winner) + 1} WINS`
         : ['held', 'pausing', 'paused', 'countdown'].includes(match.phase) ? 'MATCH PAUSED' : display ? matchReleaseStatus(display) : 'STAND BY');
@@ -295,6 +306,17 @@ export class MultiplayerApp {
     }
   }
   release(): void { if (this.renderedDisplay) this.match?.release(this.renderedDisplay.frame, this.renderedDisplay.epoch); }
+  private recordMatch(): void {
+    if (!this.match || !this.records.active) return;
+    try {
+      const totals = this.match.host?.scheduler.session.playerTotals ?? this.match.guest?.replica.playerTotals;
+      if (totals) this.records.observe(totals);
+      if (this.match.terminalReason) this.records.finish(this.match.terminalReason);
+    } catch (error) {
+      this.records.finish('error');
+      throw error;
+    }
+  }
   availability(): void {
     const valid = this.viewportValid(), available = valid && !document.hidden && document.hasFocus();
     if (!available) this.clearInput();
@@ -316,6 +338,7 @@ export class MultiplayerApp {
     clearInterval(this.timer); cancelAnimationFrame(this.animation); this.prewarmAbort.abort();
     const message = error instanceof Error ? error.message : 'The multiplayer scene could not continue.';
     this.match?.hold(message);
+    this.recordMatch();
     this.get<HTMLButtonElement>('#match-connect-button').disabled = true;
     this.error(message);
     this.get('#match-reticle').hidden = true;
@@ -329,6 +352,9 @@ export class MultiplayerApp {
   private error(message: string) { this.get('#match-message').hidden = false; this.text('#match-message', message); }
   async close(): Promise<void> {
     if (!this.active) return;
+    try { this.recordMatch(); }
+    catch (error) { this.fail(error); }
+    this.records.finish('left');
     this.active = false; clearInterval(this.timer); cancelAnimationFrame(this.animation);
     this.prewarmAbort.abort();
     this.match?.close(); this.lobby?.close(); this.lobbyPanel?.dispose();

@@ -151,6 +151,17 @@ async function recoverable(drop: (body: MessageBody) => boolean = () => false, d
 }
 
 describe('bounded failed-peer recovery', () => {
+  it.each(['signaling_recovery_expired', 'recovery_expired'])('records %s as connection loss without starting another deadline', async failure => {
+    const reconnect = vi.fn<Reconnect>(() => new Promise(() => {}));
+    const state = await host(reconnect);
+    try {
+      state.match.prepared.link = { ...state.match.prepared.link, status: 'closed', failure };
+      await state.match.update();
+      expect(state.match.phase).toBe('held');
+      expect(state.match.terminalReason).toBe('connection_lost');
+      expect(reconnect).not.toHaveBeenCalled();
+    } finally { state.match.close(); }
+  });
   it('freezes the host at the active peer freshness bound rather than flying on without inputs', async () => {
     let silent = false;
     const state = await recoverable(body => silent && (body.type === 'ping' || body.type === 'pong'));
@@ -259,6 +270,7 @@ describe('bounded failed-peer recovery', () => {
       await state.match.update(); await state.guest.update();
       expect([state.match.phase, state.guest.phase]).toEqual(['held', 'held']);
       expect(state.match.issue).toContain('15 seconds');
+      expect(state.match.terminalReason).toBe('connection_lost');
       expect(state.rounds[0]!.host!.status).toBe('closed');
       expect(state.rounds[0]!.guest!.status).toBe('closed');
     } finally { state.close(); }

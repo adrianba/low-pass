@@ -667,7 +667,7 @@ rolling plan publication, release settlement and complete guest presentation.
 Native Chromium fixtures run Valley and Canyon matches through both finales.
 Those controller fixtures supply prepared camera views rather than a live
 WebGL application. The application preview below adds real scene coverage;
-shared resume/recovery are connected; multiplayer records remain unwired.
+shared resume/recovery and separate multiplayer persistence are connected.
 This is not the two-computer Edge gameplay review checkpoint.
 
 Rolling course selection and transfer encoding run in a bounded dedicated Web
@@ -736,8 +736,19 @@ so the host's wider window cannot hide a guest missile launch. Resizing requires
 fresh readiness; unsupported sizes disable it until corrected.
 
 **Incomplete:** unrecoverable errors still require leaving the preview. In-flight assistance changes,
-audio, results/records and rematch UI are subsequent steps. No multiplayer score
-is saved yet. This is not the full two-computer Windows Edge review checkpoint.
+audio, results/records screens and rematch UI are subsequent steps.
+This is not the full two-computer Windows Edge review checkpoint.
+
+Confirmed eliminations are saved immediately, before their visual finales, under
+`low-pass.multiplayer-records.v1`. Each browser keeps up to ten completed individual
+scores and ten recent match summaries, including terrain/build/rules identity,
+assistance and the opponent's known status. Pause/recovery cannot duplicate them.
+An interrupted match keeps already-completed scores, but has no winner and never
+adds an unfinished survivor score to the leaderboard. Reload marks a previously
+active saved summary incomplete; it does not recover gameplay. Invalid stored
+bytes are not overwritten, and storage failures warn while retaining session data.
+The solo key and settings are never changed by this store. There is no account
+synchronization or guarantee of recovering a final result that a peer never received.
 
 A signaling-only interruption no longer destroys a healthy peer connection.
 The existing flight continues with a degraded-service warning while the same

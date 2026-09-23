@@ -1,9 +1,39 @@
 import { test, expect } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 import { roomService } from '../helpers/room-service.js';
 
 declare global { interface Window { interruptTestSignaling: () => void; interruptTestPeer: () => void } }
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
-for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${terrain} application plays on the real canvas and restores solo`, async ({ browser }, info) => {
+test('multiplayer storage failure warns without blocking room controls or changing solo data', async ({ browser }) => {
+  const server = await roomService({ multiplayerApp: true });
+  const context = await browser.newContext({ viewport: { width: 840, height: 732 }, deviceScaleFactor: 0.25 });
+  const page = await context.newPage();
+  const solo = JSON.stringify({ version: 1, scores: [], settings: {
+    quality: 'low', assist: false, muted: true, volume: 0.5, terrain: 'green-valley',
+  } });
+  try {
+    await page.addInitScript(solo => {
+      localStorage.setItem('low-pass.records.v1', solo);
+      const getItem = Storage.prototype.getItem;
+      Storage.prototype.getItem = function(key: string) {
+        if (key === 'low-pass.multiplayer-records.v1') throw new DOMException('Denied', 'SecurityError');
+        return getItem.call(this, key);
+      };
+    }, solo);
+    await page.goto(server.origin + '/multiplayer.html');
+    await page.getByRole('button', { name: 'PRIVATE FLIGHT PREVIEW', exact: true }).click();
+    await expect(page.locator('#notification')).toContainText('Multiplayer records unavailable');
+    await page.getByLabel('Hosting access code', { exact: true }).fill(server.code);
+    await page.getByRole('button', { name: 'CREATE ROOM', exact: true }).click();
+    await expect(page.locator('#host-link')).toHaveValue(/multiplayer\.html#join=/);
+    await expect(page.locator('#match-exit')).toBeInViewport({ ratio: 1 });
+    await page.locator('#match-exit').click();
+    await expect(page.locator('#start')).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(solo);
+  } finally { await context.close(); await server.close(); }
+});
+for (const [terrain, interrupted] of [['green-valley', false], ['river-canyon', false], ['green-valley', true]] as const)
+test(`opt-in ${terrain} application plays on the real canvas and restores solo${interrupted ? ' after survivor disconnect' : ''}`, async ({ browser }, info) => {
   test.setTimeout(180_000);
   const server = await roomService({ multiplayerApp: true });
   const guestBrowser = await browser.browserType().launch({ channel: info.project.name === 'edge' ? 'msedge' : 'chromium' });
@@ -219,19 +249,38 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
         if (phase === 'paused' || phase === 'pausing' || phase === 'held' || phase === 'recovering') {
           throw new Error(JSON.stringify({ phase, warnings, reason: await host.locator('#match-pause-reason').textContent() }));
         }
-        return host.locator('#match-view').textContent();
-      }, { timeout: 80_000 }).toBe('SPECTATING / PLAYER 2');
-      await expect(host.locator('#match-participation')).toContainText('Keep this tab open');
-      await expect(guest.locator('#match-participation')).toContainText('Your flight continues on the same path.');
-      await host.keyboard.press('Space');
-      await expect(host.locator('#match-release')).toHaveText('SPECTATING');
-      await expect(host.locator('#match-reticle')).toBeHidden();
-      await host.screenshot({ path: info.outputPath('host-spectating-survivor.png'), scale: 'css' });
-      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 45_000 });
-      await expect(host.locator('#match-score-0')).toHaveText('0');
+        return host.locator('#match-status-0').textContent();
+      }, { timeout: 80_000 }).toBe('FLIGHT ENDED');
+      await expect(host.locator('#match-view')).toHaveText('FINAL FLIGHT / PLAYER 1');
       for (const page of pages) {
-        await expect(page.locator('#match-release')).toHaveText('PLAYER 2 WINS');
-        await expect(page.locator('#match-participation')).toHaveText('Both flights have ended.');
+        await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('low-pass.multiplayer-records.v1') ?? 'null')))
+          .toMatchObject({ version: 1, scores: [{ slot: 0, score: 0, matchStatus: 'active' }],
+            matches: [{ status: 'active', winner: null }] });
+      }
+      if (interrupted) {
+        await contexts[1]!.close();
+        await expect(host.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'held', { timeout: 20_000 });
+        await expect.poll(() => host.evaluate(() => JSON.parse(localStorage.getItem('low-pass.multiplayer-records.v1') ?? 'null')))
+          .toMatchObject({ version: 1, scores: [{ slot: 0, score: 0, matchStatus: 'incomplete', opponent: { completed: false } }],
+            matches: [{ status: 'incomplete', reason: 'left', winner: null }] });
+      } else {
+        await expect(host.locator('#match-view')).toHaveText('SPECTATING / PLAYER 2', { timeout: 10_000 });
+        await expect(host.locator('#match-participation')).toContainText('Keep this tab open');
+        await expect(guest.locator('#match-participation')).toContainText('Your flight continues on the same path.');
+        await host.keyboard.press('Space');
+        await expect(host.locator('#match-release')).toHaveText('SPECTATING');
+        await expect(host.locator('#match-reticle')).toBeHidden();
+        await host.screenshot({ path: info.outputPath('host-spectating-survivor.png'), scale: 'css' });
+        for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'over', { timeout: 45_000 });
+        await expect(host.locator('#match-score-0')).toHaveText('0');
+        for (const page of pages) {
+          await expect(page.locator('#match-release')).toHaveText('PLAYER 2 WINS');
+          await expect(page.locator('#match-participation')).toHaveText('Both flights have ended.');
+          const score = Number(await page.locator('#match-score-1').innerText());
+          expect(await page.evaluate(() => JSON.parse(localStorage.getItem('low-pass.multiplayer-records.v1') ?? 'null')))
+            .toMatchObject({ version: 1, scores: [{ slot: 1, score, assisted: true, matchStatus: 'complete' },
+              { slot: 0, score: 0, matchStatus: 'complete' }], matches: [{ status: 'complete', winner: 1 }] });
+        }
       }
     }
     expect(errors.filter(error => !error.startsWith('Private match held:'))).toEqual([]);
@@ -244,6 +293,15 @@ for (const terrain of ['green-valley', 'river-canyon'] as const) test(`opt-in ${
     await expect(host.locator('#hud')).toBeVisible();
     expect(await host.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(stored);
   } finally {
+    const states = await Promise.all(pages.map(page => page.isClosed() ? null : page.evaluate(() => {
+      const root = document.querySelector<HTMLElement>('#multiplayer-app');
+      return { phase: root?.dataset.phase, time: root?.dataset.time,
+        pause: document.querySelector('#match-pause-reason')?.textContent,
+        issue: document.querySelector('#match-message')?.textContent };
+    })));
+    const report = info.outputPath('redacted-match-status.json');
+    await writeFile(report, JSON.stringify({ states, warnings, errors }, null, 2));
+    await info.attach('redacted-match-status', { path: report, contentType: 'application/json' });
     await Promise.all(contexts.map(context => context.close())); await guestBrowser.close(); await server.close();
   }
 });

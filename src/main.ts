@@ -95,7 +95,7 @@ ui = new UI(settings, {
       multiplayer = new MultiplayerApp(world!, settings, () => {
         multiplayer = null; key.up(); prediction = null; preview = new Run(7, settings.terrain); setScreen('menu');
         resumeSoloRendering?.();
-      }, invitation, () => key.up());
+      }, warn, invitation, () => key.up());
       world!.engine.stopRenderLoop();
       invitation = null;
     }).catch(fail).finally(() => { openingMultiplayer = false; });
