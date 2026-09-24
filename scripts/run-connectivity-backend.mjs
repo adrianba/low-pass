@@ -7,6 +7,8 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 if (!process.getuid || process.getuid() === 0) throw new Error('Run this local harness as a non-root Unix user.');
 const port = process.env.CONNECTIVITY_BACKEND_PORT ?? '';
 if (port && (!/^[0-9]+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) throw new Error('Invalid backend port.');
+const turnUrls = process.env.LOW_PASS_TURN_URLS;
+if (!turnUrls) throw new Error('Set LOW_PASS_TURN_URLS to the operator-provided relay URLs before starting the local harness.');
 const directory = resolve(root, process.env.CONNECTIVITY_FIXTURE_DIR ?? 'test-results/connectivity-preview');
 const gateway = execFileSync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim();
 const args = ['run', '--rm', '--name', 'low-pass-connectivity-local',
@@ -17,7 +19,7 @@ const args = ['run', '--rm', '--name', 'low-pass-connectivity-local',
   '-e', `LOW_PASS_TRUSTED_PROXY_CIDRS=${gateway}/32`,
   '-e', 'LOW_PASS_HOSTING_CODE_FILE=/run/secrets/low-pass-hosting-code',
   '-e', 'LOW_PASS_TURN_SECRET_FILE=/run/secrets/low-pass-turn-secret',
-  '-e', 'LOW_PASS_TURN_URLS=turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp'];
+  '-e', `LOW_PASS_TURN_URLS=${turnUrls}`];
 function mount(source, destination) {
   if (!statSync(source).isFile()) throw new Error('A required local diagnostic file is missing.');
   args.push('--mount', `type=bind,src=${source},dst=${destination},readonly`);

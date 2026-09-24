@@ -87,7 +87,7 @@ export class UI {
     this.get('#start').onclick = actions.start;
     if (actions.multiplayer) {
       const button = document.createElement('button');
-      button.id = 'private-flight'; button.className = 'secondary'; button.textContent = 'PRIVATE FLIGHT PREVIEW';
+      button.id = 'private-flight'; button.className = 'secondary'; button.textContent = 'PRIVATE FLIGHT'; button.hidden = true;
       button.onclick = actions.multiplayer; this.get('#start-actions').append(button);
     }
     this.get('#pause').onclick = actions.pause;
@@ -116,6 +116,12 @@ export class UI {
     };
   }
 
+  multiplayerAvailable(available: boolean, preview = false): void {
+    const button = this.app.querySelector<HTMLButtonElement>('#private-flight');
+    if (!button) return;
+    button.hidden = !available;
+    button.textContent = preview ? 'PRIVATE FLIGHT PREVIEW' : 'PRIVATE FLIGHT';
+  }
   private get<T extends HTMLElement = HTMLElement>(selector: string): T {
     const element = this.app.querySelector<T>(selector);
     if (!element) throw new Error(`Missing UI control: ${selector}`);

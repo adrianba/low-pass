@@ -33,7 +33,7 @@ this branch has local commits.
 | Runtime layout | `/opt/low-pass/dist` is the HTTP root; sibling `dist-server` and `node_modules` are not served. |
 | Stop signal and grace | `SIGTERM` to PID 1; allow 45 seconds, also set in `compose.yaml`. |
 | Secrets and volumes | None required at G0. No database, persistent server data or TURN certificate mounts. |
-| Game origin | Preserve `https://low-pass.biggsea.us` and the existing Traefik HTTP route to port 8080. No DNS, firewall or TLS routing changes for G0. |
+| Game origin | Preserve the existing operator-configured HTTPS origin and Traefik HTTP route to port 8080. No DNS, firewall or TLS routing changes for G0. |
 | Activation | Multiplayer is unavailable in this build; only absent or literal `false` is accepted for `LOW_PASS_MULTIPLAYER_ENABLED`. |
 
 **Entrypoint compatibility matters:** the exec-form entrypoint is
@@ -240,14 +240,14 @@ After those gates, the user deploys the Node-only image through Ansible and supp
    health endpoints while keeping the same browser origin and completed records.
    Test intentional Node downtime only in an appropriate non-live environment.
 5. **TURN integration:** the user reports the separate coturn server deployed at
-   `turn.low-pass.biggsea.us`. Game-side authenticated relay connectivity remains
+   an operator-managed hostname. Game-side authenticated relay connectivity remains
    the later G2 acceptance check.
 
 The full browser suite can target the user-provisioned deployment. On an approved
 Windows Edge test host, in PowerShell:
 
 ```powershell
-$env:TEST_URL="https://low-pass.biggsea.us"
+$env:TEST_URL="https://game.example.net"
 npm run test:e2e -- --project=edge
 ```
 
@@ -263,7 +263,7 @@ volume. Stop implementation at this gate until the required evidence is approved
 
 ## Independently managed TURN integration
 
-On 2026-09-20 the user reported coturn deployed at `turn.low-pass.biggsea.us`,
+On 2026-09-20 the user reported coturn deployed at an operator-managed hostname,
 using independently developed code in the Ansible repository. Relay deployment
 instructions and examples have been removed here; the old examples do not
 describe or establish the live server's settings.

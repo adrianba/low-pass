@@ -2,9 +2,10 @@
 
 ## Project and workflow
 
-Low Pass is a single-player desktop browser game: TypeScript, Vite, Babylon.js
-WebGL2, and Web Audio. Node.js is build tooling only; production is static files
-served by unprivileged Nginx in Docker. The target browser is current Windows
+Low Pass is a desktop browser game with solo and optional private two-player
+flights: TypeScript, Vite, Babylon.js WebGL2, and Web Audio. A non-root Node 24
+process serves assets and optional room/signaling/TURN credentials in Docker;
+coturn is separately operator-managed. The target browser is current Windows
 Microsoft Edge. The user confirmed the initial game works there; repeat browser
 checks after changes. Do not assume a particular GPU or guarantee 60 FPS.
 

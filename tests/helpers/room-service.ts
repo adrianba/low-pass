@@ -13,7 +13,7 @@ export async function roomService(options: { turnFile?: string; connectivity?: b
   const html = options.connectivity ? await readFile(resolve('tests/fixtures/connectivity.html'), 'utf8') : null;
   const controls = options.roomControls ? await readFile(resolve('tests/fixtures/room-controls.html'), 'utf8') : null;
   const turn = options.turnFile ? readTurnConfig({
-    LOW_PASS_TURN_URLS: 'turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp',
+    LOW_PASS_TURN_URLS: process.env.LOW_PASS_TURN_URLS,
     LOW_PASS_TURN_SECRET_FILE: options.turnFile,
   }, resolve('dist')) : { urls: ['turn:127.0.0.1:9?transport=udp'],
     key: createSecretKey(Buffer.from('dummy-coturn-key-for-browser-fixture-only')) };

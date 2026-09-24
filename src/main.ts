@@ -13,6 +13,7 @@ import { ReleaseKey } from './input/keyboard';
 import { speedOf } from './simulation/flight-track';
 import type { MultiplayerApp } from './app/multiplayer';
 import { takeInvitationLink } from './network/invitation-link';
+import { RoomClient } from './network/room-client';
 
 let ui: UI | null = null;
 const warnings: string[] = [];
@@ -35,7 +36,7 @@ const key = new ReleaseKey();
 let multiplayer: MultiplayerApp | null = null;
 let openingMultiplayer = false;
 const multiplayerPreview = location.pathname === '/multiplayer.html';
-let invitation = multiplayerPreview ? takeInvitationLink(location.href, url => history.replaceState(history.state, '', url)) : null;
+let invitation = takeInvitationLink(location.href, url => history.replaceState(history.state, '', url));
 let resumeSoloRendering: (() => void) | null = null;
 
 function setScreen(next: Screen): void {
@@ -87,7 +88,7 @@ function fail(error: unknown): void {
 }
 
 ui = new UI(settings, {
-  ...(multiplayerPreview ? { multiplayer() {
+  multiplayer() {
     if (!world || multiplayer || openingMultiplayer || screen !== 'menu' && screen !== 'over') return;
     openingMultiplayer = true; key.up();
     void audio.pause(); audio.reset(); void audio.unlock();
@@ -99,7 +100,7 @@ ui = new UI(settings, {
       world!.engine.stopRenderLoop();
       invitation = null;
     }).catch(fail).finally(() => { openingMultiplayer = false; });
-  } } : {}),
+  },
   start() {
     if (!world || multiplayer || openingMultiplayer || (screen !== 'menu' && screen !== 'over')) return;
     try { run = new Run(crypto.getRandomValues(new Uint32Array(1))[0]!, settings.terrain); }
@@ -131,6 +132,13 @@ ui = new UI(settings, {
   settings: changeSettings,
 });
 ui.show('loading');
+ui.multiplayerAvailable(multiplayerPreview, multiplayerPreview);
+if (!multiplayerPreview) {
+  void new RoomClient().capabilities().then(status => {
+    ui?.multiplayerAvailable(status.multiplayer && status.rooms === true && status.signaling === true && status.turn === true);
+    if (!status.multiplayer && invitation) warn('Private flights are unavailable on this server. Solo play is unaffected.');
+  }).catch(() => warn('Private flight availability could not be checked. Solo play is unaffected.'));
+}
 ui.scores(store.scores);
 for (const message of warnings) ui.warn(message);
 

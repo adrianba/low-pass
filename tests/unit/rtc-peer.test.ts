@@ -71,6 +71,26 @@ function setup(patch: Partial<RtcOptions> = {}) {
 }
 
 describe('bounded native peer adapter', () => {
+  it('waits for the host hello before replying on an already-open remotely created channel', () => {
+    const { peer, pc } = setup({ role: 'guest' });
+    const control = new Channel('control', { protocol: 'low-pass.v1', ordered: true });
+    const state = new Channel('state', { protocol: 'low-pass.v1', ordered: false, maxRetransmits: 0 });
+    control.readyState = 'open'; state.readyState = 'open';
+    pc.ondatachannel!({ channel: control });
+    pc.ondatachannel!({ channel: state });
+    control.onopen?.(); state.onopen?.();
+    expect(control.sent).toEqual([]);
+    expect(peer.status).not.toBe('open');
+
+    control.receive(encodeMessage({ ...hello(), sequence: 0, sender: 'host' }));
+    expect(control.sent.map(text => JSON.parse(text).type)).toEqual(['hello']);
+    expect(peer.status).toBe('open');
+    control.onopen?.();
+    expect(control.sent).toHaveLength(1);
+    vi.advanceTimersByTime(30_000);
+    expect(peer.failure).toBeNull();
+  });
+
   it('preserves validated release receipts ahead of a recoverable connection failure', () => {
     const state = setup({ clock: () => 123 }); state.ready();
     const command = release('guest');

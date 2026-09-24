@@ -2,7 +2,9 @@
 
 A desktop browser bombing-accuracy game. The computer flies the original Kestrel
 fighter-bomber through a rolling valley; you time one bomb per target. Built with
-TypeScript, Babylon.js/WebGL2, and Vite. No gameplay server or account is required.
+TypeScript, Babylon.js/WebGL2, and Vite. Solo play needs no gameplay server or
+account. Optional private two-player flights use host-authoritative WebRTC,
+with a Node room/signaling service and operator-managed TURN relay.
 
 ## License
 
@@ -18,6 +20,64 @@ Production builds include the MIT, Babylon.js and Node middleware dependency
 license texts under `/licenses/`.
 The application container also includes the Node.js license and bundled notices
 at that path.
+
+## First-release security and deployment
+
+Private multiplayer is intended for a small, trusted group, not anonymous public
+matchmaking. The hosting code is the root admission secret, **not a TURN password**:
+it authorizes a short-lived, one-use room-creation grant. A guest does not need
+that code; the guest needs the separate invitation and explicit host admission.
+Only an admitted member's random bearer capability can request short-lived TURN
+credentials. Generate the hosting code from cryptographically random bytes
+(for example, 32 bytes encoded as base64url), not a memorable phrase padded to
+meet the length check. Keep the hosting code separate from the TURN shared key.
+
+Coturn independently authenticates the issued HMAC credentials. Their embedded
+room/member names provide attribution, **not destination restrictions**: an
+admitted participant can copy a credential and use it outside the game against
+any peer address coturn permits. Room closure stops future issuance but does not
+instantly revoke issued credentials or existing relay allocations. Secret
+rotation/restart likewise needs coordinated operator handling; do not promise
+that closing a browser or waiting for a credential timestamp immediately kills
+all relay traffic. Preserve coturn's allocation/bandwidth quotas, peer-address
+denials and firewall egress restrictions. An established coturn allocation can
+remain usable beyond the credential expiry while its owner keeps refreshing it;
+the maximum allocation lifetime is a per-refresh bound, not a total-session cap.
+Deny loopback, private, link-local,
+metadata and other infrastructure destinations, including IPv6/mapped-address
+equivalents; an IPv4-only installation should deny IPv6 peers. Public-address
+abuse remains a reason to share invitations only with trusted players.
+
+Use a **single application replica**: room and signaling state is in memory.
+Recreating the container invalidates rooms; there is no cross-process persistence
+or host migration. Preserve the HTTPS origin so existing browser records survive.
+Keep Node behind the trusted TLS proxy, with no direct public publication of its
+port. Explicitly allowlist the real proxy chain; do not trust arbitrary forwarded
+headers or all private networks. Keep the non-root/read-only/dropped-capability
+container settings, private read-only secret mounts, synchronized clocks and
+publicly trusted relay TLS certificate. Disable request-body, Authorization,
+WebSocket-payload and credential-response logging at proxies and diagnostics.
+Use `/healthz` for application health and monitor `/api/multiplayer/readyz`
+separately. Docker does not automatically restart a merely unhealthy container.
+
+The public capabilities endpoint reveals only availability flags and a reason,
+not relay URLs, secrets or proxy configuration. All mutating room requests and
+signaling upgrades require the configured Origin, but **Origin is not an
+authentication secret**: non-browser clients can forge it. Random capabilities,
+hosting-code verification, explicit admission and bounded rate/capacity limits
+provide the actual access controls. WebRTC encrypts gameplay in transit, including
+when relayed. Direct play can reveal peer network addresses to the other player.
+The host controls scores and simulation; this is not cheat-resistant competitive
+play, and browser-local records are not trusted server attestations.
+
+Release from a sanitized source tree with deployment values supplied privately.
+Check **reachable Git history**, not just the latest diff: deleting a previously
+committed hostname does not remove it from old commits, forks, caches or images.
+Relay addresses are necessarily discoverable by admitted browsers and must never
+be treated as passwords. Do not publish local preview fixtures or diagnostic
+artifacts. Before live replacement, obtain the exact published linux/amd64 image
+and verify its health, configured menu, room admission and relay path on the target
+host. Local ARM64 results do not establish AMD64 image acceptance.
 
 ## Run locally
 
@@ -43,8 +103,13 @@ audio. Failed essential assets or a lost graphics context display a reload scree
 The Node 24 server serves the production build. Fully loaded single-player play
 remains client-side, and the build also works with other static hosts. Multiplayer
 endpoints support opt-in private rooms, authenticated signaling and temporary
-TURN credentials. The normal entry remains solo-only; a separate local
-multiplayer application preview is described below. It is not a finished release.
+TURN credentials. With healthy room, signaling and TURN configuration, the normal
+menu exposes **PRIVATE FLIGHT**. The host enters the private hosting code, shares
+the invitation, and explicitly admits the guest. Both choose **CONNECT LOBBY**
+and confirm readiness. A disabled/unavailable service leaves solo play usable.
+Vite development/preview serves solo only; use the configured Node application
+for multiplayer. Standalone static hosting remains usable for solo; unavailable
+capability discovery warns without blocking it.
 Shared Zod protocol modules compile under `dist-server/shared`; the executable
 is `dist-server/server/index.js`. Neither directory is inside the HTTP asset root.
 
@@ -63,7 +128,9 @@ server, independent of the launch directory. `/healthz` returns `ok`.
 with 503 while the HTTP service remains available. Intentionally disabled
 multiplayer returns 200 with `multiplayer: false`.
 `GET /api/multiplayer/capabilities` returns
-`{"multiplayer":false,"reason":"not_implemented"}`. Responses are uncached JSON;
+`{"multiplayer":false,"reason":"not_implemented"}` when disabled (the legacy reason
+name is retained), or `multiplayer: true`, `reason: "available"` and healthy
+`rooms`, `signaling`, `turn` flags when configured. Responses are uncached JSON;
 unknown routes and disabled multiplayer endpoints return 404 with no HTML
 fallback. `/signal` accepts only enabled WebSocket upgrades, not ordinary HTTP
 requests. Static delivery supports HEAD, validators, ranges and compression;
@@ -77,7 +144,7 @@ connections at the shutdown deadline with a warning.
 | `LOW_PASS_SERVICE_HOST` | `127.0.0.1` | IP address; container explicitly uses `0.0.0.0` |
 | `LOW_PASS_STATIC_ROOT` | sibling `dist` | Absolute built-asset directory; symlinks are rejected |
 | `LOW_PASS_SHUTDOWN_TIMEOUT_MS` | `5000` | Integer 1-30000 |
-| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | `false`, or `true` to enable the private-room preparation API with all settings below |
+| `LOW_PASS_MULTIPLAYER_ENABLED` | `false` | `false`, or `true` to enable private flights with all settings below |
 | `LOW_PASS_PUBLIC_ORIGIN` | unset | Canonical HTTPS origin; HTTP loopback is allowed for local tests |
 | `LOW_PASS_TRUSTED_PROXY_CIDRS` | unset | Comma-separated explicit IP/CIDR ranges for the immediate proxy and trusted upstream proxies; universal `/0` ranges are rejected |
 | `LOW_PASS_HOSTING_CODE_FILE` | unset | Absolute private file outside the HTTP root; 32-256 printable ASCII characters, optionally followed by one newline |
@@ -94,14 +161,14 @@ while serving it; replace the container for releases rather than editing files.
 `npm run test:server` exercises real local HTTP and independently compiled ESM
 startup/shutdown; these tests are also included in `npm test`.
 
-### Private room service (preparation only)
+### Private room service
 
 Deployment remains owned by the separate Ansible repository. The current
 deployment can keep `LOW_PASS_MULTIPLAYER_ENABLED=false`; nothing needs enabling
 for solo play or the local combat preview.
 
-The confirmed production path is Cloudflare -> Traefik -> Node, with Node
-unpublished on the `proxynet` Docker network. Traefik trusts Cloudflare's proxy
+The production proxy contract is Cloudflare -> Traefik -> Node, with Node
+unpublished on an operator-managed Docker network. Traefik trusts Cloudflare's proxy
 addresses and has `forwardedHeaders.insecure=false`. Configure the application's
 allowlist with the actual trusted Traefik addresses/dedicated network and the
 trusted Cloudflare ranges; a Docker network name is not an IP range. Do not
@@ -136,13 +203,13 @@ Authentication, joining, room creation, member operations and global traffic
 have bounded rate limits; capacity/rate/expiry failures are explicit. Credentials
 and access codes must be excluded from proxy request-body/header logs.
 
-Capabilities report `rooms: true` and `signaling: true` only for healthy configured
-services, while `multiplayer` remains `false`. Invalid optional settings or room
+Capabilities report `multiplayer: true` only when rooms, signaling and the TURN
+issuer are all available. Invalid optional settings or room
 maintenance failure leave static serving healthy. A declared secret file
 mistakenly placed in the static root is excluded from HTTP delivery, and room
 activation is rejected. No hosting code is supplied in the repository.
 
-### Authenticated signaling (preparation only)
+### Authenticated signaling
 
 The same listener accepts WebSocket upgrades at `/signal` when rooms are enabled.
 The upgrade requires the exact configured Origin and validated proxy chain.
@@ -166,11 +233,10 @@ Pending guests that are denied or revoked cannot reconnect. Closure, overload,
 authentication and negotiation failures are explicit. Logs contain no SDP, ICE
 addresses or credentials. Service shutdown also closes upgraded sockets.
 
-Server and native-browser checks cover signaling messages. The separate native
-peer adapter is described below; relay allocations, connection UI, fair remote
-release settlement and two-computer Edge/TURN acceptance remain later milestones.
+Server and native-browser checks cover signaling messages. The native peer adapter,
+relay diagnostics and gameplay review evidence are described below.
 
-### Temporary TURN credentials (application integration only)
+### Temporary TURN credentials
 
 Coturn remains independently managed by Ansible. Configure **both** TURN settings
 above to enable issuance; omitting both leaves room/signaling preparation usable
@@ -186,13 +252,20 @@ credentials, URL paths/fragments, unsupported schemes and duplicate URLs are
 rejected. No default external STUN service is used.
 
 The operator-provided coturn task publishes 3478/UDP, 3478/TCP and 5349/TCP
-at `turn.low-pass.biggsea.us`, plus a configured UDP relay-port range, with
+at an operator-configured hostname, plus a configured UDP relay-port range, with
 Traefik disabled for coturn. Its configuration enables shared-secret
 authentication and disables standalone STUN (`no-stun`). Use TURN-only URLs:
 
 ```text
-LOW_PASS_TURN_URLS=turn:turn.low-pass.biggsea.us:3478?transport=udp,turn:turn.low-pass.biggsea.us:3478?transport=tcp,turns:turn.low-pass.biggsea.us:5349?transport=tcp
+LOW_PASS_TURN_URLS=turn:turn.example.net:3478?transport=udp,turn:turn.example.net:3478?transport=tcp,turns:turn.example.net:5349?transport=tcp
 ```
+
+All domain names here are documentation placeholders. Supply actual deployment
+hostnames through the operator's private configuration, not committed scripts,
+tests or documentation. The local harness and opt-in live tests also require
+`LOW_PASS_TURN_URLS` in their environment; they have no deployment-specific default.
+Admitted browsers necessarily learn the configured relay addresses to connect.
+Keeping those names out of source is publication hygiene, not access control.
 
 These URLs describe the intended listeners, not verified connectivity. Docker
 port publication alone does not establish public DNS, firewall reachability or
@@ -270,12 +343,16 @@ and matches lasting beyond ten minutes need real-relay acceptance under these
 limits. The 600-second maximum allocation lifetime is a refresh interval limit,
 not an absolute match-duration limit or a substitute for REST credential expiry.
 
-### Native peer transport (opt-in development integration)
+### Native peer transport and implementation checkpoints
+
+The sections below retain individual implementation checkpoints and diagnostic
+fixtures. Statements about a checkpoint's incomplete integration describe that
+historical layer, not the current private-flight application described above.
 
 `RtcPeer` implements the common transport interface using native browser WebRTC:
 host-authored offers, guest answers and generation-tagged trickle ICE. Candidates
 wait for remote SDP, and outgoing SDP precedes its candidates. Each instance owns
-one connection/generation; after connection loss, the future recovery controller
+one connection/generation; after connection loss, the recovery controller
 must establish a new peer/epoch and checkpoint rather than resume stale channels.
 
 DTLS fingerprints come from authenticated, room-bound signaling. Before exposing
@@ -284,6 +361,9 @@ compatibility hashes and viewport on the connected control channel. Reliable
 ordered control carries commands/events/transfers; unordered, zero-retry state
 carries disposable snapshots and clock probes. Cross-channel traffic that beats
 the hello is bounded and held until compatibility is verified.
+The host initiates this handshake; the guest replies only after receiving the
+validated host hello, rather than sending as soon as a remotely created channel
+reports itself open. The connection deadline and compatibility checks are unchanged.
 
 Wire messages remain at most 16 KiB. Each channel has a 64 KiB send watermark;
 bulk chunks stop at 32 KiB, preserving control-buffer space for small messages.
@@ -304,8 +384,8 @@ test-only relay policy cannot fall back to a direct connection when no relay is
 available. This is **local Chromium**, not two-computer Edge or real TURN
 acceptance, and not a complete recovery/game controller. Its compatibility hashes
 are fixture values; the separate room preview below now uses real build identity
-and lobby readiness. Clock synchronization, fair release settlement and multiplayer
-records remain unwired.
+and lobby readiness. This isolated fixture does not cover the application's clock
+synchronization, fair release settlement or multiplayer records.
 
 ### Building a connection-service checkpoint
 
@@ -329,7 +409,8 @@ Ansible owns the actual image selection, trusted CIDR values, secret mounts and
 environment settings. Keep the current origin, Traefik-only port 8080,
 read-only/non-root hardening and healthcheck. `/healthz` proves application
 health; `turn: true` in capabilities proves issuer configuration, **not coturn
-reachability**. Multiplayer still reports `false` until later UI/game integration.
+reachability**. Multiplayer reports `true` when rooms, signaling and the issuer
+are all available; reachability still requires a real peer connection.
 Ansible must supply the private key file described above; no secret value is
 needed in chat. The certificate blocker described below is now resolved;
 latency, recovery and browser acceptance remain separate gates.
@@ -352,6 +433,7 @@ separate local hosting code **once**, without printing it:
 node --input-type=module -e 'import {randomBytes} from "node:crypto"; import {writeFileSync} from "node:fs"; writeFileSync(".secret/hosting-code",randomBytes(32).toString("base64url")+"\n",{mode:0o600,flag:"wx"});'
 npm run build:connectivity-preview
 docker build -t low-pass:connectivity-checkpoint .
+# Export LOW_PASS_TURN_URLS from private operator configuration first.
 node scripts/run-connectivity-backend.mjs
 ```
 
@@ -405,7 +487,7 @@ this is not gameplay latency acceptance or a performance benchmark.
 
 **Certificate retest, 2026-09-22:** the operator replaced the staging certificate.
 Normal OpenSSL chain/hostname verification now succeeds for
-`turn.low-pass.biggsea.us`, negotiating TLS 1.3. All four mounted Chromium cases
+the operator-configured relay, negotiating TLS 1.3. All four mounted Chromium cases
 passed: automatic mode selected direct, and forced UDP, TCP and TLS selected
 relay candidates at both ends with the expected relay transport. Each transferred
 the verified Canyon payload and exchanged commands/probes both ways. Certificate
@@ -696,7 +778,8 @@ holds the match rather than silently skipping simulation time.
 build. Serve that build with the existing, privately configured local Node room
 service. This command does not provision credentials, configure coturn, start a
 server, or deploy anything. Do not publish this development entry. A subsequent
-ordinary `npm run build` removes it; `/` has no multiplayer menu action.
+ordinary `npm run build` removes it; `/` exposes multiplayer only after successful
+server capability discovery.
 
 For the existing local container harness, build the ordinary image, then copy
 its exact `/opt/low-pass/dist/index.html` to a stable private artifact named
@@ -856,8 +939,11 @@ The receipt correction has deterministic coverage, but does not establish the
 cause or resolution of every prior browser pause. Recent software-rendered
 Canyon runs still paused at approximately 10 and 38 seconds with corrections
 just beyond 100 ms; a separate interrupted Valley run completed its intended
-disconnect/results path. These failures remain release blockers, not successful
-uninterrupted acceptance. CPU profiling that mostly captured an already-paused
+disconnect/results path. These failures are retained engineering evidence, not
+successful uninterrupted acceptance or a confirmed Windows Edge defect.
+Subsequent separate-PC user play covered all three terrains successfully; that
+feedback is retained without claiming a measured soak or every fault scenario.
+CPU profiling that mostly captured an already-paused
 game is not evidence about the earlier active-flight stalls.
 
 Run ordinary application checks without per-WebGL-call instrumentation. Opt in
@@ -918,9 +1004,11 @@ visible reason for any pause/freeze, plus whether both-ready resume works.
 Report visual/audio/readability problems as well as score disagreement.
 Do not share invitations, hosting codes, credential responses, SDP or candidate
 addresses; do not capture network HARs or credential-bearing browser traces.
-This is the next human acceptance gate, not production deployment approval.
-Unresolved sustained-play failures must be assessed with that evidence before
-enabling the normal menu, recommending merge, or publishing an image.
+This is a reusable review checklist, not a demand to repeat the already-reported
+successful separate-PC, all-terrain play. Assess software-rendered failures
+alongside target-browser feedback rather than treating them as automatic Edge
+release blockers. Publication and production replacement still require explicit
+operator approval and the target-image checks in the first-release section.
 
 ### Local formation preview (not networked)
 
@@ -1154,7 +1242,7 @@ are not copied into the image.
 See the [G0 container handoff](docs/application-container-checkpoint.md) for
 the exact configuration contract, local checks, Ansible-owned deployment
 validation, architecture limitation and rollback.
-The user reports coturn deployed at `turn.low-pass.biggsea.us`, using independently
+The user reports coturn deployed at an operator-managed hostname, using independently
 developed code in the separate Ansible repository. That repository owns relay
 deployment; this repository retains only the
 [game-side TURN integration requirements](docs/two-player-multiplayer-research.md#122-turn-connection-contract).

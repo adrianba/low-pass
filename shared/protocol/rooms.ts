@@ -18,7 +18,7 @@ export const roomView = z.strictObject({
 export type RoomView = z.infer<typeof roomView>;
 
 export const roomCapabilities = z.strictObject({
-  multiplayer: z.boolean(), reason: z.enum(['not_implemented', 'configuration_error', 'service_error']),
+  multiplayer: z.boolean(), reason: z.enum(['available', 'not_implemented', 'configuration_error', 'service_error']),
   rooms: z.boolean().optional(), signaling: z.boolean().optional(), turn: z.boolean().optional(),
 });
 export const hostAuthorization = z.strictObject({ capability, expiresInMs: z.number().positive() });

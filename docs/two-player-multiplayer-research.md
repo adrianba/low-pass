@@ -54,7 +54,7 @@ frozen render-frame boundary with a solo adapter. These are multiplayer
 foundations, not playable multiplayer. The user approved the formation preview
 unchanged on 2026-09-20 (G1); real Edge networking and the complete game retain
 their later gates. On 2026-09-20 the user
-reported coturn deployed at `turn.low-pass.biggsea.us` using independently developed
+reported coturn deployed at an operator-managed hostname using independently developed
 Ansible code. Relay deployment instructions/examples have been removed here;
 the remaining TURN material describes application integration and acceptance only.
 The operator confirmed `use-auth-secret` and `static-auth-secret`; actual TURN
@@ -276,7 +276,7 @@ Those remain later milestones and the two-computer Edge gate.
 ### Private room authorization checkpoint
 
 The operator confirmed Cloudflare -> Traefik -> Node, no Internet-published
-Node port, the shared `proxynet` Docker network, Cloudflare trusted proxy IPs
+Node port, the operator-managed Docker network, Cloudflare trusted proxy IPs
 in Traefik, and `forwardedHeaders.insecure=false`. This resolved the proxy
 integration question. The application requires explicit trusted CIDRs at
 activation; no Docker subnet is inferred from its name, and no infrastructure
@@ -356,7 +356,7 @@ does not replace user-owned deployment or G2 direct/forced-relay acceptance.
 
 On 2026-09-22 the operator supplied the coturn container task: direct public
 3478/UDP and TCP, 5349/TCP, a configured UDP relay-port range, and
-`traefik.enable=false`, for `turn.low-pass.biggsea.us`. These establish the intended
+`traefik.enable=false`, for the operator-configured relay. These establish the intended
 TURN/UDP, TURN/TCP and TURN/TLS application URLs recorded in the README.
 The subsequent configuration confirms `no-stun`: do not advertise a standalone
 STUN URL. `no-tcp-relay` disables RFC6062 relay allocations, not TCP/TLS client
@@ -710,8 +710,8 @@ commits, including separate commits for individual UI screens.
 Use a **host-authoritative browser simulation**, connected to the other browser
 through **native WebRTC data channels**. Add a small **Node.js/TypeScript
 HTTPS/WebSocket signaling service** and integrate the existing **coturn service**
-at **`turn.low-pass.biggsea.us`**. Preserve the game's
-existing public hostname, **`low-pass.biggsea.us`**, and use its **Traefik** proxy
+at an **operator-managed relay hostname**. Preserve the game's
+existing public hostname and use its **Traefik** proxy
 for HTTPS/WSS. Use only the TURN endpoints confirmed by the operator; do not
 assume TURN/TLS on 443 is available because game HTTPS uses that port.
 
@@ -747,10 +747,10 @@ These decisions were explicitly confirmed during the research.
 | Browser | Microsoft Edge is the primary browser; use the project's existing current Windows Edge target for acceptance. |
 | Trust | Private play between trusted friends; no accounts, public matchmaking, or competitive anti-cheat. |
 | Hosting access | Only friends with a separately shared hosting access code may create rooms. Guests join using a separate room invitation. |
-| Infrastructure | Self-hosted services on `docker.circlone.net`, with one public IP and full administrative control. |
-| Public deployment | Existing game hostname `low-pass.biggsea.us`; HTTPS is handled by Traefik. Preserve the current browser origin. |
+| Infrastructure | Self-hosted services on an operator-managed Docker host, with one public IP and full administrative control. |
+| Public deployment | Existing operator-configured game hostname; HTTPS is handled by Traefik. Preserve the current browser origin. |
 | Deployment workflow | Ansible in a separate repository owns production deployment. No deployment or changes to that repository are part of this research. |
-| Application packaging | One Node 24 process with Express 5 and compression, serving assets and future signaling on 8080 behind Traefik. Contain optional-feature errors; process crashes affect all new HTTP requests. Coturn is independently deployed at `turn.low-pass.biggsea.us` and managed by the separate Ansible repository. |
+| Application packaging | One Node 24 process with Express 5 and compression, serving assets and future signaling on 8080 behind Traefik. Contain optional-feature errors; process crashes affect all new HTTP requests. Coturn is independently deployed at an operator-managed hostname and managed by the separate Ansible repository. |
 | Invitation | The host gives the second player a code through an outside communication channel. |
 | Authority | The first browser drives the game and chooses the landscape. |
 | Terrains | Green Valley, Desert, and River Canyon are all required for the first public multiplayer release. |
@@ -881,8 +881,8 @@ JSON control messages and full small snapshots; use chunked plan transfer.
 ### 5.1 Topology
 
 ```text
-                 low-pass.biggsea.us
-                 on docker.circlone.net
+                 game.example.net
+                 on the operator's Docker host
                +---------------------------+
                | Traefik TLS proxy         |
                | / -> Node assets          |
@@ -1764,8 +1764,8 @@ Compose workflow here.
 
 ### 12.1 Application services
 
-On `docker.circlone.net`, keep the existing game image static and unprivileged,
-and keep `low-pass.biggsea.us` as its public hostname. Do not switch users to the
+On the operator's Docker host, keep the existing game image static and unprivileged,
+and preserve its existing public hostname. Do not switch users to the
 machine hostname or a new application origin. Add:
 
 1. Node.js 24 LTS and the signaling build in the existing application image.
@@ -1792,7 +1792,7 @@ separate project. Do not add Redis preemptively.
 
 ### 12.2 TURN connection contract
 
-The user reports the server deployed at `turn.low-pass.biggsea.us`. Its actual
+The user reports the server deployed at an operator-managed hostname. Its actual
 configuration was developed independently in Ansible; the removed examples do
 not establish its ports, authentication mode or supported transports.
 
@@ -1882,7 +1882,7 @@ by this research.
 
 1. **Preserve the existing application deployment.** Keep its approved container,
    network, routing and certificate integration. Preserve
-   `low-pass.biggsea.us` and existing single-player service behavior unchanged.
+   the existing game hostname and single-player service behavior unchanged.
 2. **Prepare compatible artifacts.** Produce the evolving application image with
    both browser assets and signaling, immutable version/digest references and
    matching protocol/build IDs. Publish only through an authorized workflow.
@@ -1905,7 +1905,7 @@ by this research.
 6. **Configure the browser's public connection settings.** Supply only public
    endpoint/version information, with temporary TURN credentials fetched from
    authenticated room membership at runtime. Review CSP and explicitly allow
-   `wss://low-pass.biggsea.us` if required; do not broaden it to arbitrary
+   the operator-configured same-origin WSS endpoint if required; do not broaden it to arbitrary
    origins or confuse CSP configuration with TURN firewall configuration.
 7. **Run acceptance against the deployed application and existing relay.** Check
    HTTP readiness, invitation/join, actual Edge direct and forced-relay sessions,
@@ -1924,7 +1924,7 @@ Proposed configuration contract to finalize with the implementation:
 
 | Configuration | Owner and sensitivity |
 | --- | --- |
-| Game origin and public WSS/API paths | Public; preserve `low-pass.biggsea.us`. |
+| Game origin and public WSS/API paths | Public; preserve the operator-configured game hostname. |
 | Game/protocol/generator version IDs | Public; used to reject incompatible peers. |
 | Confirmed TURN URLs, authentication mode, realm and credential lifetime | Operator-provided integration settings; do not infer them from removed deployment examples. |
 | Application-side TURN signing-secret file reference, if required | Secret value remains outside chat, Git and the frontend. |

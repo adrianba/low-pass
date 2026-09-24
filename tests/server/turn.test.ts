@@ -242,7 +242,7 @@ describe('private coturn REST credential issuance', () => {
     }
     expect((await request(room.host.capability)).status).toBe(429);
     expect((await request(room.guest.capability)).status).toBe(200);
-    expect(await (await fetch(url + '/api/multiplayer/capabilities')).json()).toMatchObject({ multiplayer: false, turn: true });
+    expect(await (await fetch(url + '/api/multiplayer/capabilities')).json()).toMatchObject({ multiplayer: true, reason: 'available', turn: true });
     service.rooms!.store.leave(room.host.capability);
     expect((await request(room.guest.capability)).status).toBe(401);
     expect(warnings).toEqual([]);

@@ -51,6 +51,7 @@ export class ApplicationService {
         } else next();
         return;
       }
+      const multiplayer = this.rooms?.available === true && this.signaling?.available === true && this.rooms.turn?.available === true;
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         response.set('Allow', 'GET, HEAD').status(405).json({ error: 'method_not_allowed' });
       } else if (path === '/healthz') {
@@ -63,9 +64,9 @@ export class ApplicationService {
           reason: this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false
             ? 'service_error' : config.multiplayer.reason });
       } else if (path === '/readyz' || path === '/api/multiplayer/readyz') {
-        response.json({ status: 'ready', multiplayer: false, ...(this.rooms ? { rooms: this.rooms.available } : {}) });
-      } else response.json({ multiplayer: false,
-        reason: this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false
+        response.json({ status: 'ready', multiplayer, ...(this.rooms ? { rooms: this.rooms.available } : {}) });
+      } else response.json({ multiplayer,
+        reason: multiplayer ? 'available' : this.rooms?.available === false || this.signaling?.available === false || this.rooms?.turn?.available === false
           ? 'service_error' : config.multiplayer.reason,
         ...(this.rooms ? { rooms: this.rooms.available, signaling: this.signaling!.available, turn: this.rooms.turn?.available ?? false } : {}) });
     });

@@ -28,7 +28,7 @@ import { ConnectionStatus } from '../ui/connection-status.js';
 
 interface ConnectionScope { session: RoomSession; roomId: string; participantId: string; abort: AbortController }
 
-/** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
+/** Private flight lifecycle; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
   private readonly root = document.createElement('section');
   private panel: HostRoomPanel | GuestRoomPanel;
@@ -77,7 +77,7 @@ export class MultiplayerApp {
     this.root.id = 'multiplayer-app';
     this.root.innerHTML = `
       <div class="multiplayer-setup panel">
-        <p class="eyebrow">PRIVATE FLIGHT / DEVELOPMENT PREVIEW</p>
+        <p class="eyebrow">PRIVATE TWO-PLAYER FLIGHT</p>
         <p>Private host-authoritative play with shared pause, 15-second connection recovery and completed-match rematches. Scores are saved separately from solo. A toggles your impact assistance during flight; any use marks your score assisted. Sound follows the viewed aircraft. Local graphics and sound settings are available while paused.</p>
         <div id="match-setup-records"></div>
         <label>My role <select id="match-role"><option value="host">Host / Player 1</option><option value="guest">Join / Player 2</option></select></label>
@@ -422,7 +422,7 @@ export class MultiplayerApp {
         ? `Both ready. Starting in ${Math.ceil((match.startup.remainingMs ?? 0) / 1000)}...` : 'Preparing the shared flight...');
       if (match.phase === 'over' || match.phase === 'held') {
         this.recordMatch();
-        if (!this.showResults() && match.issue) this.error(match.issue + ' Leave this preview and create a new room to continue.');
+        if (!this.showResults() && match.issue) this.error(match.issue + ' Leave this flight and create a new room to continue.');
       } else if (match.issue) this.error(match.issue);
       return;
     }

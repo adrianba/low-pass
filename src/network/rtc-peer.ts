@@ -198,7 +198,9 @@ export class RtcPeer implements PeerTransport {
   }
   private opened(): void {
     if (this.disposed) return;
-    if (this.channels.control?.readyState === 'open' && !this.sentHello) {
+    // A remotely created channel can be open before the host processes its open event.
+    // Reply only after the host proves its application channel is ready.
+    if (this.channels.control?.readyState === 'open' && !this.sentHello && (this.role === 'host' || this.receivedHello)) {
       this.sentHello = true;
       const hello: WireMessage = { type: 'hello', version: PROTOCOL_VERSION, sessionId: this.options.sessionId,
         epoch: this.options.epoch, sender: this.role, sequence: 0, compatibility: this.options.compatibility, viewport: { aspect: this.options.aspect } };
