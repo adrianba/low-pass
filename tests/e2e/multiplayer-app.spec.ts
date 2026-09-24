@@ -63,10 +63,12 @@ test('multiplayer storage failure warns without blocking room controls or changi
     expect(await page.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(solo);
   } finally { await context.close(); await server.close(); }
 });
-for (const [terrain, interrupted, lobbyOnly] of [
-  ['green-valley', false, false], ['river-canyon', false, false], ['green-valley', true, false], ['green-valley', false, true],
+for (const [terrain, interrupted, lobbyOnly, connectionOnly] of [
+  ['green-valley', false, false, false], ['river-canyon', false, false, false], ['green-valley', true, false, false],
+  ['green-valley', false, true, false], ['green-valley', false, false, true],
 ] as const)
-test(lobbyOnly ? 'application clears corrected viewport warnings and explains lobby readiness'
+test(connectionOnly ? 'application shows the selected connection through flight and peer replacement'
+  : lobbyOnly ? 'application clears corrected viewport warnings and explains lobby readiness'
   : `opt-in ${terrain} application plays on the real canvas and restores solo${interrupted ? ' after survivor disconnect' : ''}`, async ({ browser }, info) => {
   test.setTimeout(240_000);
   const server = await applicationService();
@@ -265,6 +267,34 @@ test(lobbyOnly ? 'application clears corrected viewport warnings and explains lo
       if (messages.some(Boolean) || errors.length) throw new Error(JSON.stringify({ messages, errors }));
       return Promise.all(pages.map(page => page.getByLabel('I am ready').isEnabled()));
     }, { timeout: 50_000 }).toEqual([true, true]);
+    const connectionLabel = route === 'direct' ? 'Connection: Direct' : `Connection: TURN relay / ${route.toUpperCase()}`;
+    if (route !== 'auto') for (const page of pages) {
+      await expect(page.locator('#match-connection')).toHaveText(connectionLabel);
+      await expect(page.locator('#match-connection')).toBeInViewport({ ratio: 1 });
+    }
+    if (!lobbyOnly && process.env.PROFILE_MULTIPLAYER === '1') for (const page of pages) {
+      const profiler = await page.context().newCDPSession(page);
+      await profiler.send('Profiler.enable'); await profiler.send('Profiler.start');
+      profilers.push(profiler);
+    }
+    if (connectionOnly) {
+      for (const page of pages) await page.getByLabel('I am ready').check();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'playing', { timeout: 15_000 });
+      await host.locator('#match-pause').click();
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused');
+      await guest.setViewportSize({ width: 600, height: 600 });
+      await expect(guest.locator('#match-connection')).toBeInViewport({ ratio: 1 });
+      await guest.screenshot({ path: info.outputPath('guest-connection-compact.png'), scale: 'css' });
+      await guest.evaluate(() => window.interruptTestPeer());
+      await expect(guest.locator('#match-connection')).toHaveText('Connection: Reconnecting...');
+      for (const page of pages) await expect(page.locator('#multiplayer-app')).toHaveAttribute('data-phase', 'paused', { timeout: 15_000 });
+      for (const page of pages) {
+        if (route !== 'auto') await expect(page.locator('#match-connection')).toHaveText(connectionLabel);
+        await expect(page.locator('#match-message')).toBeHidden();
+        expect(await page.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(stored);
+      }
+      return;
+    }
     if (lobbyOnly) {
       for (const page of pages) {
         await expect(page.locator('#match-message')).toBeHidden();
@@ -305,11 +335,6 @@ test(lobbyOnly ? 'application clears corrected viewport warnings and explains lo
       await guest.keyboard.press('KeyA');
       await expect(guest.locator('#match-assistance')).toHaveText('YOUR IMPACT ASSIST: ON');
       await expect(host.locator('#match-assist-0')).toHaveText('UNASSISTED');
-    }
-    if (process.env.PROFILE_MULTIPLAYER === '1') for (const page of pages) {
-      const profiler = await page.context().newCDPSession(page);
-      await profiler.send('Profiler.enable'); await profiler.send('Profiler.start');
-      profilers.push(profiler);
     }
     for (const page of pages) {
       const localSlot = page === host ? 0 : 1;
@@ -612,6 +637,7 @@ test(lobbyOnly ? 'application clears corrected viewport warnings and explains lo
         phases: window.readTestPhases?.() ?? [],
         timing: window.readTestTiming?.() ?? [], audio: window.readTestAudio?.(),
         graphics: window.readTestGraphics?.(),
+        connection: document.querySelector('#match-connection')?.textContent,
         pause: document.querySelector('#match-pause-reason')?.textContent,
         release: document.querySelector('#match-release')?.textContent,
         input: document.querySelector('#match-input')?.textContent,

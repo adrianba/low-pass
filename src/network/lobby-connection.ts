@@ -59,7 +59,7 @@ export class LobbyConnection {
   private readonly identity: Compatibility;
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly inbox: TransportEvent[];
-  constructor(private readonly link: MatchLink, settings: Settings,
+  constructor(readonly link: MatchLink, settings: Settings,
     identity: Compatibility, private readonly seed: number, role: RoomMembership['room']['role'],
     private readonly author: CourseAuthor = prepareHostCourse,
     private readonly onPrepared?: (connection: PreparedConnection) => void, inbox: TransportEvent[] = []) {

@@ -863,7 +863,9 @@ game is not evidence about the earlier active-flight stalls.
 Run ordinary application checks without per-WebGL-call instrumentation. Opt in
 with `GRAPHICS_MULTIPLAYER=1` for bounded GL timing/resource diagnostics, or
 `PROFILE_MULTIPLAYER=1` for those diagnostics plus CDP CPU profiles. These options
-are test-only and can themselves disturb timing. Preserve failed-run reports;
+are test-only and can themselves disturb timing. CPU capture starts before
+readiness so an early pause cannot precede the recording. Redacted reports include
+the visible connection route. Preserve failed-run reports;
 do not increase gameplay bounds or repeatedly rerun until a failure disappears.
 
 To exercise the actual mounted application instead of the test-owned server:
@@ -890,6 +892,17 @@ the TURN secret. Share only the invitation with player 2, admit them, then selec
 **CONNECT LOBBY** on both sides. Start with automatic connectivity; separately
 exercise forced relay, including TLS on the configured 5349 listener. Do not
 infer relay use merely because automatic connection succeeded.
+
+The connection badge stays visible in the lobby and during flight, pause and
+spectating. It reports the browser's **selected** ICE path, not the requested
+connection mode or all gathered candidates: **Direct**, **Direct / STUN-assisted**
+when a server-reflexive address is selected, or **TURN relay**. STUN-assisted is
+still peer-to-peer traffic; STUN discovers an address rather than relaying play.
+TURN adds UDP/TCP/TLS when the browser exposes the local client-to-relay transport;
+a remote-only relay may not expose that detail. No addresses or credentials are
+displayed. The badge updates once per second without blocking flight, clears
+stale details during peer replacement, and explicitly reports unavailable
+diagnostics rather than guessing a route.
 
 Review each terrain, both aircraft positions and death orders, independent
 bomb timing/scores, survivor spectating, local assistance/audio, shared pause

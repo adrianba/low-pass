@@ -95,7 +95,9 @@ footer { position: absolute; bottom: 24px; left: 42px; right: 42px; display: fle
 #match-message { position: absolute; top: 38%; left: 25%; width: 50%; padding: 20px; background: #342e24f5; color: #ffe3b3; font-size: 14px; pointer-events: auto; }
 #match-pause-card { top: min(250px, 45%); left: 50%; transform: translateX(-50%); max-height: calc(100% - min(250px, 45%) - 75px); width: min(440px, 88vw); padding: 20px; background: #101d25f5; pointer-events: auto; }
 #match-loading { position: absolute; inset: 0; display: grid; place-items: center; background: #101d25f5; font-size: 16px; }
-#match-network { position: absolute; top: 65px; left: 24px; right: 24px; text-align: center; font-size: 10px; color: #ffe3b3; background: #342e24ed; padding: 5px; }
+#match-connection-info { position: absolute; top: 65px; left: 24px; right: 24px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font: 10px/1.4 Consolas, monospace; }
+#match-connection { padding: 5px 8px; color: #e0ebd0; background: #101d25ed; flex-shrink: 0; }
+#match-network { color: #ffe3b3; background: #342e24ed; padding: 5px; }
 #app[data-multiplayer="true"] { background: linear-gradient(0deg, #09161e6b, transparent 28%, transparent 80%, #09161e55); }
 #app[data-multiplayer="true"] footer { display: none; }
 #app[data-multiplayer="true"] .notification { bottom: 90px; z-index: 2; }

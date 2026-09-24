@@ -24,6 +24,7 @@ import { MultiplayerRecordsPanel, MultiplayerResultsPanel } from '../ui/multipla
 import type { FlightAudio } from '../audio/audio.js';
 import { MultiplayerAudio } from '../audio/multiplayer.js';
 import type { RoomSession } from '../network/room-session.js';
+import { ConnectionStatus } from '../ui/connection-status.js';
 
 interface ConnectionScope { session: RoomSession; roomId: string; participantId: string; abort: AbortController }
 
@@ -46,6 +47,7 @@ export class MultiplayerApp {
   private lastPaint = -Infinity;
   private lastPaintPhase = '';
   private lastReport = -Infinity;
+  private readonly connectionStatus = new ConnectionStatus();
   private redraw = false;
   private renderedDisplay: MatchDisplay | null = null;
   private readonly records: MultiplayerRecordStore;
@@ -116,7 +118,10 @@ export class MultiplayerApp {
       </div>
       <div id="match-loading" role="status" hidden>Preparing both aircraft, terrain and effects...</div>
       <section id="match-results" class="panel" hidden></section>
-      <div id="match-network" role="status" hidden></div>
+      <div id="match-connection-info">
+        <span id="match-connection" role="status" hidden></span>
+        <span id="match-network" role="status" hidden></span>
+      </div>
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
     app.append(this.root);
@@ -322,6 +327,9 @@ export class MultiplayerApp {
   }
   private async tick() {
     if (!this.match && this.connectionScope && !this.connectionCurrent(this.connectionScope)) this.resetConnection();
+    const route = this.connectionStatus.update(this.match?.prepared.link ?? this.lobby?.link ?? null, !!this.match?.recoveryState);
+    this.text('#match-connection', route ? `Connection: ${route}` : '');
+    this.get('#match-connection').hidden = !route;
     if (this.redraw && !this.match?.display) {
       this.world.renderOnce(); this.redraw = false;
     }
@@ -486,6 +494,8 @@ export class MultiplayerApp {
   fail(error: unknown): void {
     if (!this.active || this.failed) return;
     this.failed = true;
+    this.connectionStatus.update(null);
+    this.text('#match-connection', 'Connection: stopped');
     this.connectionScope?.abort.abort();
     this.sound.reset();
     clearInterval(this.timer); cancelAnimationFrame(this.animation); this.prewarmAbort.abort();
@@ -514,6 +524,7 @@ export class MultiplayerApp {
     this.records.finish('left');
     this.sound.reset(); this.audio.configure(this.settings);
     this.active = false; clearInterval(this.timer); cancelAnimationFrame(this.animation);
+    this.connectionStatus.update(null);
     this.prewarmAbort.abort();
     this.match?.close(); this.lobby?.close(); this.lobbyPanel?.dispose();
     await this.prewarming;
