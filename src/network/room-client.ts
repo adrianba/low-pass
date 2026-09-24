@@ -4,6 +4,7 @@ import { admissionRequest, capability, createdRoom, hostAuthorization, hostReque
 import { iceConfiguration } from '../../shared/protocol/ice.js';
 
 export const ROOM_REQUEST_TIMEOUT_MS = 10_000;
+export const ICE_CLOCK_RETRY_MS = 31_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const messages = {
   invalid_hosting_code: 'The hosting access code was not accepted. It is separate from a room invitation.',
@@ -28,7 +29,7 @@ const messages = {
   host_required: 'Only the host can perform that action.',
   admission_required: 'Both players must be admitted before connecting.',
   turn_unavailable: 'Relay credentials are unavailable. Contact the operator.',
-  turn_clock_error: 'The relay credential service detected a clock problem. Contact the operator.',
+  turn_clock_error: 'The relay service is still resynchronizing its clock. Wait a minute before connecting again; contact the operator if this persists.',
   invalid_request: 'Check the entered code and try again.',
   invalid_response: 'The room service returned an invalid response. No connection was established.',
   network: 'The room service could not be reached. Check your connection and try again.',
@@ -149,5 +150,20 @@ export class RoomClient {
   }
   invitation(credential: string) { return this.send('room/invitation', roomInvitation, {}, credential); }
   leave(credential: string) { return this.send('room/leave', z.null(), {}, credential); }
-  ice(credential: string, signal?: AbortSignal) { return this.send('room/ice', iceConfiguration, {}, credential, signal); }
+  async ice(credential: string, signal?: AbortSignal, onClockRecovery?: () => void) {
+    try { return await this.send('room/ice', iceConfiguration, {}, credential, signal); }
+    catch (error) {
+      if (!(error instanceof RoomClientError) || error.code !== 'turn_clock_error') throw error;
+    }
+    if (signal?.aborted) throw new RoomClientError('cancelled');
+    onClockRecovery?.();
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new RoomClientError('cancelled')); };
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ICE_CLOCK_RETRY_MS);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    // Only this explicitly recoverable credential request is retried, once; room mutations never are.
+    return this.send('room/ice', iceConfiguration, {}, credential, signal);
+  }
 }

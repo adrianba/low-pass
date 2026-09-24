@@ -13,6 +13,7 @@ export class RoomSession {
   private member: RoomMembership | null = null;
   private invitationCode: string | null = null;
   private error: string | null = null;
+  private cleanupUncertain = false;
   private work: Promise<void> | null = null;
   private closing: Promise<void> | null = null;
   private disposed = false;
@@ -43,12 +44,16 @@ export class RoomSession {
   }
   private fail(error: unknown) {
     if (roomEnded(error)) { this.member = null; this.invitationCode = null; }
-    this.error = roomClientError(error).message;
+    if (this.closing && error instanceof RoomClientError &&
+      !['creation_unknown', 'join_unknown', 'unexpected', 'invalid_response'].includes(error.code)) return;
+    const failure = roomClientError(error);
+    this.cleanupUncertain = ['creation_unknown', 'join_unknown', 'unexpected', 'invalid_response'].includes(failure.code);
+    this.error = failure.message;
   }
   private action(work: () => Promise<void>): Promise<void> {
     if (this.disposed) return Promise.resolve();
     if (this.work || this.closing) { this.error = new RoomClientError('busy').message; this.notify(); return Promise.resolve(); }
-    this.stopPolling(); this.error = null;
+    this.stopPolling(); this.error = null; this.cleanupUncertain = false;
     this.work = Promise.resolve().then(() => this.closing || this.disposed ? undefined : work()).catch(error => this.fail(error)).finally(() => {
       this.work = null; this.notify();
       if (!this.error) this.schedulePoll();
@@ -117,7 +122,7 @@ export class RoomSession {
     try {
       const result = await this.api.status(member.capability, controller.signal);
       if (revision !== this.revision || this.disposed) return;
-      this.update(result.room); this.error = null; this.schedulePoll();
+      this.update(result.room); this.error = null; this.cleanupUncertain = false; this.schedulePoll();
     } catch (error) {
       if (revision === this.revision && !this.disposed) this.fail(error);
     } finally {
@@ -127,6 +132,7 @@ export class RoomSession {
   }
   leave(): Promise<void> {
     if (this.closing) return this.closing;
+    if (!this.cleanupUncertain) this.error = null;
     this.stopPolling();
     // Finish an in-flight creation so a returned room can be closed, not orphaned.
     this.closing = Promise.resolve(this.work).then(async () => {
@@ -135,6 +141,7 @@ export class RoomSession {
       if (member) await this.api.leave(member.capability);
     }).catch(error => {
       if (!roomEnded(error)) {
+        this.cleanupUncertain = true;
         this.error = `${roomClientError(error).message} Room closure could not be confirmed; it will expire automatically.`;
         if (this.disposed) console.warn(this.error);
       }

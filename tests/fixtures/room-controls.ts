@@ -22,24 +22,32 @@ const reportRoot = document.getElementById('connection-report');
 if (!connectButton || !connectionMode || !connectionError || !lobbyRoot || !reportRoot) throw new Error('Missing connection controls.');
 let connection: LobbyConnection | null = null, lobby: LobbyPanel | null = null, connecting = false, disposed = false, painting = false;
 let wasAdmitted = false;
+let pendingConnection: AbortController | null = null;
 async function connect(identity = BUILD_IDENTITY) {
   if (connecting || connection || disposed) return;
   connecting = true; connectionError!.textContent = '';
+  const abort = pendingConnection = new AbortController();
   const session = panel.session;
   try {
     const mode = connectionMode!.value;
     if (!['direct', 'auto', 'udp', 'tcp', 'tls'].includes(mode)) throw new Error('Invalid connection mode.');
-    const created = await LobbyConnection.connect(session.admittedMember(), { ...DEFAULT_SETTINGS }, mode as IceMode, 7, identity);
-    if (disposed || panel.session !== session || panel.session.state.room?.state !== 'admitted') { created.close(); return; }
+    const created = await LobbyConnection.connect(session.admittedMember(), { ...DEFAULT_SETTINGS }, mode as IceMode, 7, identity,
+      undefined, abort.signal);
+    if (disposed || abort.signal.aborted || panel.session !== session || panel.session.state.room?.state !== 'admitted') { created.close(); return; }
     connection = created; lobby = new LobbyPanel(lobbyRoot!, created.lobby, () => {}, () => created.preparationStatus);
   } catch (error) {
+    if (disposed || abort.signal.aborted || panel.session !== session || panel.session.state.room?.state !== 'admitted') return;
     connectionError!.textContent = error instanceof RoomClientError || error instanceof IcePolicyError ? error.message
       : 'Could not start the connection check. Confirm admission, connectivity and a window aspect between 0.75 and 2.';
   }
-  finally { connecting = false; }
+  finally { if (pendingConnection === abort) { pendingConnection = null; connecting = false; } }
 }
 connectButton.onclick = () => { void connect(); };
-function closeConnection() { connection?.close(); connection = null; lobby?.dispose(); lobby = null; reportRoot!.textContent = ''; }
+function closeConnection() {
+  pendingConnection?.abort(); pendingConnection = null; connecting = false;
+  connection?.close(); connection = null; lobby?.dispose(); lobby = null;
+  reportRoot!.textContent = ''; connectionError!.textContent = '';
+}
 mode.onchange = () => {
   mode.disabled = true;
   closeConnection();
@@ -55,7 +63,7 @@ async function render() {
   painting = true;
   try {
     const admitted = panel.session.state.room?.state === 'admitted';
-    if (!admitted && connection) closeConnection();
+    if (!admitted && (connection || connecting || wasAdmitted)) closeConnection();
     connectButton!.disabled = connecting || !!connection || !admitted;
     connectionMode!.disabled = connecting || !!connection;
     if (admitted && !wasAdmitted && !connectButton!.disabled) connectButton!.focus();

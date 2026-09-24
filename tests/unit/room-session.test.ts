@@ -26,6 +26,37 @@ function setup(role: 'host' | 'guest' = 'host') {
 }
 
 describe('private room membership lifecycle', () => {
+  it.each(['creation_unknown', 'join_unknown'] as const)('preserves an existing %s warning when leaving', async code => {
+    const { room, api } = setup('guest'); await room.check();
+    api.join.mockRejectedValueOnce(new RoomClientError(code));
+    await room.join('ABCD-EFGH'); await room.leave();
+    expect(room.state.error).toBe(new RoomClientError(code).message);
+  });
+  it.each(['rate_limited', 'creation_unknown', 'join_unknown'] as const)(
+    'handles a late %s after leaving without losing unknown-outcome warnings', async code => {
+      const { room, api } = setup('guest'); await room.check();
+      let reject!: (error: Error) => void;
+      api.join.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+      const joining = room.join('ABCD-EFGH'); await vi.advanceTimersByTimeAsync(0);
+      const leaving = room.leave();
+      reject(new RoomClientError(code));
+      await Promise.all([joining, leaving]);
+      expect(room.state.error).toBe(code === 'rate_limited' ? null : new RoomClientError(code).message);
+      expect(api.leave).not.toHaveBeenCalled();
+    });
+  it.each(['rate_limited', 'turn_unavailable'] as const)('clears obsolete %s errors on leave but preserves new cleanup failures', async code => {
+    const { room, api } = setup(); await room.check(); await room.create('dummy-hosting-code');
+    api.status.mockRejectedValueOnce(new RoomClientError(code));
+    await room.refresh(); expect(room.state.error).toBe(new RoomClientError(code).message);
+    const leaving = room.leave();
+    expect(room.state.error).toBeNull();
+    await leaving; expect(room.state.error).toBeNull();
+    await room.create('dummy-hosting-code');
+    api.status.mockRejectedValueOnce(new RoomClientError(code)); await room.refresh();
+    api.leave.mockRejectedValueOnce(new RoomClientError('network'));
+    await room.leave();
+    expect(room.state.error).toContain('closure could not be confirmed');
+  });
   it('gates hosting, admits only the current pending participant and exposes no bearer credentials', async () => {
     const { room, api } = setup();
     await room.create('dummy-hosting-code'); expect(api.authorize).not.toHaveBeenCalled();

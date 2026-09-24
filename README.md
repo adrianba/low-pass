@@ -236,8 +236,22 @@ credential. Closed/revoked rooms cannot refresh, but **already issued credential
 remain usable until expiry**; the application cannot instantly revoke coturn
 allocations. Coturn's own allocation/bandwidth quotas remain operator-owned.
 The issuer caps its cache at two entries per allowed room and rate-limits requests
-globally and per source/room/member. Large detected wall-clock jumps disable
-issuance explicitly until restart; synchronize the application and relay clocks.
+globally and per source/room/member. A detected wall/monotonic-clock divergence
+over 30 seconds pauses issuance and discards cached credentials. One-second
+maintenance checks automatically resume issuance after 30 seconds of stable
+observations (at most one second of divergence and no sampling gap over five
+seconds). Another jump or gap restarts that stability window; invalid clocks
+cannot issue credentials. Room leases are not extended by these checks.
+During recovery, multiplayer readiness returns 503 while solo health and room
+operations remain available. The credential endpoint reports `turn_clock_error`
+with `Retry-After: 30`; Connect Lobby shows progress and retries once after
+31 seconds. Leaving cancels that wait and clears obsolete connection errors.
+Other failures, including rate limits, are not automatically retried. The
+in-match connection-recovery deadline remains 15 seconds and cancels any longer
+credential wait. Persistent failures remain visible rather than retrying forever.
+Recovery is logged on the server and needs no restart, but stable local clocks
+do **not** prove agreement with coturn: keep both hosts synchronized with NTP.
+An explicitly closed issuer or invalid configuration still requires operator action.
 Key rotation requires coordinated operator updates/restart; this process reads
 its key at startup and does not watch or rewrite secret files.
 

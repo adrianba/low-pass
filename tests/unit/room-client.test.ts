@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RoomClient, ROOM_REQUEST_TIMEOUT_MS } from '../../src/network/room-client.js';
+import { RoomClient, ROOM_REQUEST_TIMEOUT_MS, ICE_CLOCK_RETRY_MS } from '../../src/network/room-client.js';
 import type { RoomView } from '../../shared/protocol/rooms.js';
 
 const credential = 'a'.repeat(43);
@@ -8,6 +8,40 @@ const room: RoomView = { roomId: 'r'.repeat(22), participantId: 'h'.repeat(22), 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('typed private room client', () => {
+  it('retries only clock-recovering ICE issuance once, with a bounded cancellable wait', async () => {
+    vi.useFakeTimers();
+    const ice = { iceServers: [{ urls: ['turn:relay.example:3478?transport=udp'], username: 'test-only',
+      credential: 'a'.repeat(27) + '=', credentialType: 'password' }], serverTimeMs: 1000, expiresAtMs: 601000, refreshAfterMs: 300000 };
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ error: 'turn_clock_error' }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json(ice));
+    const waiting = vi.fn(), client = new RoomClient(request), work = client.ice(credential, undefined, waiting);
+    await vi.advanceTimersByTimeAsync(ICE_CLOCK_RETRY_MS - 1);
+    expect(request).toHaveBeenCalledOnce(); expect(waiting).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await work).toEqual(ice); expect(request).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+  });
+  it('does not keep retrying a persistently bad clock or retry other relay failures', async () => {
+    vi.useFakeTimers();
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: 'turn_clock_error' }, { status: 503 }));
+    const work = expect(new RoomClient(request).ice(credential)).rejects.toMatchObject({ code: 'turn_clock_error' });
+    await vi.advanceTimersByTimeAsync(ICE_CLOCK_RETRY_MS); await work;
+    expect(request).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+    for (const code of ['rate_limited', 'turn_unavailable']) {
+      request.mockClear().mockImplementation(async () => Response.json({ error: code }, { status: 503 }));
+      await expect(new RoomClient(request).ice(credential)).rejects.toMatchObject({ code });
+      expect(request).toHaveBeenCalledOnce();
+    }
+  });
+  it('cancels an ICE clock retry when the caller leaves or its existing recovery deadline expires', async () => {
+    vi.useFakeTimers();
+    const request = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ error: 'turn_clock_error' }, { status: 503 }));
+    const abort = new AbortController();
+    const work = expect(new RoomClient(request).ice(credential, abort.signal)).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.advanceTimersByTimeAsync(100);
+    abort.abort(); await work;
+    await vi.advanceTimersByTimeAsync(ICE_CLOCK_RETRY_MS);
+    expect(request).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+  });
   it('uses same-origin no-store requests without cookie credentials, redirects or credential URLs', async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ capability: credential, expiresInMs: 60000 }))
       .mockResolvedValueOnce(Response.json({ capability: credential, room, invitation: 'ABCD-EFGH' }))

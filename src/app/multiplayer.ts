@@ -23,6 +23,9 @@ import { MultiplayerRecordStore } from '../storage/multiplayer-records.js';
 import { MultiplayerRecordsPanel, MultiplayerResultsPanel } from '../ui/multiplayer-results.js';
 import type { FlightAudio } from '../audio/audio.js';
 import { MultiplayerAudio } from '../audio/multiplayer.js';
+import type { RoomSession } from '../network/room-session.js';
+
+interface ConnectionScope { session: RoomSession; roomId: string; participantId: string; abort: AbortController }
 
 /** Local opt-in application preview; solo persistence and preferences stay owned by the solo app. */
 export class MultiplayerApp {
@@ -36,6 +39,8 @@ export class MultiplayerApp {
   private failed = false;
   private connecting = false;
   private viewportWarning = false;
+  private connectionError = false;
+  private connectionScope: ConnectionScope | null = null;
   private busy = false;
   private admitted = false;
   private lastPaint = -Infinity;
@@ -78,6 +83,7 @@ export class MultiplayerApp {
         <div id="match-connect">
           <label>Connection <select id="match-route"><option value="auto">Automatic</option><option value="direct">Direct-only diagnostic</option><option value="udp">TURN UDP</option><option value="tcp">TURN TCP</option><option value="tls">TURN TLS</option></select></label>
           <button id="match-connect-button" class="primary" disabled>CONNECT LOBBY</button>
+          <p id="match-connect-status" role="status"></p>
         </div>
         <div id="match-lobby"></div>
       </div>
@@ -171,6 +177,7 @@ export class MultiplayerApp {
   private async changeRole() {
     if (this.connecting || this.lobby || this.match || !this.active || this.failed) return;
     const select = this.get<HTMLSelectElement>('#match-role');
+    this.resetConnection();
     select.disabled = true;
     await this.panel.dispose();
     if (!this.active || this.failed) return;
@@ -180,24 +187,59 @@ export class MultiplayerApp {
   private async connect() {
     if (this.connecting || this.lobby || !this.active || this.failed) return;
     this.connecting = true;
+    this.connectionScope?.abort.abort(); this.connectionScope = null;
+    this.clearConnectionError();
     this.get<HTMLSelectElement>('#match-role').disabled = true;
+    let scope: ConnectionScope | null = null;
     try {
+      const session = this.panel.session, member = session.admittedMember();
+      scope = { session, roomId: member.room.roomId, participantId: member.room.participantId, abort: new AbortController() };
+      this.connectionScope = scope;
       const mode = this.get<HTMLSelectElement>('#match-route').value;
       if (mode !== 'auto' && mode !== 'direct' && mode !== 'udp' && mode !== 'tcp' && mode !== 'tls') throw new Error('Invalid connection mode.');
       this.mode = mode;
+      this.text('#match-connect-status', 'Connecting to the private flight...');
       const seed = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff;
-      const connection = await LobbyConnection.connect(this.panel.session.admittedMember(), this.settings, mode, seed,
-        undefined, prepared => this.acceptPrepared(prepared));
-      if (!this.active || this.failed) { connection.close(); return; }
+      const connection = await LobbyConnection.connect(member, this.settings, mode, seed,
+        undefined, prepared => this.acceptPrepared(prepared), scope.abort.signal, () => {
+          if (scope && this.connectionCurrent(scope)) this.text('#match-connect-status',
+            'The relay service is resynchronizing its clock. Retrying automatically; you can cancel by leaving the room.');
+        });
+      if (!this.connectionCurrent(scope)) { connection.close(); return; }
       this.showLobby(connection);
     } catch (error) {
-      if (this.active) {
+      if (this.active && !this.failed && (!scope || this.connectionCurrent(scope))) {
         this.error(error instanceof Error ? error.message : 'Could not connect the private flight.');
+        this.connectionError = true;
         this.viewportWarning = error instanceof LobbyViewportError;
       }
-    } finally { this.connecting = false; }
+    } finally {
+      if (this.connectionScope === scope) {
+        this.connecting = false;
+        this.text('#match-connect-status', '');
+        this.get<HTMLSelectElement>('#match-role').disabled = !!this.lobby;
+      }
+    }
+  }
+  private connectionCurrent(scope: ConnectionScope): boolean {
+    const room = this.panel.session.state.room;
+    return this.active && !this.failed && this.connectionScope === scope && this.panel.session === scope.session &&
+      room?.roomId === scope.roomId && room.participantId === scope.participantId && room.state === 'admitted';
+  }
+  private clearConnectionError(): void {
+    if (!this.connectionError) return;
+    this.connectionError = false; this.viewportWarning = false;
+    this.get('#match-message').hidden = true; this.text('#match-message', '');
+  }
+  private resetConnection(): void {
+    this.connectionScope?.abort.abort(); this.connectionScope = null; this.connecting = false;
+    this.lobby?.close(); this.lobby = null;
+    this.lobbyPanel?.dispose(); this.lobbyPanel = null;
+    this.clearConnectionError(); this.text('#match-connect-status', '');
+    this.get<HTMLSelectElement>('#match-role').disabled = false;
   }
   private showLobby(connection: LobbyConnection): void {
+    this.clearConnectionError();
     this.lobby = connection;
     this.lobbyPanel = new LobbyPanel(this.get('#match-lobby'), connection.lobby, () => {
       this.world.configure(connection.lobby.settings.quality);
@@ -279,6 +321,7 @@ export class MultiplayerApp {
     void this.tick().catch(error => { if (this.active) this.fail(error); }).finally(() => { this.busy = false; });
   }
   private async tick() {
+    if (!this.match && this.connectionScope && !this.connectionCurrent(this.connectionScope)) this.resetConnection();
     if (this.redraw && !this.match?.display) {
       this.world.renderOnce(); this.redraw = false;
     }
@@ -383,12 +426,13 @@ export class MultiplayerApp {
     this.lobbyPanel?.render();
     if (this.lobby && performance.now() - this.lastReport >= 1000) {
       this.lastReport = performance.now();
-      const report = await this.lobby.report();
-      if (this.active && report.error) {
+      const lobby = this.lobby, report = await lobby.report();
+      if (this.active && this.lobby === lobby && report.error) {
         if (this.get('#match-message').hidden) console.error('Private connection diagnostics:', JSON.stringify({
           connection: report.connection, phase: report.failurePhase, progress: report.progress,
         }));
         this.error(`Connection failed: ${report.error}. Leave and create a new room.`);
+        this.connectionError = true;
       }
     }
   }
@@ -434,9 +478,7 @@ export class MultiplayerApp {
     const aspect = innerWidth / innerHeight;
     if (this.viewportWarning && Number.isFinite(aspect) &&
       aspect >= FORMATION_PROFILE.viewport.minAspect && aspect <= FORMATION_PROFILE.viewport.maxAspect) {
-      this.viewportWarning = false;
-      this.get('#match-message').hidden = true;
-      this.text('#match-message', '');
+      this.clearConnectionError();
     }
     this.match?.pause('viewport');
     this.availability();
@@ -444,6 +486,7 @@ export class MultiplayerApp {
   fail(error: unknown): void {
     if (!this.active || this.failed) return;
     this.failed = true;
+    this.connectionScope?.abort.abort();
     this.sound.reset();
     clearInterval(this.timer); cancelAnimationFrame(this.animation); this.prewarmAbort.abort();
     const message = error instanceof Error ? error.message : 'The multiplayer scene could not continue.';
@@ -460,11 +503,12 @@ export class MultiplayerApp {
     else if (this.lobby?.lobby.selectedReady) this.lobby.lobby.setReady(false);
   }
   private error(message: string) {
-    this.viewportWarning = false;
+    this.viewportWarning = false; this.connectionError = false;
     this.get('#match-message').hidden = false; this.text('#match-message', message);
   }
   async close(): Promise<void> {
     if (!this.active) return;
+    this.connectionScope?.abort.abort();
     try { this.recordMatch(); }
     catch (error) { this.fail(error); }
     this.records.finish('left');

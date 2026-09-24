@@ -5,7 +5,7 @@ import type { RoomConfig } from './room-config.js';
 import { ClientAddresses } from './client-address.js';
 import { RoomError, RoomStore } from './room-store.js';
 import { RoomLimits } from './room-limits.js';
-import { TurnCredentials } from './turn-credentials.js';
+import { TurnCredentials, TURN_LIMITS } from './turn-credentials.js';
 
 const paths = new Set(['/api/multiplayer/host-authorizations', '/api/multiplayer/rooms', '/api/multiplayer/join',
   '/api/multiplayer/room/status', '/api/multiplayer/room/admission', '/api/multiplayer/room/invitation', '/api/multiplayer/room/leave',
@@ -53,7 +53,7 @@ export class RoomApi {
     this.addresses = new ClientAddresses(config.trustedProxyCidrs);
     this.turn = config.turn ? new TurnCredentials(config.turn, this.store, warn) : null;
     this.sweep = setInterval(() => {
-      try { this.store.sweep(); this.limits.sweep(); }
+      try { this.store.sweep(); this.limits.sweep(); this.turn?.checkClock(); }
       catch {
         this.failed = true; clearInterval(this.sweep); this.turn?.close(); this.store.close(); this.limits.clear();
         warn('Multiplayer room maintenance failed; rooms disabled until restart.');
@@ -119,6 +119,7 @@ export class RoomApi {
     } catch (error) {
       if (!(error instanceof RoomError)) { next(error); return; }
       if (error.status === 429) response.set('Retry-After', '60');
+      if (error.code === 'turn_clock_error') response.set('Retry-After', String(Math.ceil(TURN_LIMITS.recoveryMs / 1000)));
       response.status(error.status).json({ error: error.code });
     }
   };

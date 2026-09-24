@@ -104,10 +104,112 @@ describe('private coturn REST credential issuance', () => {
       skewed.advance(1, 1 + jump);
       expect(() => skewed.service.issue(skewed.host.capability)).toThrow('turn_clock_error');
       expect(skewed.service.available).toBe(false); expect(skewed.service.size).toBe(0);
-      expect(skewed.warnings).toEqual(['TURN credential clock is unreliable; issuance disabled until restart.']);
-      expect(() => skewed.service.issue(skewed.host.capability)).toThrow('turn_unavailable');
-      skewed.store.close();
+      expect(skewed.warnings).toEqual(['TURN credential clock is unreliable; issuance paused while waiting for a stable clock.']);
+      expect(() => skewed.service.issue(skewed.host.capability)).toThrow('turn_clock_error');
+      skewed.service.close(); skewed.store.close();
     }
+  });
+
+  it.each([-3_600_000, 3_600_000])('automatically recovers a stable %sms wall correction without extending leases or reusing cached credentials', jump => {
+    const state = issuer(); state.admit();
+    const before = state.service.issue(state.host.capability);
+    state.service.issue(state.guest.capability);
+    state.advance(1, 1 + jump);
+    expect(state.service.checkClock()).toBe(false);
+    expect(state.service.size).toBe(0);
+    for (let second = 1; second < 30; second++) {
+      state.advance(1000);
+      expect(state.service.checkClock()).toBe(false);
+    }
+    expect(state.service.available).toBe(false);
+    state.advance(1000);
+    expect(state.service.checkClock()).toBe(true);
+    expect(state.service.available).toBe(true);
+    expect(state.store.peekDigest(hashSecret(state.host.capability))!.expiresInMs).toBe(ROOM_LIMITS.idleMs - 30_001);
+    const after = state.service.issue(state.host.capability);
+    expect(after.iceServers).not.toEqual(before.iceServers);
+    expect(after.serverTimeMs - before.serverTimeMs).toBe(jump + 30_001);
+    expect(after.expiresAtMs - after.serverTimeMs).toBeLessThanOrEqual(TURN_LIMITS.lifetimeMs);
+    expect(state.warnings).toHaveLength(2);
+    expect(state.warnings[1]).toContain('issuance resumed');
+    state.service.close(); state.advance(1000);
+    expect(state.service.checkClock()).toBe(false);
+    expect(() => state.service.issue(state.host.capability)).toThrow('turn_unavailable');
+    state.store.close();
+  });
+
+  it('requires continuously sampled stability, restarting the window on another jump or a sampling gap', () => {
+    const state = issuer(); state.admit(); state.service.issue(state.host.capability);
+    state.advance(1, 60_001); state.service.checkClock();
+    state.advance(TURN_LIMITS.recoveryMs);
+    expect(state.service.checkClock()).toBe(false);
+    for (let second = 0; second < 29; second++) { state.advance(1000); expect(state.service.checkClock()).toBe(false); }
+    state.advance(1000, 3000);
+    expect(state.service.checkClock()).toBe(false);
+    for (let second = 0; second < 29; second++) { state.advance(1000); expect(state.service.checkClock()).toBe(false); }
+    state.advance(1000);
+    expect(state.service.checkClock()).toBe(true);
+    expect(state.warnings).toHaveLength(2);
+    state.service.close(); state.store.close();
+  });
+
+  it('does not issue through invalid clocks or revive revoked rooms during recovery', () => {
+    const state = issuer(); state.admit(); state.service.issue(state.host.capability);
+    for (const wall of [NaN, Infinity, -1, Number.MAX_SAFE_INTEGER]) {
+      expect(state.service.checkClock({ wall, monotonic: 0 })).toBe(false);
+    }
+    for (const monotonic of [NaN, Infinity, -1]) {
+      expect(state.service.checkClock({ wall: 1_800_000_000_000, monotonic })).toBe(false);
+    }
+    state.store.leave(state.guest.capability);
+    expect(state.service.checkClock()).toBe(false);
+    for (let second = 0; second < 30; second++) { state.advance(1000); state.service.checkClock(); }
+    expect(state.service.available).toBe(true);
+    expect(() => state.service.issue(state.host.capability)).toThrow('room_closed');
+    state.service.close(); state.store.close();
+  });
+
+  it('reports temporary clock recovery through HTTP without taking down rooms or static health', async () => {
+    const { service, request, url } = await start(), room = members(service.rooms!.store);
+    room.admit();
+    service.rooms!.turn!.checkClock({ wall: NaN, monotonic: 0 });
+    const response = await request(room.host.capability);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('30');
+    expect(await response.json()).toEqual({ error: 'turn_clock_error' });
+    expect((await fetch(url + '/healthz')).status).toBe(200);
+    expect((await fetch(url + '/api/multiplayer/readyz')).status).toBe(503);
+    expect(service.rooms!.available).toBe(true);
+  });
+
+  it('observes and recovers the clock through room maintenance without waiting for player requests', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const warnings: string[] = [];
+    const service = new ApplicationService({ ...readServiceConfig(env()), port: 0 }, message => warnings.push(message));
+    const turn = service.rooms!.turn!, check = turn.checkClock.bind(turn);
+    let monotonic = 0, wall = 1_800_000_000_000;
+    const observe = vi.spyOn(turn, 'checkClock').mockImplementation(() => check({ wall, monotonic }));
+    try {
+      const url = `http://127.0.0.1:${await service.listen()}`;
+      await vi.advanceTimersByTimeAsync(1000);
+      wall += 60_000;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(turn.available).toBe(false);
+      expect((await fetch(url + '/api/multiplayer/readyz')).status).toBe(503);
+      for (let second = 0; second < 30; second++) {
+        wall += 1000; monotonic += 1000;
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      expect(turn.available).toBe(true);
+      expect(service.rooms!.available).toBe(true);
+      expect((await fetch(url + '/api/multiplayer/readyz')).status).toBe(200);
+      expect(observe).toHaveBeenCalledTimes(32);
+      expect(warnings).toHaveLength(2);
+      await service.close();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(observe).toHaveBeenCalledTimes(32);
+      expect(turn.available).toBe(false);
+    } finally { await service.close(); vi.useRealTimers(); }
   });
 
   it('requires explicit supported hosts, ports and transports, without URL credentials or arbitrary schemes', () => {

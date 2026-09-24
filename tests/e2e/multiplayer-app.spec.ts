@@ -83,6 +83,11 @@ test(lobbyOnly ? 'application clears corrected viewport warnings and explains lo
     for (const page of pages) {
       page.on('pageerror', error => errors.push(error.message));
       page.on('console', message => {
+        const url = message.location().url;
+        if (lobbyOnly && message.text().startsWith('Failed to load resource:') &&
+          (url === server.origin + '/api/multiplayer/room/ice' && /status of (429|503) /.test(message.text()) ||
+            [server.origin + '/api/multiplayer/room/leave', server.origin + '/api/multiplayer/room/status'].includes(url) &&
+              message.text().includes('status of 401 '))) return;
         if (message.type() === 'error') errors.push(message.text());
         if (message.type() === 'warning' && message.text().startsWith('Private match ')) warnings.push(message.text());
       });
@@ -194,6 +199,48 @@ test(lobbyOnly ? 'application clears corrected viewport warnings and explains lo
     await guest.getByRole('button', { name: 'PRIVATE FLIGHT PREVIEW', exact: true }).click();
     await guest.getByRole('button', { name: 'ASK TO JOIN', exact: true }).click();
     await host.getByRole('button', { name: 'ADMIT PLAYER 2', exact: true }).click();
+    if (lobbyOnly) {
+      for (const [index, page] of pages.entries()) {
+        await page.route('**/api/multiplayer/room/ice', interception => interception.fulfill({
+          status: index === 0 ? 429 : 503, contentType: 'application/json',
+          body: JSON.stringify({ error: index === 0 ? 'rate_limited' : 'turn_unavailable' }),
+        }));
+        await page.locator('#match-route').selectOption('auto');
+        await page.getByRole('button', { name: 'CONNECT LOBBY', exact: true }).click();
+        await expect(page.locator('#match-message')).toContainText(index === 0 ? 'Too many requests' : 'Relay credentials are unavailable');
+      }
+      // A recovered retry replaces the old alert with progress; leaving cancels its delayed request.
+      await guest.unroute('**/api/multiplayer/room/ice');
+      await guest.route('**/api/multiplayer/room/ice', interception => interception.fulfill({
+        status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'turn_clock_error' }),
+      }));
+      await guest.getByRole('button', { name: 'CONNECT LOBBY', exact: true }).click();
+      await expect(guest.locator('#match-message')).toBeHidden();
+      await expect(guest.locator('#match-connect-status')).toContainText('Retrying automatically');
+      await guest.locator('#guest-cancel').click();
+      await host.locator('#host-cancel').click();
+      for (const page of pages) {
+        await expect(page.locator('#match-message')).toBeHidden();
+        await expect(page.locator('#match-message')).toHaveText('');
+        await expect(page.locator('#match-connect-status')).toHaveText('');
+        await expect(page.locator('#match-role')).toBeEnabled();
+        await page.unroute('**/api/multiplayer/room/ice');
+      }
+      try { await host.getByLabel('Hosting access code', { exact: true }).fill(server.code); }
+      catch { throw new Error('Could not enter the private hosting code; input details withheld.'); }
+      await host.getByRole('button', { name: 'CREATE ROOM', exact: true }).click();
+      await expect.poll(async () => /multiplayer\.html#join=/.test(await host.locator('#host-link').inputValue())).toBe(true);
+      try { await guest.getByLabel('Room invitation', { exact: true }).fill(await host.locator('#host-invitation').inputValue()); }
+      catch { throw new Error('Could not enter the private invitation; input details withheld.'); }
+      await guest.getByRole('button', { name: 'ASK TO JOIN', exact: true }).click();
+      await host.getByRole('button', { name: 'ADMIT PLAYER 2', exact: true }).click();
+      await host.route('**/api/multiplayer/room/ice', interception => interception.fulfill({
+        status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'turn_unavailable' }),
+      }));
+      await host.getByRole('button', { name: 'CONNECT LOBBY', exact: true }).click();
+      await expect(host.locator('#match-message')).toContainText('Relay credentials are unavailable');
+      await host.unroute('**/api/multiplayer/room/ice');
+    }
     if (terrain === 'green-valley') {
       await guest.setViewportSize({ width: 600, height: 900 });
       await guest.getByRole('button', { name: 'CONNECT LOBBY', exact: true }).click();
