@@ -19,7 +19,9 @@ test('shared lobby gates readiness and preserves independent local settings thro
   await expect(host.getByLabel('I am ready')).toBeDisabled();
   await expect(guest.getByLabel('Shared terrain')).toBeDisabled();
   await page.getByLabel('Fixture course data verified').check();
-  await host.getByLabel('I am ready').check(); await guest.getByLabel('I am ready').check();
+  await host.getByLabel('I am ready').check();
+  await expect(host.locator('[data-control="status"]')).toHaveText('You are ready. Waiting for the other player to choose ready.');
+  await guest.getByLabel('I am ready').check();
   await expect(host.locator('[data-control="status"]')).toHaveText('Both players are ready for this configuration.');
   await guest.getByLabel('My graphics quality').selectOption('high'); await guest.getByLabel('Mute my sound').check();
   await expect(host.getByLabel('My graphics quality')).toHaveValue('medium'); await expect(host.getByLabel('Mute my sound')).not.toBeChecked();

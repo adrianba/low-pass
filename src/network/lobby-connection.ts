@@ -13,6 +13,11 @@ import type { IceMode } from './ice-policy.js';
 import { prepareHostCourse } from './prepared-course.js';
 import type { PreparedHostCourse, OutgoingTransfer } from './prepared-course.js';
 import type { TransportEvent } from './transport.js';
+import { FORMATION_PROFILE } from '../config/multiplayer.js';
+
+export class LobbyViewportError extends Error {
+  constructor() { super('Resize this window to an aspect ratio between 0.75 and 2 before connecting.'); }
+}
 
 type ManifestMessage = Extract<MessageBody, { type: 'course-manifest' }>;
 class CourseError extends Error {
@@ -66,7 +71,9 @@ export class LobbyConnection {
   static async connect(member: RoomMembership, settings: Settings, mode: IceMode, seed = 7,
     identity: Compatibility = BUILD_IDENTITY, onPrepared?: (connection: PreparedConnection) => void): Promise<LobbyConnection> {
     const aspect = innerWidth / innerHeight;
-    if (aspect < 0.75 || aspect > 2) throw new Error('Resize this window to an aspect ratio between 0.75 and 2 before connecting.');
+    if (!Number.isFinite(aspect) || aspect < FORMATION_PROFILE.viewport.minAspect || aspect > FORMATION_PROFILE.viewport.maxAspect) {
+      throw new LobbyViewportError();
+    }
     if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error('Invalid course seed.');
     const link = await connectPeer(member, identity, aspect, mode);
     return new LobbyConnection(link, settings, identity, seed, member.room.role, undefined, onPrepared);
@@ -231,6 +238,21 @@ export class LobbyConnection {
       this.link.close(); console.error('Private match controller handoff failed.');
     }
     return true;
+  }
+  get preparationStatus(): string | null {
+    if (this.failure || this.link.status === 'closed') return 'Course preparation stopped. Leave and create a new room.';
+    if (this.link.status !== 'open') return 'Connecting to the other player. Both players must choose CONNECT LOBBY.';
+    const current = !!this.current && this.current.manifest.terrain === this.lobby.state?.terrain;
+    if (this.lobby.role === 'host') {
+      if (this.needsPreparation || !current) return 'Preparing the shared course and both flight paths. Readiness unlocks after Player 2 verifies them.';
+      if (this.outgoing.length) return `Sending flight plans to Player 2 (${2 - this.outgoing.length} of 2 sent). Keep both tabs open.`;
+      if (!this.complete) return 'Flight plans sent. Waiting for Player 2 to verify the shared course.';
+    } else {
+      if (!current) return 'Waiting for the host to prepare the shared course and both flight paths.';
+      if (this.received.size < 2) return `Receiving and verifying flight plans (${this.received.size} of 2 verified). Keep both tabs open.`;
+      if (!this.complete) return 'Both flight plans verified. Waiting for the host to confirm course readiness.';
+    }
+    return null;
   }
   private progress() { return { outgoingPlans: this.outgoing.length, receivedVerifiedPlans: this.received.size, pendingTransfers: this.receiver.pendingCount }; }
   async report() {

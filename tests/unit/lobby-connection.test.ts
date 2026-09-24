@@ -21,6 +21,40 @@ const authored = (revision = 0): PreparedHostCourse => ({
 });
 
 describe('connection preparation ownership', () => {
+  it('reports actual host preparation, sending and verification stages without enabling readiness early', async () => {
+    vi.useFakeTimers();
+    let resolveAuthor!: (value: PreparedHostCourse) => void;
+    let writable = false;
+    const incoming: TransportEvent[] = [];
+    const link = { status: 'connecting' as 'connecting' | 'open', failure: null, epoch: 0, sessionId: base.sessionId,
+      send(message: MessageBody) {
+        return message.type === 'transfer-offer' && !writable
+          ? { ok: false as const, reason: 'backpressure' as const } : { ok: true as const };
+      }, drain: () => incoming.splice(0), close() {},
+      diagnostics: async () => ({ status: 'open' as const, failure: null, peer: null }),
+    };
+    const connection = new LobbyConnection(link, DEFAULT_SETTINGS, versions, 7, 'host',
+      () => new Promise(resolve => { resolveAuthor = resolve; }));
+    connections.push(connection);
+    expect(connection.preparationStatus).toContain('Both players must choose CONNECT LOBBY');
+    link.status = 'open';
+    await vi.advanceTimersByTimeAsync(20);
+    expect(connection.preparationStatus).toContain('Preparing the shared course');
+    resolveAuthor(authored());
+    await vi.advanceTimersByTimeAsync(20);
+    expect(connection.preparationStatus).toContain('0 of 2 sent');
+    expect(connection.lobby.canReady).toBe(false);
+    writable = true;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(connection.preparationStatus).toContain('Waiting for Player 2 to verify');
+    const course = (await connection.report()).course!;
+    incoming.push({ type: 'message', channel: 'control', receivedAt: performance.now(),
+      message: { ...base, sender: 'guest', type: 'course-ready', revision: course.revision, plans: course.plans } });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(connection.preparationStatus).toBeNull();
+    connection.lobby.setTerrain('desert');
+    expect(connection.preparationStatus).toContain('Preparing the shared course');
+  });
   it('adopts the unread new-epoch inbox and requires fresh lobby readiness after a rematch', async () => {
     vi.useFakeTimers();
     const host = new LobbyConnection({
@@ -38,11 +72,13 @@ describe('connection preparation ownership', () => {
       diagnostics: async () => ({ status: 'open' as const, failure: null, peer: null }),
     }, DEFAULT_SETTINGS, versions, 7, 'guest', undefined, undefined, received);
     connections.push(connection);
+    expect(connection.preparationStatus).toContain('Waiting for the host to prepare');
     await vi.advanceTimersByTimeAsync(20);
     expect(connection.lobby.state?.ready).toEqual([false, false]);
     expect(connection.lobby.state?.terrain).toBe('green-valley');
     expect(connection.lobby.canReady).toBe(false);
     expect((await connection.report()).error).toBeNull();
+    expect(connection.preparationStatus).toContain('Waiting for the host to prepare');
   });
   it('does not report an obsolete asynchronous failure after intentional closure', async () => {
     vi.useFakeTimers();
@@ -96,6 +132,7 @@ describe('connection preparation ownership', () => {
     expect(author).not.toHaveBeenCalled(); expect((await connection.report()).course).toBeNull();
     await vi.advanceTimersByTimeAsync(45_000);
     expect((await connection.report()).error).toBe('course_expired');
+    expect(connection.preparationStatus).toContain('Course preparation stopped');
     expect(close).toHaveBeenCalledOnce(); expect(error).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   });
 });

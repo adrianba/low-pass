@@ -1,5 +1,5 @@
 import { MatchController } from '../network/match-controller.js';
-import { LobbyConnection } from '../network/lobby-connection.js';
+import { LobbyConnection, LobbyViewportError } from '../network/lobby-connection.js';
 import type { InvitationLink } from '../network/invitation-link.js';
 import { HostRoomPanel } from '../ui/host-room.js';
 import { GuestRoomPanel } from '../ui/guest-room.js';
@@ -35,6 +35,7 @@ export class MultiplayerApp {
   private active = true;
   private failed = false;
   private connecting = false;
+  private viewportWarning = false;
   private busy = false;
   private admitted = false;
   private lastPaint = -Infinity;
@@ -190,7 +191,10 @@ export class MultiplayerApp {
       if (!this.active || this.failed) { connection.close(); return; }
       this.showLobby(connection);
     } catch (error) {
-      if (this.active) this.error(error instanceof Error ? error.message : 'Could not connect the private flight.');
+      if (this.active) {
+        this.error(error instanceof Error ? error.message : 'Could not connect the private flight.');
+        this.viewportWarning = error instanceof LobbyViewportError;
+      }
     } finally { this.connecting = false; }
   }
   private showLobby(connection: LobbyConnection): void {
@@ -199,7 +203,8 @@ export class MultiplayerApp {
       this.world.configure(connection.lobby.settings.quality);
       this.audio.configure(connection.lobby.settings); void this.audio.unlock();
       this.resized();
-    });
+    }, () => connection.preparationStatus);
+    this.get('#match-lobby h2').focus();
   }
   private acceptPrepared(prepared: PreparedConnection): void {
     if (!this.active || this.failed) { prepared.link.close(); return; }
@@ -426,6 +431,13 @@ export class MultiplayerApp {
   }
   resized(): void {
     this.redraw = true;
+    const aspect = innerWidth / innerHeight;
+    if (this.viewportWarning && Number.isFinite(aspect) &&
+      aspect >= FORMATION_PROFILE.viewport.minAspect && aspect <= FORMATION_PROFILE.viewport.maxAspect) {
+      this.viewportWarning = false;
+      this.get('#match-message').hidden = true;
+      this.text('#match-message', '');
+    }
     this.match?.pause('viewport');
     this.availability();
   }
@@ -447,7 +459,10 @@ export class MultiplayerApp {
     if (this.match) this.match.pause();
     else if (this.lobby?.lobby.selectedReady) this.lobby.lobby.setReady(false);
   }
-  private error(message: string) { this.get('#match-message').hidden = false; this.text('#match-message', message); }
+  private error(message: string) {
+    this.viewportWarning = false;
+    this.get('#match-message').hidden = false; this.text('#match-message', message);
+  }
   async close(): Promise<void> {
     if (!this.active) return;
     try { this.recordMatch(); }

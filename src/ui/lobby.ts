@@ -2,9 +2,10 @@ import { Lobby, LobbyError } from '../network/lobby.js';
 import { TERRAIN_THEMES, isTerrainTheme } from '../config/terrain.js';
 
 export class LobbyPanel {
-  constructor(private readonly root: HTMLElement, readonly model: Lobby, private readonly changed: () => void) {
+  constructor(private readonly root: HTMLElement, readonly model: Lobby, private readonly changed: () => void,
+    private readonly preparationStatus: () => string | null = () => null) {
     root.innerHTML = `
-      <h2>${model.role === 'host' ? 'Player 1 / Host' : 'Player 2 / Guest'}</h2>
+      <h2 tabindex="-1">${model.role === 'host' ? 'Player 1 / Host' : 'Player 2 / Guest'}</h2>
       <label>Shared terrain <select data-control="terrain">${Object.entries(TERRAIN_THEMES)
         .map(([id, theme]) => `<option value="${id}">${theme.label}</option>`).join('')}</select></label>
       <p data-control="course-note">The host chooses the course. Changing shared choices clears both ready flags.</p>
@@ -13,8 +14,9 @@ export class LobbyPanel {
       <label>Mute my sound <input data-control="muted" type="checkbox"></label>
       <label>My volume <input data-control="volume" type="range" min="0" max="100"></label>
       <p data-control="players" role="status"></p>
+      <p data-control="status" role="status"></p>
       <label>I am ready <input data-control="ready" type="checkbox"></label>
-      <p data-control="status" role="status"></p><p data-control="error" role="alert"></p>
+      <p data-control="error" role="alert"></p>
     `;
     this.get<HTMLSelectElement>('terrain').onchange = () => this.action(() => {
       const terrain = this.get<HTMLSelectElement>('terrain').value;
@@ -59,10 +61,12 @@ export class LobbyPanel {
     this.get<HTMLInputElement>('ready').disabled = !this.model.canReady;
     this.text('players', state ? `Player 1: ${state.ready[0] ? 'ready' : 'not ready'}, assistance ${state.assistance[0] ? 'on' : 'off'}. ` +
       `Player 2: ${state.ready[1] ? 'ready' : 'not ready'}, assistance ${state.guestConfigured ? state.assistance[1] ? 'on' : 'off' : 'pending'}.` : 'Waiting for the host configuration.');
-    this.text('status', this.model.waiting ? 'Waiting for host acknowledgement.'
+    this.text('status', this.preparationStatus() ?? (this.model.waiting ? 'Waiting for host acknowledgement.'
       : this.model.bothReady ? 'Both players are ready for this configuration.'
+        : this.model.selectedReady ? 'You are ready. Waiting for the other player to choose ready.'
         : this.model.canReady ? 'Choose ready when you are prepared.'
-          : 'Waiting for compatible, verified course data.');
+          : !state?.guestConfigured ? 'Waiting for Player 2 to confirm their lobby settings.'
+            : 'Waiting for compatible, verified course data.'));
   }
   dispose() { this.root.replaceChildren(); }
 }

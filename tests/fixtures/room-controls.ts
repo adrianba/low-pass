@@ -31,7 +31,7 @@ async function connect(identity = BUILD_IDENTITY) {
     if (!['direct', 'auto', 'udp', 'tcp', 'tls'].includes(mode)) throw new Error('Invalid connection mode.');
     const created = await LobbyConnection.connect(session.admittedMember(), { ...DEFAULT_SETTINGS }, mode as IceMode, 7, identity);
     if (disposed || panel.session !== session || panel.session.state.room?.state !== 'admitted') { created.close(); return; }
-    connection = created; lobby = new LobbyPanel(lobbyRoot!, created.lobby, () => {});
+    connection = created; lobby = new LobbyPanel(lobbyRoot!, created.lobby, () => {}, () => created.preparationStatus);
   } catch (error) {
     connectionError!.textContent = error instanceof RoomClientError || error instanceof IcePolicyError ? error.message
       : 'Could not start the connection check. Confirm admission, connectivity and a window aspect between 0.75 and 2.';

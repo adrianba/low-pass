@@ -76,7 +76,7 @@ export class GuestRoomPanel {
     this.text('#guest-error', state.error ?? this.linkError ?? '');
     this.text('#guest-status', state.closing ? 'Leaving the room. Waiting for any outstanding request to finish.'
       : state.busy ? 'Contacting the private-room service...'
-        : room?.state === 'admitted' ? 'The host admitted you. Network gameplay is not yet wired.'
+        : room?.state === 'admitted' ? 'The host admitted you. Each player can now choose CONNECT LOBBY.'
           : room ? 'Waiting for the host to admit you. Keep this page open.'
             : state.availability === 'available' ? 'Ready for your friend\'s invitation.'
               : 'Private-room service unavailable. Solo play is unaffected.');

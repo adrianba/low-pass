@@ -63,8 +63,11 @@ test('multiplayer storage failure warns without blocking room controls or changi
     expect(await page.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(solo);
   } finally { await context.close(); await server.close(); }
 });
-for (const [terrain, interrupted] of [['green-valley', false], ['river-canyon', false], ['green-valley', true]] as const)
-test(`opt-in ${terrain} application plays on the real canvas and restores solo${interrupted ? ' after survivor disconnect' : ''}`, async ({ browser }, info) => {
+for (const [terrain, interrupted, lobbyOnly] of [
+  ['green-valley', false, false], ['river-canyon', false, false], ['green-valley', true, false], ['green-valley', false, true],
+] as const)
+test(lobbyOnly ? 'application clears corrected viewport warnings and explains lobby readiness'
+  : `opt-in ${terrain} application plays on the real canvas and restores solo${interrupted ? ' after survivor disconnect' : ''}`, async ({ browser }, info) => {
   test.setTimeout(240_000);
   const server = await applicationService();
   const guestBrowser = await browser.browserType().launch({ channel: info.project.name === 'edge' ? 'msedge' : 'chromium' });
@@ -191,6 +194,14 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
     await guest.getByRole('button', { name: 'PRIVATE FLIGHT PREVIEW', exact: true }).click();
     await guest.getByRole('button', { name: 'ASK TO JOIN', exact: true }).click();
     await host.getByRole('button', { name: 'ADMIT PLAYER 2', exact: true }).click();
+    if (terrain === 'green-valley') {
+      await guest.setViewportSize({ width: 600, height: 900 });
+      await guest.getByRole('button', { name: 'CONNECT LOBBY', exact: true }).click();
+      await expect(guest.locator('#match-message')).toContainText('aspect ratio between 0.75 and 2');
+      await guest.setViewportSize({ width: 840, height: 732 });
+      await expect(guest.locator('#match-message')).toBeHidden();
+      await expect(guest.locator('#match-message')).toHaveText('');
+    }
     for (const page of pages) {
       const connect = page.getByRole('button', { name: 'CONNECT LOBBY', exact: true });
       await expect(connect).toBeEnabled();
@@ -198,11 +209,31 @@ test(`opt-in ${terrain} application plays on the real canvas and restores solo${
       await page.locator('#match-route').selectOption(route);
       await connect.click();
     }
+    await expect(guest.locator('#match-lobby [data-control="status"]')).toContainText(
+      /Connecting to the other player|Waiting for the host|Receiving and verifying flight plans|Both flight plans verified|Choose ready/);
+    await guest.locator('#match-lobby [data-control="status"]').scrollIntoViewIfNeeded();
+    await guest.screenshot({ path: info.outputPath('guest-lobby-preparation.png'), scale: 'css' });
     await expect.poll(async () => {
       const messages = await Promise.all(pages.map(page => page.locator('#match-message').textContent()));
       if (messages.some(Boolean) || errors.length) throw new Error(JSON.stringify({ messages, errors }));
       return Promise.all(pages.map(page => page.getByLabel('I am ready').isEnabled()));
     }, { timeout: 50_000 }).toEqual([true, true]);
+    if (lobbyOnly) {
+      for (const page of pages) {
+        await expect(page.locator('#match-message')).toBeHidden();
+        await expect(page.locator('#match-lobby [data-control="status"]')).toHaveText('Choose ready when you are prepared.');
+      }
+      await host.getByLabel('I am ready').check();
+      await expect(host.locator('#match-lobby [data-control="status"]')).toHaveText('You are ready. Waiting for the other player to choose ready.');
+      await host.getByLabel('I am ready').uncheck();
+      expect(errors).toEqual([]);
+      for (const page of pages) {
+        await page.locator('#match-exit').click();
+        await expect(page.locator('#start')).toBeVisible();
+        expect(await page.evaluate(() => localStorage.getItem('low-pass.records.v1'))).toBe(stored);
+      }
+      return;
+    }
     if (terrain === 'green-valley') {
       await guest.getByLabel('My impact assistance', { exact: true }).check();
       await expect(host.locator('[data-control="players"]')).toContainText('Player 2: not ready, assistance on');

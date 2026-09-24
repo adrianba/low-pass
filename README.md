@@ -729,6 +729,12 @@ Survivor and finale frames use the existing combat timeline. Leave restores the
 solo menu and rendering loop without writing or clearing solo records/settings.
 
 The lobby retains a static image while signaling and UI processing continue.
+Its status explains why readiness is disabled: connecting peers, preparing the
+shared course, sending flight plans, receiving/verifying them, or awaiting the
+other browser's confirmation. Plan counts reflect actual sent/verified plans,
+not estimated time. After choosing ready, it explicitly waits for the other
+player. A connection-time aspect-ratio warning clears when the window returns
+to the supported range; unrelated connection errors remain visible.
 Scene prewarming draws otherwise hidden shader variants before readiness and
 restores their enabled states, including on cancellation. Resizing or changing
 local graphics redraws a static scene without advancing gameplay. Gameplay pumping is

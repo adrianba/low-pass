@@ -127,7 +127,7 @@ export class HostRoomPanel {
   private status(state: RoomSessionState): string {
     if (state.closing) return 'Closing the room. Waiting for any outstanding request to finish.';
     if (state.busy) return 'Contacting the private-room service...';
-    if (state.room?.state === 'admitted') return 'Both players admitted. Room controls are ready; network gameplay is not yet wired.';
+    if (state.room?.state === 'admitted') return 'Both players admitted. Each player can now choose CONNECT LOBBY.';
     if (state.room?.state === 'pending') return 'Player 2 is waiting for your admission.';
     if (state.room) return state.invitation ? 'Waiting for your friend to enter the invitation.' : 'Create a new invitation for your friend.';
     return state.availability === 'available' ? 'Ready to create a private room.' : 'Private-room service unavailable. Solo play is unaffected.';
