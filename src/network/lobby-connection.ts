@@ -7,6 +7,7 @@ import { TransferReceiver, TransferError } from './transfer.js';
 import type { CompletedTransfer } from './transfer.js';
 import { BUILD_IDENTITY } from './build-identity.js';
 import type { PeerLink } from './peer-link.js';
+import type { Radio } from '../audio/radio.js';
 import { connectPeer } from './connect-peer.js';
 import { Lobby } from './lobby.js';
 import type { IceMode } from './ice-policy.js';
@@ -70,13 +71,13 @@ export class LobbyConnection {
   }
   static async connect(member: RoomMembership, settings: Settings, mode: IceMode, seed = 7,
     identity: Compatibility = BUILD_IDENTITY, onPrepared?: (connection: PreparedConnection) => void,
-    signal?: AbortSignal, onClockRecovery?: () => void): Promise<LobbyConnection> {
+    signal?: AbortSignal, onClockRecovery?: () => void, radio?: Radio): Promise<LobbyConnection> {
     const aspect = innerWidth / innerHeight;
     if (!Number.isFinite(aspect) || aspect < FORMATION_PROFILE.viewport.minAspect || aspect > FORMATION_PROFILE.viewport.maxAspect) {
       throw new LobbyViewportError();
     }
     if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error('Invalid course seed.');
-    const link = await connectPeer(member, identity, aspect, mode, undefined, signal, onClockRecovery);
+    const link = await connectPeer(member, identity, aspect, mode, undefined, signal, onClockRecovery, radio);
     return new LobbyConnection(link, settings, identity, seed, member.room.role, undefined, onPrepared);
   }
   private queue(message: MessageBody) {

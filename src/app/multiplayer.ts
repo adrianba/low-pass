@@ -23,6 +23,7 @@ import { MultiplayerRecordStore } from '../storage/multiplayer-records.js';
 import { MultiplayerRecordsPanel, MultiplayerResultsPanel } from '../ui/multiplayer-results.js';
 import type { FlightAudio } from '../audio/audio.js';
 import { MultiplayerAudio } from '../audio/multiplayer.js';
+import { Radio } from '../audio/radio.js';
 import type { RoomSession } from '../network/room-session.js';
 import { ConnectionStatus } from '../ui/connection-status.js';
 
@@ -55,6 +56,7 @@ export class MultiplayerApp {
   private readonly setupRecords: MultiplayerRecordsPanel;
   private mode: IceMode = 'auto';
   private readonly sound: MultiplayerAudio;
+  private readonly radio: Radio;
   private preferredAssistance: boolean | null = null;
   private lastInputRevision = -1;
   private prewarming: Promise<void> | null = null;
@@ -71,6 +73,7 @@ export class MultiplayerApp {
     if (!app || !sessionName) throw new Error('Missing application UI.');
     this.app = app; this.sessionName = sessionName;
     this.sound = new MultiplayerAudio(audio);
+    this.radio = new Radio(() => localStorage, warn);
     this.records = new MultiplayerRecordStore(() => localStorage, warn);
     app.dataset.multiplayer = 'true'; sessionName.textContent = 'PRIVATE TWO-PLAYER FLIGHT';
     for (const element of app.querySelectorAll<HTMLElement>('#panel, #hud')) element.hidden = true;
@@ -122,9 +125,20 @@ export class MultiplayerApp {
         <span id="match-connection" role="status" hidden></span>
         <span id="match-network" role="status" hidden></span>
       </div>
+      <div id="match-radio" class="panel" role="group" aria-label="Private radio">
+        <span id="match-radio-status" role="status">Radio: connect to use M push-to-talk</span>
+        <label>Mute received radio <input id="match-radio-muted" type="checkbox"></label>
+        <label>Received radio volume <input id="match-radio-volume" type="range" min="0" max="100"></label>
+      </div>
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
     app.append(this.root);
+    this.get<HTMLInputElement>('#match-radio-muted').checked = this.radio.muted;
+    this.get<HTMLInputElement>('#match-radio-volume').value = String(Math.round(this.radio.volume * 100));
+    for (const id of ['muted', 'volume']) this.get(`#match-radio-${id}`).addEventListener(id === 'volume' ? 'input' : 'change', () => {
+      this.radio.setReceive(this.get<HTMLInputElement>('#match-radio-muted').checked,
+        Number(this.get<HTMLInputElement>('#match-radio-volume').value) / 100);
+    });
     this.setupRecords = new MultiplayerRecordsPanel(this.get('#match-setup-records'), this.records);
     this.results = new MultiplayerResultsPanel(this.get('#match-results'), this.records, ready => {
       try { this.clearInput(); this.match!.setRematchReady(ready); }
@@ -203,13 +217,16 @@ export class MultiplayerApp {
       const mode = this.get<HTMLSelectElement>('#match-route').value;
       if (mode !== 'auto' && mode !== 'direct' && mode !== 'udp' && mode !== 'tcp' && mode !== 'tls') throw new Error('Invalid connection mode.');
       this.mode = mode;
+      this.text('#match-connect-status', 'Requesting microphone access for private radio...');
+      await this.radio.request();
+      if (!this.connectionCurrent(scope)) return;
       this.text('#match-connect-status', 'Connecting to the private flight...');
       const seed = crypto.getRandomValues(new Uint32Array(1))[0]! & 0x7fffffff;
       const connection = await LobbyConnection.connect(member, this.settings, mode, seed,
         undefined, prepared => this.acceptPrepared(prepared), scope.abort.signal, () => {
           if (scope && this.connectionCurrent(scope)) this.text('#match-connect-status',
             'The relay service is resynchronizing its clock. Retrying automatically; you can cancel by leaving the room.');
-        });
+        }, this.radio);
       if (!this.connectionCurrent(scope)) { connection.close(); return; }
       this.showLobby(connection);
     } catch (error) {
@@ -265,7 +282,7 @@ export class MultiplayerApp {
     this.match = new MatchController(prepared, (_slot, view, range) =>
       this.world.captureMissileView(view, range, FORMATION_PROFILE.viewport.minAspect), undefined,
     signal => connectPeer(this.panel.session.admittedMember(), prepared.course.manifest.compatibility,
-      FORMATION_PROFILE.viewport.minAspect, this.mode, 0, signal));
+      FORMATION_PROFILE.viewport.minAspect, this.mode, 0, signal, undefined, this.radio));
     this.records.begin({ matchId: `${prepared.link.sessionId}:${prepared.epoch + 1}`,
       localSlot: prepared.role === 'host' ? 0 : 1, terrain: prepared.course.manifest.terrain,
       compatibility: prepared.course.manifest.compatibility, startedAt: new Date().toISOString() });
@@ -329,6 +346,10 @@ export class MultiplayerApp {
     if (!this.match && this.connectionScope && !this.connectionCurrent(this.connectionScope)) this.resetConnection();
     const route = this.connectionStatus.update(this.match?.prepared.link ?? this.lobby?.link ?? null, !!this.match?.recoveryState);
     this.text('#match-connection', route ? `Connection: ${route}` : '');
+    this.text('#match-radio-status', this.radio.sending ? 'Radio: transmitting / reception muted'
+      : !this.radio.canTransmit && this.lobby ? 'Radio: microphone unavailable / receive only'
+        : this.lobby && (this.match?.prepared.link.status ?? this.lobby.link.status) === 'open'
+          ? 'Radio: hold M to transmit' : 'Radio: waiting for connection');
     this.get('#match-connection').hidden = !route;
     if (this.redraw && !this.match?.display) {
       this.world.renderOnce(); this.redraw = false;
@@ -472,7 +493,7 @@ export class MultiplayerApp {
   }
   availability(): void {
     const valid = this.viewportValid(), available = valid && !document.hidden && document.hasFocus();
-    if (!available) this.clearInput();
+    if (!available) { this.clearInput(); this.radio.setTransmitting(false); }
     if (!available) this.sound.setActive(false);
     this.match?.setAvailable(available, valid ? 'focus' : 'viewport');
     if (!available && this.lobby?.lobby.selectedReady && !this.match) this.lobby.lobby.setReady(false);
@@ -498,6 +519,7 @@ export class MultiplayerApp {
     this.text('#match-connection', 'Connection: stopped');
     this.connectionScope?.abort.abort();
     this.sound.reset();
+    this.radio.setTransmitting(false);
     clearInterval(this.timer); cancelAnimationFrame(this.animation); this.prewarmAbort.abort();
     const message = error instanceof Error ? error.message : 'The multiplayer scene could not continue.';
     this.match?.hold(message);
@@ -512,6 +534,10 @@ export class MultiplayerApp {
     if (this.match) this.match.pause();
     else if (this.lobby?.lobby.selectedReady) this.lobby.lobby.setReady(false);
   }
+  transmitRadio(pressed: boolean): void {
+    this.radio.setTransmitting(pressed && this.active && !this.failed && !document.hidden && document.hasFocus() &&
+      (this.match?.prepared.link.status ?? this.lobby?.link.status) === 'open');
+  }
   private error(message: string) {
     this.viewportWarning = false; this.connectionError = false;
     this.get('#match-message').hidden = false; this.text('#match-message', message);
@@ -523,6 +549,7 @@ export class MultiplayerApp {
     catch (error) { this.fail(error); }
     this.records.finish('left');
     this.sound.reset(); this.audio.configure(this.settings);
+    this.radio.close();
     this.active = false; clearInterval(this.timer); cancelAnimationFrame(this.animation);
     this.connectionStatus.update(null);
     this.prewarmAbort.abort();
