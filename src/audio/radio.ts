@@ -41,6 +41,10 @@ export class Radio {
     if (this.requested || this.closed) return;
     this.requested = true;
     try {
+      this.prepareAudio();
+      void this.context?.resume().catch(() => this.warn('Radio playback unavailable.'));
+    } catch { this.warn('Radio playback unavailable.'); }
+    try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       if (this.closed) { stream.getTracks().forEach(track => track.stop()); return; }
       this.stream = stream;
@@ -51,7 +55,9 @@ export class Radio {
     }
   }
   setTransmitting(value: boolean): void {
-    this.transmitting = value && this.canTransmit && !this.closed;
+    const next = value && this.canTransmit && !this.closed;
+    if (this.transmitting === next) return;
+    this.transmitting = next;
     if (this.track) this.track.enabled = this.transmitting;
     this.updateGain();
   }
@@ -67,26 +73,33 @@ export class Radio {
     this.source = null;
     if (!stream || this.closed) return;
     try {
-      if (!this.context) {
-        const ctx = this.context = new AudioContext();
-        const high = ctx.createBiquadFilter(); high.type = 'highpass'; high.frequency.value = 350;
-        const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 3100;
-        const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.value = -28; compressor.ratio.value = 4;
-        this.gain = ctx.createGain();
-        high.connect(low).connect(compressor).connect(this.gain).connect(ctx.destination);
-        this.input = high;
-      }
-      this.source = this.context.createMediaStreamSource(stream);
+      this.prepareAudio();
+      this.source = this.context!.createMediaStreamSource(stream);
       this.source.connect(this.input!);
       this.updateGain();
-      void this.context.resume().catch(() => this.warn('Radio playback unavailable.'));
+      void this.context!.resume().catch(() => this.warn('Radio playback unavailable.'));
     } catch { this.warn('Radio playback unavailable.'); }
   }
   private input: BiquadFilterNode | null = null;
+  private prepareAudio(): void {
+    if (this.context) return;
+    const ctx = this.context = new AudioContext();
+    const high = ctx.createBiquadFilter(); high.type = 'highpass'; high.frequency.value = 350;
+    const low = ctx.createBiquadFilter(); low.type = 'lowpass'; low.frequency.value = 3100;
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -28; compressor.ratio.value = 4;
+    this.gain = ctx.createGain();
+    high.connect(low).connect(compressor).connect(this.gain).connect(ctx.destination);
+    this.input = high;
+    this.updateGain();
+  }
   private updateGain(): void {
-    if (this.context && this.gain) this.gain.gain.setTargetAtTime(
-      this.transmitting || this.preferences.muted ? 0 : this.preferences.volume, this.context.currentTime, 0.005);
+    if (this.context && this.gain) {
+      const gain = this.gain.gain, at = this.context.currentTime;
+      gain.cancelScheduledValues(at);
+      if (this.transmitting || this.preferences.muted) gain.setValueAtTime(0, at);
+      else gain.setTargetAtTime(this.preferences.volume, at, 0.005);
+    }
   }
   close(): void {
     this.closed = true;

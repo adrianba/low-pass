@@ -826,6 +826,14 @@ Survivor and finale frames use the existing combat timeline. Leave restores the
 solo menu and rendering loop without writing or clearing solo records/settings.
 
 The lobby retains a static image while signaling and UI processing continue.
+Entering the private lobby requests microphone permission once. Declining leaves
+gameplay and radio reception available, but disables transmission. Hold **M** to
+transmit; while transmitting, received radio is muted locally, so simultaneous
+push-to-talk yields no heard radio on either side. Game sounds continue unchanged.
+Releasing M, losing focus, or leaving stops transmission. Radio works in the lobby,
+flight, pause, spectating and results. The separate received-radio mute and volume
+controls persist locally across private flights and do not alter solo sound settings
+or scores. Voice travels over the private WebRTC peer connection, not game data.
 Its status explains why readiness is disabled: connecting peers, preparing the
 shared course, sending flight plans, receiving/verifying them, or awaiting the
 other browser's confirmation. Plan counts reflect actual sent/verified plans,

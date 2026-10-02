@@ -125,10 +125,12 @@ export class MultiplayerApp {
         <span id="match-connection" role="status" hidden></span>
         <span id="match-network" role="status" hidden></span>
       </div>
-      <div id="match-radio" class="panel" role="group" aria-label="Private radio">
+      <div id="match-radio" role="group" aria-label="Private radio">
         <span id="match-radio-status" role="status">Radio: connect to use M push-to-talk</span>
-        <label>Mute received radio <input id="match-radio-muted" type="checkbox"></label>
-        <label>Received radio volume <input id="match-radio-volume" type="range" min="0" max="100"></label>
+        <details><summary>RADIO RECEIVE SETTINGS</summary>
+          <label>Mute received radio <input id="match-radio-muted" type="checkbox"></label>
+          <label>Received radio volume <input id="match-radio-volume" type="range" min="0" max="100"></label>
+        </details>
       </div>
       <div id="match-message" role="alert" hidden></div>
       <button id="match-exit" class="secondary">LEAVE PRIVATE FLIGHT</button>`;
@@ -346,6 +348,7 @@ export class MultiplayerApp {
     if (!this.match && this.connectionScope && !this.connectionCurrent(this.connectionScope)) this.resetConnection();
     const route = this.connectionStatus.update(this.match?.prepared.link ?? this.lobby?.link ?? null, !!this.match?.recoveryState);
     this.text('#match-connection', route ? `Connection: ${route}` : '');
+    if ((this.match?.prepared.link.status ?? this.lobby?.link.status) !== 'open') this.radio.setTransmitting(false);
     this.text('#match-radio-status', this.radio.sending ? 'Radio: transmitting / reception muted'
       : !this.radio.canTransmit && this.lobby ? 'Radio: microphone unavailable / receive only'
         : this.lobby && (this.match?.prepared.link.status ?? this.lobby.link.status) === 'open'
