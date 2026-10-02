@@ -152,6 +152,10 @@ document.addEventListener('keydown', event => {
     }
     if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); key.up(); multiplayer.pause(); }
     if (event.code === 'KeyA' && !event.repeat && !editing && !control) multiplayer.toggleAssistance();
+    if (event.code === 'KeyM' && !editing && !control) {
+      event.preventDefault();
+      if (!event.repeat) multiplayer.transmitRadio(true);
+    }
     return;
   }
   if (event.code === 'Space') {
@@ -167,7 +171,10 @@ document.addEventListener('keydown', event => {
   }
   if (event.code === 'KeyA' && !event.repeat && !editing && screen === 'playing') ui?.toggleAssist();
 });
-document.addEventListener('keyup', event => { if (event.code === 'Space') key.up(); });
+document.addEventListener('keyup', event => {
+  if (event.code === 'Space') key.up();
+  if (event.code === 'KeyM') multiplayer?.transmitRadio(false);
+});
 window.addEventListener('blur', pause);
 window.addEventListener('focus', () => multiplayer?.availability());
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else multiplayer?.availability(); });
