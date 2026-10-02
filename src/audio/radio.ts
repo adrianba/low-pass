@@ -10,6 +10,13 @@ export class Radio {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private staticSource: AudioBufferSourceNode | null = null;
+  private staticGain: GainNode | null = null;
+  private squelchGain: GainNode | null = null;
+  private monitor: ReturnType<typeof setInterval> | null = null;
+  private talking = false;
+  private quietSamples = 0;
   private stream: MediaStream | null = null;
   private requested = false;
   private transmitting = false;
@@ -69,18 +76,46 @@ export class Radio {
     catch { this.storage = null; this.warn('Could not save radio preferences; they will last only this session.'); }
   }
   receive(stream: MediaStream | null): void {
+    if (this.monitor !== null) clearInterval(this.monitor);
+    this.monitor = null;
     this.source?.disconnect();
     this.source = null;
+    this.analyser?.disconnect();
+    this.analyser = null;
+    this.staticSource?.stop();
+    this.staticSource?.disconnect();
+    this.staticSource = null;
+    this.talking = false;
+    this.quietSamples = 0;
+    if (this.context && this.staticGain && this.squelchGain) {
+      this.staticGain.gain.cancelScheduledValues(this.context.currentTime);
+      this.staticGain.gain.setValueAtTime(0, this.context.currentTime);
+      this.squelchGain.gain.cancelScheduledValues(this.context.currentTime);
+      this.squelchGain.gain.setValueAtTime(0, this.context.currentTime);
+    }
     if (!stream || this.closed) return;
     try {
       this.prepareAudio();
       this.source = this.context!.createMediaStreamSource(stream);
       this.source.connect(this.input!);
+      this.analyser = this.context!.createAnalyser();
+      this.analyser.fftSize = 512;
+      this.source.connect(this.analyser);
+      const noise = this.context!.createBufferSource();
+      noise.buffer = this.staticBuffer!;
+      noise.loop = true;
+      noise.connect(this.staticGain!);
+      noise.connect(this.squelchGain!);
+      noise.start();
+      this.staticSource = noise;
+      const samples = new Float32Array(this.analyser.fftSize);
+      this.monitor = setInterval(() => this.sampleActivity(samples), 50);
       this.updateGain();
       void this.context!.resume().catch(() => this.warn('Radio playback unavailable.'));
-    } catch { this.warn('Radio playback unavailable.'); }
+    } catch { this.receive(null); this.warn('Radio playback unavailable.'); }
   }
   private input: BiquadFilterNode | null = null;
+  private staticBuffer: AudioBuffer | null = null;
   private prepareAudio(): void {
     if (this.context) return;
     const ctx = this.context = new AudioContext();
@@ -90,8 +125,34 @@ export class Radio {
     compressor.threshold.value = -28; compressor.ratio.value = 4;
     this.gain = ctx.createGain();
     high.connect(low).connect(compressor).connect(this.gain).connect(ctx.destination);
+    const noise = this.staticBuffer = ctx.createBuffer(1, Math.round(ctx.sampleRate / 4), ctx.sampleRate);
+    const values = noise.getChannelData(0);
+    for (let i = 0; i < values.length; i++) values[i] = Math.random() * 2 - 1;
+    this.staticGain = ctx.createGain();
+    this.staticGain.gain.value = 0;
+    this.squelchGain = ctx.createGain();
+    this.squelchGain.gain.value = 0;
+    this.staticGain.connect(this.gain);
+    this.squelchGain.connect(this.gain);
     this.input = high;
     this.updateGain();
+  }
+  private sampleActivity(samples: Float32Array<ArrayBuffer>): void {
+    if (!this.analyser || !this.context || !this.staticGain || !this.squelchGain) return;
+    this.analyser.getFloatTimeDomainData(samples);
+    let power = 0;
+    for (const sample of samples) power += sample * sample;
+    const active = Math.sqrt(power / samples.length) > 0.012;
+    this.quietSamples = active ? 0 : this.quietSamples + 1;
+    if (active === this.talking || this.talking && this.quietSamples < 4) return;
+    this.talking = active;
+    const now = this.context.currentTime;
+    this.staticGain.gain.cancelScheduledValues(now);
+    this.staticGain.gain.setTargetAtTime(active ? 0.012 : 0, now, 0.02);
+    this.squelchGain.gain.cancelScheduledValues(now);
+    this.squelchGain.gain.setValueAtTime(0.045, now);
+    this.squelchGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    this.squelchGain.gain.setValueAtTime(0, now + 0.081);
   }
   private updateGain(): void {
     if (this.context && this.gain) {

@@ -834,6 +834,9 @@ Releasing M, losing focus, or leaving stops transmission. Radio works in the lob
 flight, pause, spectating and results. The separate received-radio mute and volume
 controls persist locally across private flights and do not alter solo sound settings
 or scores. Voice travels over the private WebRTC peer connection, not game data.
+Received speech has a quiet static bed and a brief squelch at detected speech
+starts and stops. These effects follow the radio receive mute/volume and never
+play over game audio when the radio is muted or M is held.
 Its status explains why readiness is disabled: connecting peers, preparing the
 shared course, sending flight plans, receiving/verifying them, or awaiting the
 other browser's confirmation. Plan counts reflect actual sent/verified plans,
