@@ -97,6 +97,10 @@ footer { position: absolute; bottom: 24px; left: 42px; right: 42px; display: fle
 #match-loading { position: absolute; inset: 0; display: grid; place-items: center; background: #101d25f5; font-size: 16px; }
 #match-connection-info { position: absolute; top: 65px; left: 24px; right: 24px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font: 10px/1.4 Consolas, monospace; }
 #match-connection { padding: 5px 8px; color: #e0ebd0; background: #101d25ed; flex-shrink: 0; }
+#match-radio { position: absolute; right: 24px; bottom: 75px; width: 210px; padding: 8px;
+  background: #101d25ed; pointer-events: auto; font: 10px/1.5 Consolas, monospace; }
+#match-radio summary { padding: 4px 0; cursor: pointer; }
+#match-radio label { margin: 6px 0; }
 #match-network { color: #ffe3b3; background: #342e24ed; padding: 5px; }
 #app[data-multiplayer="true"] { background: linear-gradient(0deg, #09161e6b, transparent 28%, transparent 80%, #09161e55); }
 #app[data-multiplayer="true"] footer { display: none; }

@@ -22,6 +22,7 @@ export interface RtcOptions {
   role: Role; sessionId: string; epoch: number; generation: number; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; signal: (message: OutgoingSignal) => void;
   relayOnly?: boolean; timeoutMs?: number; clock?: () => number; writable?: () => void;
+  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void };
 }
 interface CandidateSummary { local: string | null; remote: string | null; protocol: string | null; relayProtocol: string | null; rttMs: number | null }
 function object(value: unknown): Record<string, unknown> | null {
@@ -73,6 +74,21 @@ export class RtcPeer implements PeerTransport {
     try { this.pc = new RTCPeerConnection({ iceServers: this.options.iceServers, iceTransportPolicy: options.relayOnly ? 'relay' : 'all' }); }
     catch { throw new RtcError('negotiation'); }
     this.timeout = setTimeout(() => this.fail('timeout'), options.timeoutMs ?? 30_000);
+    if (options.voice) {
+      try {
+        const transceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
+        if (options.voice.track) void transceiver.sender.replaceTrack(options.voice.track).catch(() => {
+          options.voice?.receive(null);
+        });
+        this.pc.ontrack = event => {
+          if (!this.disposed && event.track.kind === 'audio') {
+            options.voice?.receive(event.streams[0] ?? new MediaStream([event.track]));
+          }
+        };
+      } catch {
+        options.voice.receive(null);
+      }
+    }
     this.pc.onicecandidate = event => {
       if (this.disposed || !event.candidate) return;
       if (++this.localCount > RTC_LIMITS.candidates) { this.fail('capacity'); return; }
@@ -304,8 +320,9 @@ export class RtcPeer implements PeerTransport {
     this.disposed = true; this.state = 'closed'; clearTimeout(this.timeout);
     if (this.pacingTimer !== null) { clearTimeout(this.pacingTimer); this.pacingTimer = null; }
     this.pending = []; this.futureState.clear(); this.localCandidates = []; this.remoteCandidates = [];
-    this.pc.ondatachannel = this.pc.onicecandidate = this.pc.onconnectionstatechange = null;
+    this.pc.ondatachannel = this.pc.onicecandidate = this.pc.onconnectionstatechange = this.pc.ontrack = null;
     this.pc.onicecandidateerror = null;
+    this.options.voice?.receive(null);
     for (const channel of Object.values(this.channels)) {
       channel.onopen = channel.onmessage = channel.onerror = channel.onclose = channel.onbufferedamountlow = null; channel.close();
     }

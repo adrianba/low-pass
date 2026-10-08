@@ -15,6 +15,7 @@ export interface PeerLinkOptions {
   member: RoomMembership; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; relayOnly: boolean;
   epoch?: number;
+  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void };
 }
 /** One admitted connection generation; higher-level recovery owns replacement. */
 export class PeerLink {
@@ -38,7 +39,7 @@ export class PeerLink {
   constructor(options: PeerLinkOptions) {
     const member = roomMembership.safeParse(options.member);
     if (!member.success || member.data.room.state !== 'admitted') throw new PeerLinkError('membership');
-    this.options = structuredClone(options);
+    this.options = { ...options, member: structuredClone(options.member), iceServers: structuredClone(options.iceServers) };
     this.openSocket();
   }
   private expired(): boolean {
@@ -156,7 +157,8 @@ export class PeerLink {
     this.connecting = true;
     this.peer = new RtcPeer({ role: this.options.member.room.role, sessionId: this.options.member.room.roomId,
       epoch: this.options.epoch ?? generation - 1, generation, compatibility: this.options.compatibility, aspect: this.options.aspect,
-      iceServers: this.options.iceServers, relayOnly: this.options.relayOnly, signal: value => this.signal(value) });
+      iceServers: this.options.iceServers, relayOnly: this.options.relayOnly, voice: this.options.voice,
+      signal: value => this.signal(value) });
   }
   get status(): 'signaling' | 'waiting' | 'connecting' | 'open' | 'closed' {
     if (this.disposed) return 'closed';

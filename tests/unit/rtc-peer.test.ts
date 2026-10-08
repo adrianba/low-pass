@@ -30,6 +30,9 @@ class Connection {
   onicecandidate: ((event: { candidate: { toJSON: () => RTCIceCandidateInit } | null }) => void) | null = null;
   onconnectionstatechange: (() => void) | null = null; onicecandidateerror: ((event: { errorCode: number }) => void) | null = null;
   ondatachannel: ((event: { channel: Channel }) => void) | null = null;
+  ontrack: ((event: { track: MediaStreamTrack; streams: MediaStream[] }) => void) | null = null;
+  readonly sender = { replaceTrack: vi.fn().mockResolvedValue(undefined) };
+  addTransceiver = vi.fn(() => ({ sender: this.sender }));
   remoteCandidates: Array<RTCIceCandidateInit | undefined> = [];
   constructor(readonly config: RTCConfiguration) { Connection.instances.push(this); }
   createDataChannel(label: string, options: RTCDataChannelInit) { const c = new Channel(label, options); this.channels.push(c); return c; }
@@ -71,6 +74,17 @@ function setup(patch: Partial<RtcOptions> = {}) {
 }
 
 describe('bounded native peer adapter', () => {
+  it('negotiates optional audio on the same peer and detaches it on close', () => {
+    const track = { kind: 'audio' } as MediaStreamTrack, receive = vi.fn();
+    const { peer, pc } = setup({ voice: { track, receive } });
+    expect(pc.addTransceiver).toHaveBeenCalledWith('audio', { direction: 'sendrecv' });
+    expect(pc.sender.replaceTrack).toHaveBeenCalledWith(track);
+    const stream = {} as MediaStream;
+    pc.ontrack?.({ track, streams: [stream] });
+    expect(receive).toHaveBeenCalledWith(stream);
+    peer.close();
+    expect(receive).toHaveBeenLastCalledWith(null);
+  });
   it('waits for the host hello before replying on an already-open remotely created channel', () => {
     const { peer, pc } = setup({ role: 'guest' });
     const control = new Channel('control', { protocol: 'low-pass.v1', ordered: true });

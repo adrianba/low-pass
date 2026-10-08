@@ -4,11 +4,13 @@ import { RoomClient } from './room-client.js';
 import { PeerLink } from './peer-link.js';
 import { icePolicy } from './ice-policy.js';
 import type { IceMode } from './ice-policy.js';
+import type { Radio } from '../audio/radio.js';
 
 export async function connectPeer(member: RoomMembership, compatibility: Compatibility, aspect: number,
-  mode: IceMode, epoch?: number, signal?: AbortSignal, onClockRecovery?: () => void): Promise<PeerLink> {
+  mode: IceMode, epoch?: number, signal?: AbortSignal, onClockRecovery?: () => void, radio?: Radio): Promise<PeerLink> {
   signal?.throwIfAborted();
   const config = mode === 'direct' ? null : await new RoomClient().ice(member.capability, signal, onClockRecovery);
   signal?.throwIfAborted();
-  return new PeerLink({ member, compatibility, aspect, epoch, ...icePolicy(mode, config) });
+  return new PeerLink({ member, compatibility, aspect, epoch, ...icePolicy(mode, config),
+    voice: radio ? { track: radio.track, receive: stream => radio.receive(stream) } : undefined });
 }
