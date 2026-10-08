@@ -837,6 +837,23 @@ or scores. Voice travels over the private WebRTC peer connection, not game data.
 Received speech has a quiet static bed and a brief squelch at detected speech
 starts and stops. These effects follow the radio receive mute/volume and never
 play over game audio when the radio is muted or M is held.
+
+Radio uses an audio track on the existing authenticated peer connection, not a
+separate voice server. A player without microphone permission still negotiates
+reception. The guest's sender reuses the host's offered audio section; creating
+an unrelated guest transceiver would leave its microphone unnegotiated.
+Chromium/Edge remote playout is started with a muted media element while the
+filtered Web Audio graph supplies the audible output. That element and its stream
+are detached on disconnect. M also works while lobby buttons or summaries have
+focus, but not while editing inputs.
+
+`tests/e2e/radio.spec.ts` measures actual filtered audio samples in both directions,
+including microphone-denied reception, receive mute/volume, half-duplex gating,
+peer replacement and application key/focus/exit handling. It generates a temporary
+900 Hz microphone WAV so the radio band-pass receives a known signal; the browser's
+default fake microphone is not a reliable in-band speech substitute. Test capture
+disables speech processing for this synthetic signal only; real microphones retain
+echo cancellation, noise suppression and automatic gain control.
 Its status explains why readiness is disabled: connecting peers, preparing the
 shared course, sending flight plans, receiving/verifying them, or awaiting the
 other browser's confirmation. Plan counts reflect actual sent/verified plans,

@@ -51,7 +51,7 @@ describe('private radio', () => {
     radio.close();
     expect(track.stop).toHaveBeenCalledOnce();
   });
-  it('adds receive-only static and short squelch on speech transitions, and clears effects on disconnect', () => {
+  it('adds receive-only effects, clears playback on disconnect and ignores obsolete playback failures', async () => {
     vi.useFakeTimers();
     const node = () => ({ connect: vi.fn().mockReturnThis(), disconnect: vi.fn() });
     const param = () => ({ value: 0, setValueAtTime: vi.fn(), setTargetAtTime: vi.fn(),
@@ -71,8 +71,12 @@ describe('private radio', () => {
       close: vi.fn().mockResolvedValue(undefined),
     };
     vi.stubGlobal('AudioContext', function AudioContext() { return context; });
-    const { radio } = setup();
+    const playback = { muted: false, srcObject: null, play: vi.fn().mockResolvedValue(undefined), pause: vi.fn() };
+    vi.stubGlobal('Audio', function Audio() { return playback; });
+    const { radio, warn } = setup();
     radio.receive({} as MediaStream);
+    expect(playback.muted).toBe(true);
+    expect(playback.play).toHaveBeenCalledOnce();
     expect(noise.start).toHaveBeenCalledOnce();
     vi.advanceTimersByTime(100);
     expect(gains[1]!.gain.setTargetAtTime).not.toHaveBeenCalled();
@@ -87,9 +91,22 @@ describe('private radio', () => {
     vi.advanceTimersByTime(200);
     expect(gains[1]!.gain.setTargetAtTime).toHaveBeenLastCalledWith(0, 1, 0.02);
     radio.receive(null);
+    expect(playback.pause).toHaveBeenCalledOnce();
+    expect(playback.srcObject).toBeNull();
     expect(noise.stop).toHaveBeenCalledOnce();
     const reads = analyser.getFloatTimeDomainData.mock.calls.length;
     vi.advanceTimersByTime(1000);
     expect(analyser.getFloatTimeDomainData).toHaveBeenCalledTimes(reads);
+    let rejectPlay!: (error: Error) => void;
+    playback.play.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPlay = reject; }));
+    radio.receive({} as MediaStream);
+    radio.receive(null);
+    rejectPlay(new Error('Playback aborted on disconnect'));
+    await Promise.resolve();
+    expect(warn).not.toHaveBeenCalled();
+    playback.play.mockRejectedValueOnce(new Error('Playback blocked'));
+    radio.receive({} as MediaStream);
+    await Promise.resolve();
+    expect(warn).toHaveBeenCalledWith('Radio playback unavailable.');
   });
 });

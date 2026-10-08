@@ -22,7 +22,7 @@ export interface RtcOptions {
   role: Role; sessionId: string; epoch: number; generation: number; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; signal: (message: OutgoingSignal) => void;
   relayOnly?: boolean; timeoutMs?: number; clock?: () => number; writable?: () => void;
-  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void };
+  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void; failed: () => void };
 }
 interface CandidateSummary { local: string | null; remote: string | null; protocol: string | null; relayProtocol: string | null; rttMs: number | null }
 function object(value: unknown): Record<string, unknown> | null {
@@ -76,10 +76,10 @@ export class RtcPeer implements PeerTransport {
     this.timeout = setTimeout(() => this.fail('timeout'), options.timeoutMs ?? 30_000);
     if (options.voice) {
       try {
-        const transceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
-        if (options.voice.track) void transceiver.sender.replaceTrack(options.voice.track).catch(() => {
-          options.voice?.receive(null);
-        });
+        // addTrack-created transceivers can be reused by the incoming offer on the guest.
+        // A guest-created addTransceiver would instead remain outside that negotiation.
+        if (options.voice.track) this.pc.addTrack(options.voice.track);
+        else if (this.role === 'host') this.pc.addTransceiver('audio', { direction: 'recvonly' });
         this.pc.ontrack = event => {
           if (!this.disposed && event.track.kind === 'audio') {
             options.voice?.receive(event.streams[0] ?? new MediaStream([event.track]));
@@ -87,6 +87,7 @@ export class RtcPeer implements PeerTransport {
         };
       } catch {
         options.voice.receive(null);
+        options.voice.failed();
       }
     }
     this.pc.onicecandidate = event => {

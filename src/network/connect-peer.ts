@@ -12,5 +12,5 @@ export async function connectPeer(member: RoomMembership, compatibility: Compati
   const config = mode === 'direct' ? null : await new RoomClient().ice(member.capability, signal, onClockRecovery);
   signal?.throwIfAborted();
   return new PeerLink({ member, compatibility, aspect, epoch, ...icePolicy(mode, config),
-    voice: radio ? { track: radio.track, receive: stream => radio.receive(stream) } : undefined });
+    voice: radio ? { track: radio.track, receive: stream => radio.receive(stream), failed: () => radio.unavailable() } : undefined });
 }

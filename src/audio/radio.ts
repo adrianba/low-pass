@@ -10,6 +10,7 @@ export class Radio {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private playback: HTMLAudioElement | null = null;
   private analyser: AnalyserNode | null = null;
   private staticSource: AudioBufferSourceNode | null = null;
   private staticGain: GainNode | null = null;
@@ -44,6 +45,10 @@ export class Radio {
   get track(): MediaStreamTrack | null { return this.stream?.getAudioTracks()[0] ?? null; }
   get canTransmit(): boolean { return !!this.track && this.track.readyState === 'live'; }
   get sending(): boolean { return this.transmitting && this.canTransmit; }
+  unavailable(): void {
+    this.setTransmitting(false);
+    this.warn('Radio connection unavailable. You can still play; reconnect the lobby to retry.');
+  }
   async request(): Promise<void> {
     if (this.requested || this.closed) return;
     this.requested = true;
@@ -78,6 +83,7 @@ export class Radio {
   receive(stream: MediaStream | null): void {
     if (this.monitor !== null) clearInterval(this.monitor);
     this.monitor = null;
+    if (this.playback) { this.playback.pause(); this.playback.srcObject = null; this.playback = null; }
     this.source?.disconnect();
     this.source = null;
     this.analyser?.disconnect();
@@ -96,6 +102,13 @@ export class Radio {
     if (!stream || this.closed) return;
     try {
       this.prepareAudio();
+      // Start Chromium's remote WebRTC playout; only the filtered Web Audio graph is audible.
+      const playback = this.playback = new Audio();
+      playback.muted = true;
+      playback.srcObject = stream;
+      void playback.play().catch(() => {
+        if (this.playback === playback && !this.closed) this.warn('Radio playback unavailable.');
+      });
       this.source = this.context!.createMediaStreamSource(stream);
       this.source.connect(this.input!);
       this.analyser = this.context!.createAnalyser();

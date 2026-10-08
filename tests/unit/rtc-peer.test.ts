@@ -32,6 +32,7 @@ class Connection {
   ondatachannel: ((event: { channel: Channel }) => void) | null = null;
   ontrack: ((event: { track: MediaStreamTrack; streams: MediaStream[] }) => void) | null = null;
   readonly sender = { replaceTrack: vi.fn().mockResolvedValue(undefined) };
+  addTrack = vi.fn(() => this.sender);
   addTransceiver = vi.fn(() => ({ sender: this.sender }));
   remoteCandidates: Array<RTCIceCandidateInit | undefined> = [];
   constructor(readonly config: RTCConfiguration) { Connection.instances.push(this); }
@@ -76,14 +77,32 @@ function setup(patch: Partial<RtcOptions> = {}) {
 describe('bounded native peer adapter', () => {
   it('negotiates optional audio on the same peer and detaches it on close', () => {
     const track = { kind: 'audio' } as MediaStreamTrack, receive = vi.fn();
-    const { peer, pc } = setup({ voice: { track, receive } });
-    expect(pc.addTransceiver).toHaveBeenCalledWith('audio', { direction: 'sendrecv' });
-    expect(pc.sender.replaceTrack).toHaveBeenCalledWith(track);
+    const { peer, pc } = setup({ voice: { track, receive, failed: vi.fn() } });
+    expect(pc.addTrack).toHaveBeenCalledWith(track);
+    expect(pc.addTransceiver).not.toHaveBeenCalled();
     const stream = {} as MediaStream;
     pc.ontrack?.({ track, streams: [stream] });
     expect(receive).toHaveBeenCalledWith(stream);
     peer.close();
     expect(receive).toHaveBeenLastCalledWith(null);
+  });
+  it('offers receive-only audio without a host microphone and lets a guest reuse the offer', () => {
+    const host = setup({ voice: { track: null, receive: vi.fn(), failed: vi.fn() } });
+    expect(host.pc.addTransceiver).toHaveBeenCalledWith('audio', { direction: 'recvonly' });
+    const guest = setup({ role: 'guest', voice: { track: null, receive: vi.fn(), failed: vi.fn() } });
+    expect(guest.pc.addTransceiver).not.toHaveBeenCalled();
+    expect(guest.pc.addTrack).not.toHaveBeenCalled();
+  });
+  it('reports an optional audio setup failure without preventing the game connection', () => {
+    vi.stubGlobal('RTCPeerConnection', class extends Connection {
+      override addTrack = vi.fn(() => { throw new Error('Test audio failure'); });
+    });
+    const failed = vi.fn(), receive = vi.fn();
+    const { peer, ready } = setup({ voice: { track: { kind: 'audio' } as MediaStreamTrack, receive, failed } });
+    expect(failed).toHaveBeenCalledOnce();
+    expect(receive).toHaveBeenCalledWith(null);
+    ready();
+    expect(peer.failure).toBeNull();
   });
   it('waits for the host hello before replying on an already-open remotely created channel', () => {
     const { peer, pc } = setup({ role: 'guest' });

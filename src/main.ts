@@ -152,7 +152,8 @@ document.addEventListener('keydown', event => {
     }
     if (event.code === 'Escape' && !event.repeat) { event.preventDefault(); key.up(); multiplayer.pause(); }
     if (event.code === 'KeyA' && !event.repeat && !editing && !control) multiplayer.toggleAssistance();
-    if (event.code === 'KeyM' && !editing && !control) {
+    if (event.code === 'KeyM' && !editing &&
+      !(event.target instanceof Element && event.target.closest('textarea, [contenteditable="true"]'))) {
       event.preventDefault();
       if (!event.repeat) multiplayer.transmitRadio(true);
     }

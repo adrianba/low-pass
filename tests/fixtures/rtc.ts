@@ -10,11 +10,11 @@ import { versions } from '../unit/protocol-fixtures.js';
 import { ClockError, PeerClock } from '../../src/network/peer-clock.js';
 import { StartHandshake } from '../../src/network/start-handshake.js';
 import type { StartedSession } from '../../src/network/start-handshake.js';
+import { Radio } from '../../src/audio/radio.js';
 
 export interface Options { role: Role; roomId: string; capability: string; generation: number; epoch: number;
-  mismatch?: boolean; relayOnly?: boolean; timeoutMs?: number; iceServers?: RTCIceServer[] }
+  mismatch?: boolean; relayOnly?: boolean; timeoutMs?: number; iceServers?: RTCIceServer[]; radio?: boolean }
 export class RtcFixture {
-  readonly errors: string[] = [];
   readonly messages: WireMessage[] = [];
   peer: RtcPeer | null = null;
   received: { digest: string; bytes: number } | null = null;
@@ -37,7 +37,7 @@ export class RtcFixture {
   private started: StartedSession | null = null;
   private readonly timer: ReturnType<typeof setInterval>;
   readonly ready: Promise<void>;
-  constructor(private readonly options: Options) {
+  constructor(private readonly options: Options, readonly radio?: Radio, readonly errors: string[] = []) {
     this.socket = new WebSocket(location.origin.replace(/^http/, 'ws') + '/signal');
     this.ready = new Promise<void>((resolve, reject) => {
       this.socket.onopen = () => {
@@ -54,6 +54,7 @@ export class RtcFixture {
           this.peer = new RtcPeer({ role: options.role, sessionId: options.roomId, epoch: options.epoch,
             generation: options.generation, aspect: 1.2, compatibility: options.mismatch ? { ...versions, build: 'b'.repeat(64) } : versions,
             iceServers: options.iceServers ?? [], relayOnly: options.relayOnly, timeoutMs: options.timeoutMs,
+            voice: radio ? { track: radio.track, receive: stream => radio.receive(stream), failed: () => radio.unavailable() } : undefined,
             signal: value => {
               if (this.socket.readyState !== WebSocket.OPEN) throw new Error('Fixture signaling unavailable.');
               this.socket.send(JSON.stringify(value));
@@ -179,6 +180,7 @@ export class RtcFixture {
   }
   async close(): Promise<void> {
     this.closing = true; clearInterval(this.timer); this.startup?.close(); this.peer?.close(); this.receiver.reset(); this.outgoing = []; this.urgent = [];
+    this.radio?.close();
     if (this.socket.readyState === WebSocket.CLOSED) return;
     await new Promise<void>(resolve => { this.socket.addEventListener('close', () => resolve(), { once: true }); this.socket.close(); });
   }
@@ -188,6 +190,9 @@ declare global {
 }
 window.connectRtc = async options => {
   if (window.rtcFixture) await window.rtcFixture.close();
-  window.rtcFixture = new RtcFixture(options);
+  const warnings: string[] = [];
+  const radio = options.radio ? new Radio(() => localStorage, message => warnings.push(message)) : undefined;
+  await radio?.request();
+  window.rtcFixture = new RtcFixture(options, radio, warnings);
   await window.rtcFixture.ready;
 };

@@ -15,7 +15,7 @@ export interface PeerLinkOptions {
   member: RoomMembership; compatibility: Compatibility; aspect: number;
   iceServers: RTCIceServer[]; relayOnly: boolean;
   epoch?: number;
-  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void };
+  voice?: { track: MediaStreamTrack | null; receive: (stream: MediaStream | null) => void; failed: () => void };
 }
 /** One admitted connection generation; higher-level recovery owns replacement. */
 export class PeerLink {
