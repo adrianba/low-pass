@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assertCompatible, byteLength, decodeMessage, decodePayload, encodeMessage, encodePayload, ProtocolError } from '../../shared/protocol/codec.js';
 import { MAX_RECOVERY_REFERENCES, MAX_TRANSFER_BYTES, MAX_WIRE_BYTES, CHANNELS, PHYSICS_HZ } from '../../shared/protocol/limits.js';
-import { payload, secondsAt, stampAt } from '../../shared/protocol/game.js';
+import { payload, secondsAt, snapshot as snapshotSchema, stampAt } from '../../shared/protocol/game.js';
 import { messageChannel } from '../../shared/protocol/messages.js';
 import type { WireMessage } from '../../shared/protocol/messages.js';
 import { base, hash, hello, reference, release, snapshot, versions } from './protocol-fixtures';
@@ -106,6 +106,14 @@ describe('bounded shared multiplayer protocol', () => {
     expect(() => assertCompatible(versions, { ...versions, generator: 'b'.repeat(64) })).toThrow('compatibility');
     expect(() => assertCompatible(versions, { ...versions })).not.toThrow();
     rejected(() => decodePayload(' '.repeat(MAX_TRANSFER_BYTES + 1)), 'oversized');
+  });
+
+  it('rejects oversized result arrays before validating their elements', () => {
+    const state = { ...snapshot(), results: Array.from({ length: 1_000 }, () => null) };
+    const parsed = snapshotSchema.safeParse(state);
+    if (parsed.success) throw new Error('Expected rejection.');
+    expect(parsed.error.issues).toEqual([expect.objectContaining({ code: 'too_big', path: ['results'] })]);
+    rejected(() => decodeMessage(JSON.stringify({ ...base, type: 'snapshot', sampledAt: 0, state }), context), 'invalid_message');
   });
 
   it('bounds transfer metadata, checks snapshot consistency and carries full fractional release time', () => {

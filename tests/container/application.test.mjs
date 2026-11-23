@@ -151,7 +151,7 @@ test('hardened Node PID 1 image preserves static HTTP, readiness, notices and so
     method: 'POST', body: 'x'.repeat(17 * 1024),
   })).status, 413);
   for (const name of ['low-pass', 'babylonjs-core', 'babylonjs-loaders', 'node',
-    'runtime-express-5.2.1', 'runtime-compression-1.8.2', 'runtime-zod-4.6.5']) {
+    'runtime-express-5.2.1', 'runtime-compression-1.8.2', 'runtime-zod-4.6.6']) {
     const license = await container.response(`/licenses/${name}.txt`);
     assert.equal(license.status, 200, name);
     assert.ok((await license.text()).length > 100, name);
