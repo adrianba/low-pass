@@ -34,7 +34,7 @@
     "compression": "1.8.2",
     "express": "5.2.1",
     "ws": "8.21.3",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
